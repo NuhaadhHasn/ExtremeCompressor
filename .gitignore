@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+venvPython/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# IDE / tooling state
+.idea/
+.remember/
+graphify-out/
+
+# App runtime artifacts
+tools/bin/
+*.excmp.tmp/

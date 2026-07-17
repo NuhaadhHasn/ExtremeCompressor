@@ -19,7 +19,7 @@ from .analyzer import FileInfo, analyze_tree
 from .manifest import (Manifest, StageRecord, extract_stored, read_container,
                        write_container)
 from .planner import Plan, Profile, plan as make_plan
-from .stages.base import Stage, StageContext, StageError
+from .stages.base import Stage, StageContext, StageError, StageSkip
 from .stages.sevenzip import SevenZipStage
 from .stages.tarstage import TarStage
 from .stages.zstdstage import ZstdStage
@@ -129,10 +129,15 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(f, target)
             current: Path = staging
+            skip_notes: list[str] = []
             for i, sid in enumerate(chain):
                 stage = registry[sid]
                 nxt = job_dir / f"s{i}{_PAYLOAD_EXT.get(sid, '.bin')}"
-                current = stage.compress(current, nxt, ctx)
+                try:
+                    current = stage.compress(current, nxt, ctx)
+                except StageSkip as skip:
+                    skip_notes.append(str(skip))
+                    continue  # pass data through; stage stays out of manifest
                 tool_name = getattr(stage, "tool_name", sid)
                 tool = tools.get(tool_name) if tools else None
                 stage_records.append(StageRecord(
@@ -141,6 +146,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     tool_version=tool.version if tool else "",
                     params={},
                 ))
+            the_plan.warnings.extend(skip_notes)
             payload_path = current
             shutil.rmtree(staging, ignore_errors=True)
 

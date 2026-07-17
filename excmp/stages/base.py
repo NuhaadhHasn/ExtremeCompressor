@@ -22,6 +22,11 @@ class StageError(RuntimeError):
     """A stage failed; message carries the tool's captured output tail."""
 
 
+class StageSkip(Exception):
+    """A stage found nothing it can improve; the engine passes the data
+    through unchanged and leaves the stage out of the manifest."""
+
+
 @dataclass
 class StageContext:
     temp_dir: Path

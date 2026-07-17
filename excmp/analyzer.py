@@ -72,6 +72,12 @@ class FileInfo:
     size: int
     category: Category
     entropy_bps: float
+    zlib_stream: bool = False  # starts with a valid zlib header (precomp food)
+
+
+def _looks_like_zlib(head: bytes) -> bool:
+    # zlib header: CMF=0x78 (deflate, 32K window) and (CMF<<8|FLG) % 31 == 0
+    return len(head) >= 2 and head[0] == 0x78 and ((head[0] << 8) | head[1]) % 31 == 0
 
 
 def _detect_category(path: Path, head: bytes) -> Category:
@@ -122,6 +128,7 @@ def analyze_file(path: Path) -> FileInfo:
         size=size,
         category=_detect_category(path, head),
         entropy_bps=sample_entropy(path),
+        zlib_stream=_looks_like_zlib(head),
     )
 
 

@@ -40,10 +40,12 @@ class Manifest:
     inputs: dict[str, dict]
     payload_name: str
     warnings: list[str] = field(default_factory=list)
+    routes: list[dict] = field(default_factory=list)
 
     @classmethod
     def new(cls, profile: str, stages: list[StageRecord], inputs: dict[str, dict],
-            payload_name: str, warnings: list[str] | None = None) -> "Manifest":
+            payload_name: str, warnings: list[str] | None = None,
+            routes: list[dict] | None = None) -> "Manifest":
         return cls(
             schema=SCHEMA_VERSION,
             created_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -52,6 +54,7 @@ class Manifest:
             inputs=inputs,
             payload_name=payload_name,
             warnings=warnings or [],
+            routes=routes or [],
         )
 
     def to_json(self) -> str:
@@ -64,15 +67,27 @@ class Manifest:
         return cls(**data)
 
 
-def write_container(archive_path: Path, manifest: Manifest, payload_path: Path) -> None:
+STORED_PREFIX = "stored/"
+
+
+def write_container(archive_path: Path, manifest: Manifest,
+                    payload_path: Path | None = None,
+                    stored_files: dict[str, Path] | None = None) -> None:
+    """Write the container. ``stored_files`` maps relpath -> source path for
+    files that skip the pipeline; they land as ZIP_STORED ``stored/<relpath>``
+    entries so no time is wasted recompressing them."""
     archive_path = Path(archive_path)
-    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as zf:
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED,
+                         allowZip64=True) as zf:
         zf.writestr(MANIFEST_NAME, manifest.to_json())
-        zf.write(payload_path, arcname=manifest.payload_name)
+        if payload_path is not None:
+            zf.write(payload_path, arcname=manifest.payload_name)
+        for rel, src in (stored_files or {}).items():
+            zf.write(src, arcname=STORED_PREFIX + rel.replace("\\", "/"))
 
 
-def read_container(archive_path: Path, extract_dir: Path) -> tuple[Manifest, Path]:
-    """Read manifest and extract the payload blob to ``extract_dir``."""
+def read_container(archive_path: Path, extract_dir: Path) -> tuple[Manifest, Path | None]:
+    """Read manifest and extract the payload blob (if any) to ``extract_dir``."""
     archive_path = Path(archive_path)
     extract_dir = Path(extract_dir)
     extract_dir.mkdir(parents=True, exist_ok=True)
@@ -83,5 +98,25 @@ def read_container(archive_path: Path, extract_dir: Path) -> tuple[Manifest, Pat
             manifest = Manifest.from_json(zf.read(MANIFEST_NAME).decode("utf-8"))
         except KeyError as exc:
             raise ContainerError(f"{archive_path} has no {MANIFEST_NAME}") from exc
-        zf.extract(manifest.payload_name, extract_dir)
-    return manifest, extract_dir / manifest.payload_name
+        if manifest.payload_name:
+            zf.extract(manifest.payload_name, extract_dir)
+            return manifest, extract_dir / manifest.payload_name
+    return manifest, None
+
+
+def extract_stored(archive_path: Path, out_dir: Path) -> list[Path]:
+    """Extract every ``stored/`` entry into ``out_dir`` (prefix removed)."""
+    out_dir = Path(out_dir)
+    written: list[Path] = []
+    with zipfile.ZipFile(archive_path) as zf:
+        for info in zf.infolist():
+            if not info.filename.startswith(STORED_PREFIX) or info.is_dir():
+                continue
+            rel = info.filename[len(STORED_PREFIX):]
+            target = out_dir / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, target.open("wb") as dst:
+                while chunk := src.read(1 << 20):
+                    dst.write(chunk)
+            written.append(target)
+    return written

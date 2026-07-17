@@ -1,0 +1,236 @@
+"""The engine: analyze -> plan -> run stage chain -> package -> verify.
+
+Guarantees:
+- inputs are never touched; outputs are written to ``<out>.tmp`` and
+  atomically renamed only after the archive verifies;
+- every original file's SHA-256 is recorded in the manifest, and
+  ``extract`` re-checks the ledger before reporting success.
+"""
+
+from __future__ import annotations
+
+import shutil
+import tempfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .analyzer import FileInfo, analyze_tree
+from .manifest import (Manifest, StageRecord, extract_stored, read_container,
+                       write_container)
+from .planner import Plan, Profile, plan as make_plan
+from .stages.base import Stage, StageContext, StageError
+from .stages.sevenzip import SevenZipStage
+from .stages.tarstage import TarStage
+from .stages.zstdstage import ZstdStage
+from .tools import ToolInfo, find_tools
+from .verify import VerifyError, hash_file, verify_restore
+
+# Stages that can consume a directory tree directly (anything else forces a
+# leading tar stage so the chain operates on one file).
+_TREE_CAPABLE = {"sevenzip", "zstd"}
+
+_PAYLOAD_EXT = {"sevenzip": ".7z", "zstd": ".tar.zst", "tar": ".tar",
+                "precomp": ".pcf", "srep": ".srep"}
+
+
+def _stage_factory() -> dict[str, Stage]:
+    registry: dict[str, Stage] = {
+        "tar": TarStage(),
+        "zstd": ZstdStage(),
+        "sevenzip": SevenZipStage(),
+    }
+    try:  # optional stages, present once task 9 lands / tools installed
+        from .stages.precomp import PrecompStage
+        from .stages.srep import SrepStage
+        registry["precomp"] = PrecompStage()
+        registry["srep"] = SrepStage()
+    except ImportError:
+        pass
+    return registry
+
+
+@dataclass
+class CompressResult:
+    archive: Path
+    orig_bytes: int
+    final_bytes: int
+    routes: list[dict]
+    warnings: list[str]
+    elapsed_s: float
+
+    @property
+    def ratio(self) -> float:
+        return self.final_bytes / self.orig_bytes if self.orig_bytes else 1.0
+
+
+@dataclass
+class ExtractResult:
+    out_dir: Path
+    files_restored: int
+    verified: int
+    elapsed_s: float
+
+
+def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str]]:
+    """Analyze all inputs; map absolute path -> archive-relative path."""
+    infos: list[FileInfo] = []
+    relmap: dict[Path, str] = {}
+    for inp in inputs:
+        inp = Path(inp).resolve()
+        for info in analyze_tree(inp):
+            rel = info.path.name if inp.is_file() else f"{inp.name}/{info.path.relative_to(inp).as_posix()}"
+            if rel in relmap.values():
+                raise ValueError(f"duplicate archive path '{rel}' - rename one of the inputs")
+            infos.append(info)
+            relmap[info.path] = rel
+    return infos, relmap
+
+
+def compress(inputs: list[Path], out_path: Path, profile: Profile,
+             ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None) -> CompressResult:
+    t0 = time.monotonic()
+    tools = tools if tools is not None else find_tools(with_versions=True)
+    out_path = Path(out_path)
+    infos, relmap = _collect([Path(p) for p in inputs])
+    if not infos:
+        raise ValueError("nothing to compress")
+    the_plan: Plan = make_plan(infos, profile, tools)
+
+    registry = _stage_factory()
+    job_dir = Path(tempfile.mkdtemp(prefix="excmp-", dir=ctx.temp_dir))
+    try:
+        # --- split routes -------------------------------------------------
+        pipe_route = next((r for r in the_plan.routes if r.action == "pipeline"), None)
+        store_route = next((r for r in the_plan.routes if r.action == "store"), None)
+
+        ledger: dict[str, dict] = {}
+        for info in infos:
+            ledger[relmap[info.path]] = {
+                "size": info.size,
+                "sha256": hash_file(info.path),
+                "route": "pipeline" if pipe_route and info.path in set(pipe_route.files) else "store",
+            }
+
+        # --- run the pipeline chain on a staging copy ----------------------
+        payload_path: Path | None = None
+        stage_records: list[StageRecord] = []
+        chain: list[str] = []
+        if pipe_route:
+            chain = list(pipe_route.stages)
+            if len(chain) > 1 or chain[0] not in _TREE_CAPABLE:
+                chain = ["tar", *[s for s in chain if s != "tar"]]
+            for sid in chain:
+                if sid not in registry:
+                    raise StageError(f"stage '{sid}' is not implemented")
+            staging = job_dir / "tree"
+            for f in pipe_route.files:
+                target = staging / relmap[f]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, target)
+            current: Path = staging
+            for i, sid in enumerate(chain):
+                stage = registry[sid]
+                nxt = job_dir / f"s{i}{_PAYLOAD_EXT.get(sid, '.bin')}"
+                current = stage.compress(current, nxt, ctx)
+                tool_name = getattr(stage, "tool_name", sid)
+                tool = tools.get(tool_name) if tools else None
+                stage_records.append(StageRecord(
+                    stage=sid,
+                    tool_name=tool.name if tool else "python",
+                    tool_version=tool.version if tool else "",
+                    params={},
+                ))
+            payload_path = current
+            shutil.rmtree(staging, ignore_errors=True)
+
+        # --- package -------------------------------------------------------
+        payload_name = f"payload{_PAYLOAD_EXT.get(chain[-1], '.bin')}" if pipe_route else ""
+        manifest = Manifest.new(
+            profile=profile.value,
+            stages=stage_records,
+            inputs=ledger,
+            payload_name=payload_name,
+            warnings=the_plan.warnings,
+            routes=[{"action": r.action, "stages": r.stages, "reason": r.reason,
+                     "files": [relmap[f] for f in r.files]} for r in the_plan.routes],
+        )
+        stored_map = {relmap[f]: f for f in (store_route.files if store_route else [])}
+        tmp_out = out_path.with_suffix(out_path.suffix + ".tmp")
+        if payload_path is not None:
+            renamed = payload_path.with_name(payload_name)
+            payload_path.rename(renamed)
+            payload_path = renamed
+        write_container(tmp_out, manifest, payload_path, stored_map)
+
+        # --- verify then atomically publish ---------------------------------
+        _self_test(tmp_out, manifest, registry, ctx, job_dir)
+        if out_path.exists():
+            out_path.unlink()
+        tmp_out.replace(out_path)
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    orig = sum(m["size"] for m in ledger.values())
+    return CompressResult(
+        archive=out_path,
+        orig_bytes=orig,
+        final_bytes=out_path.stat().st_size,
+        routes=manifest.routes,
+        warnings=the_plan.warnings,
+        elapsed_s=time.monotonic() - t0,
+    )
+
+
+def _self_test(archive: Path, manifest: Manifest, registry: dict[str, Stage],
+               ctx: StageContext, job_dir: Path) -> None:
+    """Cheap integrity gate before publishing: test the payload container
+    layer (7z t / zstd stream read) without a full restore."""
+    if not manifest.payload_name:
+        return
+    test_dir = job_dir / "selftest"
+    _, payload = read_container(archive, test_dir)
+    assert payload is not None
+    last = manifest.stages[-1].stage
+    stage = registry[last]
+    if hasattr(stage, "test"):
+        stage.test(payload, ctx)  # type: ignore[attr-defined]
+    else:
+        probe = test_dir / "probe"
+        stage.extract(payload, probe, ctx)
+        shutil.rmtree(probe, ignore_errors=True)
+
+
+def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
+    t0 = time.monotonic()
+    archive, out_dir = Path(archive), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    registry = _stage_factory()
+    job_dir = Path(tempfile.mkdtemp(prefix="excmp-x-", dir=ctx.temp_dir))
+    try:
+        manifest, payload = read_container(archive, job_dir)
+        restored = 0
+        if payload is not None:
+            current = payload
+            stages = [s.stage for s in manifest.stages]
+            for i, sid in enumerate(reversed(stages)):
+                stage = registry.get(sid)
+                if stage is None:
+                    raise StageError(f"archive needs stage '{sid}' which is not available")
+                is_last = i == len(stages) - 1
+                dst = out_dir if is_last else job_dir / f"r{i}"
+                current = stage.extract(current, dst, ctx)
+                if not is_last and current.is_dir():
+                    # intermediate extract of a single-file payload: descend
+                    inner = [p for p in current.rglob("*") if p.is_file()]
+                    if len(inner) != 1:
+                        raise StageError(f"stage '{sid}' produced {len(inner)} files, expected 1")
+                    current = inner[0]
+        restored += len([1 for m in manifest.inputs.values() if m.get("route") == "pipeline"])
+        stored = extract_stored(archive, out_dir)
+        restored += len(stored)
+        verified = verify_restore(out_dir, manifest.inputs)
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+    return ExtractResult(out_dir=out_dir, files_restored=restored,
+                         verified=verified, elapsed_s=time.monotonic() - t0)

@@ -48,6 +48,17 @@ def test_entropy_random_high_text_low(tmp_path):
     assert sample_entropy(t) < 3.0
 
 
+def test_zlib_stream_flag(tmp_path):
+    import zlib
+    z = tmp_path / "pak.dat"
+    z.write_bytes(zlib.compress(b"payload " * 1000, 9))
+    info = analyze_file(z)
+    assert info.zlib_stream is True
+    t = tmp_path / "t.txt"
+    t.write_text("plain")
+    assert analyze_file(t).zlib_stream is False
+
+
 def test_analyze_tree_walks_recursively(tmp_path):
     (tmp_path / "sub").mkdir()
     (tmp_path / "a.txt").write_text("x" * 10)

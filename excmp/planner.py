@@ -107,9 +107,15 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
 
     for info in infos:
         reason = _store_reason(info)
-        if reason is not None and info.category is Category.COMPRESSED_ARCHIVE \
-                and has_precomp and info.path.suffix.lower() in _PRECOMP_EXPANDABLE:
-            reason = None  # precomp can open these up
+        # precomp can expand zlib/deflate wrapped data no matter how random it
+        # looks on the surface - exactly the shape of game pak files. Media
+        # stays stored (its entropy is real), known non-deflate archives
+        # (.rar/.7z/.zst) stay stored too.
+        if reason is not None and has_precomp and info.category not in _MEDIA:
+            if (info.zlib_stream
+                    or info.category is Category.BINARY
+                    or info.path.suffix.lower() in _PRECOMP_EXPANDABLE):
+                reason = None
         if reason is not None:
             store_files.append(info.path)
             store_reasons.append(reason)

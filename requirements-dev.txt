@@ -1,0 +1,8 @@
+# Development and release tooling.
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest>=8.0            # MIT
+pytest-qt>=4.4         # MIT; qtbot fixture for the GUI tests
+Pillow>=10.0           # MIT-CMU; assembles docs/images/demo.gif in tools/shots.py

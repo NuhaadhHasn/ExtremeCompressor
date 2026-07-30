@@ -15,3 +15,6 @@ graphify-out/
 # App runtime artifacts
 tools/bin/
 *.excmp.tmp/
+
+# Screenshot/GIF scratch space (tools/shots.py)
+.shots-work/

@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-38%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-90%20passing-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 Most archivers run one algorithm over everything. ExtremeCompressor works like a
@@ -13,10 +13,24 @@ that actually works for that data, chains **specialist tools** (precompression �
 long-range dedup → strong codec), and **verifies** the restore is byte-identical
 before ever claiming success.
 
+<p align="center">
+  <img src="docs/images/03-results.png" width="820"
+       alt="Results screen: 'You saved 12.3 MB (71%)', a before/after bar, a
+            per-type breakdown, and one plain-English line explaining why the
+            .mp4 and .rar in the folder could not shrink.">
+</p>
+
+> **And it tells you the truth about the files it couldn't shrink.** No other
+> compressor does — they just quietly return 0% and let you wonder.
+
 ---
 
 ## ✨ Features
 
+- **Desktop app** — drop anything (files *and* folders, as many as you like),
+  get an honest read on what can shrink before you commit, pick a preset from
+  four cards that state their real cost, and watch an always-visible queue with
+  live progress, per-job tool logs, pause and cancel.
 - **Smart routing** — magic-byte type detection + Shannon-entropy sampling
   decides per file: pipeline it, or store it and *tell you why* (no more hours
   wasted "compressing" a video for 0%).
@@ -92,7 +106,7 @@ more than strength. Full methodology in [`docs/benchmarks/`](docs/benchmarks/).
 
 ```
 .
-├── excmp/                  # engine package (GUI-independent)
+├── excmp/                  # engine package (knows nothing about the GUI)
 │   ├── analyzer.py         # type detection + entropy
 │   ├── planner.py          # profiles + routing
 │   ├── engine.py           # orchestration, verify, atomic outputs
@@ -100,10 +114,21 @@ more than strength. Full methodology in [`docs/benchmarks/`](docs/benchmarks/).
 │   ├── verify.py           # SHA-256 ledgers
 │   ├── cli.py              # command-line interface
 │   └── stages/             # sevenzip, zstd, tar, precomp, srep
-├── tests/                  # 38 pytest tests incl. real-tool roundtrips
-├── tools/bench.py          # profile benchmark harness
+├── gui/                    # PySide6 desktop app (python -m gui)
+│   ├── theme.py            # design tokens → QSS (dark + light)
+│   ├── suggest.py          # analysis summary, honesty copy, preset advice
+│   ├── progress.py         # per-stage progress → one job percentage + ETA
+│   ├── queue_manager.py    # QueueManager + engine workers on a thread pool
+│   ├── winintegration.py   # taskbar progress, toasts, tray (all optional)
+│   ├── mainwindow.py       # the single-window flow
+│   └── widgets/            # dropzone, analysis card, presets, queue, results
+├── tests/                  # 90 pytest tests incl. real-tool roundtrips
+├── tools/
+│   ├── bench.py            # profile benchmark harness
+│   └── shots.py            # regenerates docs/images/ from the real app
 ├── docs/
-│   ├── research/           # compression landscape research (6 docs)
+│   ├── images/             # README screenshots + demo GIF
+│   ├── research/           # compression landscape research (7 docs)
 │   ├── superpowers/specs/  # approved design document
 │   ├── superpowers/plans/  # implementation plans
 │   └── benchmarks/         # measured results
@@ -121,8 +146,11 @@ git clone https://github.com/NuhaadhHasn/ExtremeCompressor.git
 cd ExtremeCompressor
 python -m venv .venv
 .venv\Scripts\activate
-pip install zstandard pytest
+pip install -r requirements.txt          # engine + GUI
+pip install -r requirements-dev.txt      # plus pytest, pytest-qt, Pillow
 ```
+
+Only `zstandard` is needed if you just want the CLI.
 
 ### 2. Install the tools
 
@@ -135,6 +163,12 @@ pip install zstandard pytest
 Missing tools are fine — profiles degrade automatically and tell you what was skipped.
 
 ### 3. Use it
+
+```bash
+python -m gui
+```
+
+…or from the command line:
 
 ```bash
 # what would happen? (categories, entropy, routing plan)
@@ -163,12 +197,48 @@ python -m pytest tests -v
 
 ---
 
-## 🖥️ GUI
+## 🖥️ The desktop app
 
-The PySide6 desktop app (drop zone → smart suggestions → job queue → results
-screen) is **Phase 2, in progress** — screenshots will land here when it does.
-The legacy Tkinter prototype in `main.py` still runs but is superseded by the
-engine CLI above.
+```bash
+python -m gui
+```
+
+<p align="center">
+  <img src="docs/images/demo.gif" width="820"
+       alt="Animated demo: a folder is added, the analysis card reports its
+            composition, Extreme is suggested and selected, the queue runs the
+            precomp/SREP/7-Zip chain with live progress, and the results screen
+            reports 71% saved.">
+</p>
+
+One window, no modal dialogs, in this order:
+
+| Step | What it does |
+|---|---|
+| **Drop zone** | Files *and* folders, any number at once, appended to the queue. (HandBrake's two most-reported intake bugs, avoided by design.) |
+| **Analysis card** | Runs the analyzer on a worker thread and reports the composition plus the honest gain estimate — *"Nearly all of this (15.4 MB) is worth compressing"* or *"86% of this is already compressed and will be stored bit-exact"*. |
+| **Preset cards** | Fast / Normal / Extreme / Insane, each stating its real cost, with the suggested one pre-selected. Cards whose tools are missing say what will actually happen instead of degrading silently. |
+| **Queue** | Always on screen. Name, profile, size→size, live progress, time left, state — and a per-job expander showing the tool's own output. Pause finishes the current stage before holding; cancel kills the child process and leaves nothing behind. |
+| **Results** | The big number, a to-scale before/after bar, input bytes by type, and one plain-English sentence per file that couldn't shrink. |
+| **Extract tab** | Pick an `.excmp`, pick a destination, get the verified hash count back. |
+
+<p align="center">
+  <img src="docs/images/01-drop-analysis.png" width="410"
+       alt="The drop zone and analysis card after adding a folder.">
+  <img src="docs/images/02-queue-running.png" width="410"
+       alt="The queue running an Extreme job with the per-job log expanded.">
+</p>
+
+Also: taskbar progress, a completion toast with an "Open folder" button,
+optional minimize-to-tray, a light theme, full keyboard tab order, accessible
+names on every icon-only control, and no meaning carried by colour alone.
+
+Every screenshot above is regenerated from the real app by
+[`tools/shots.py`](tools/shots.py) — it builds a reproducible ~17 MB
+repack-style corpus, drives the actual window through the whole flow, and
+grabs the frames. The numbers in them are genuine output, not mockups.
+
+The legacy Tkinter prototype in `main.py` still runs but is superseded.
 
 ---
 
@@ -177,7 +247,7 @@ engine CLI above.
 - [x] Research: repack tech, video encoding, archiver landscape (`docs/research/`)
 - [x] Engine core: analyzer, router, stages, verified `.excmp` roundtrip, CLI
 - [x] Extreme chain with real Precomp + SREP, first benchmarks
-- [ ] PySide6 GUI (queue, profiles, progress, results)
+- [x] PySide6 GUI (drop zone, suggestions, queue, progress, results, extract)
 - [ ] zpaqfranz backend → completes the `insane` profile
 - [ ] Opt-in video/audio Shrink mode (FFmpeg + SVT-AV1, quality-targeted)
 - [ ] Per-file-type specialists (PNG/JPEG/WAV recompression)

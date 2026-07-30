@@ -34,7 +34,8 @@ class SrepStage(Stage):
         src, dst = Path(src), Path(dst)
         if dst.exists():
             dst.unlink()
-        run_tool([self._exe(), "-m3f", str(src), str(dst)], ctx, self.id, _parse_percent)
+        run_tool([self._exe(), "-m3f", str(src), str(dst)], ctx, self.id,
+                 _parse_percent, cwd=ctx.temp_dir)
         if not dst.exists():
             raise StageError(f"{self.id}: output not created")
         return dst
@@ -43,7 +44,8 @@ class SrepStage(Stage):
         src, dst = Path(src), Path(dst)
         dst.mkdir(parents=True, exist_ok=True)
         out = dst / (src.stem if src.suffix == ".srep" else src.name + ".restored")
-        run_tool([self._exe(), "-d", str(src), str(out)], ctx, self.id, _parse_percent)
+        run_tool([self._exe(), "-d", str(src), str(out)], ctx, self.id,
+                 _parse_percent, cwd=ctx.temp_dir)
         if not out.exists():
             raise StageError(f"{self.id}: restore produced no output")
         return out

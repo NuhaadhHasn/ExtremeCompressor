@@ -48,7 +48,11 @@ class PrecompStage(Stage):
             cmd.append("-intense")
         cmd += [f"-o{dst}", str(src)]
         try:
-            run_tool(cmd, ctx, self.id, _parse_percent)
+            # cwd matters: Precomp drops ~temp########.dat scratch files into
+            # the *current* directory, which under a GUI is wherever the app
+            # was launched from - the user's home, or a read-only Program
+            # Files. Keep the mess inside our own temp dir.
+            run_tool(cmd, ctx, self.id, _parse_percent, cwd=ctx.temp_dir)
         except StageError as exc:
             if _NO_GAIN in str(exc):
                 raise StageSkip(f"{self.id}: no recompressible streams found") from exc
@@ -61,7 +65,8 @@ class PrecompStage(Stage):
         src, dst = Path(src), Path(dst)
         dst.mkdir(parents=True, exist_ok=True)
         out = dst / (src.stem if src.suffix == ".pcf" else src.name + ".restored")
-        run_tool([self._exe(), "-r", f"-o{out}", str(src)], ctx, self.id, _parse_percent)
+        run_tool([self._exe(), "-r", f"-o{out}", str(src)], ctx, self.id,
+                 _parse_percent, cwd=ctx.temp_dir)
         if not out.exists():
             raise StageError(f"{self.id}: restore produced no output")
         return out

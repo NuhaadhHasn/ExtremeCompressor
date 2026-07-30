@@ -78,7 +78,10 @@ def _resolve_chain(profile: Profile, tools: dict[str, ToolInfo | None]) -> tuple
     return stages, warnings
 
 
-def _store_reason(info: FileInfo) -> str | None:
+def store_reason(info: FileInfo) -> str | None:
+    """The plain-English sentence explaining why this file won't be piped,
+    or None if it will be. Public because the GUI shows it per file - the
+    route-level reason is a joined summary and loses the detail."""
     if info.category in _MEDIA:
         return (
             "media file: already compressed by its codec; stored losslessly so "
@@ -106,7 +109,7 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
     pipe_files: list[Path] = []
 
     for info in infos:
-        reason = _store_reason(info)
+        reason = store_reason(info)
         # precomp can expand zlib/deflate wrapped data no matter how random it
         # looks on the surface - exactly the shape of game pak files. Media
         # stays stored (its entropy is real), known non-deflate archives

@@ -34,6 +34,14 @@ _PAYLOAD_EXT = {"sevenzip": ".7z", "zstd": ".tar.zst", "tar": ".tar",
                 "precomp": ".pcf", "srep": ".srep"}
 
 
+def _wait_if_paused(ctx: StageContext) -> None:
+    """Block while the caller holds ``ctx.pause``. Called only at stage
+    boundaries: a half-finished tool cannot be suspended safely, so pausing
+    means "let this stage finish, then wait". Cancel always wins."""
+    while ctx.pause.is_set() and not ctx.cancel.is_set():
+        time.sleep(0.1)
+
+
 def _stage_factory() -> dict[str, Stage]:
     registry: dict[str, Stage] = {
         "tar": TarStage(),
@@ -99,6 +107,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
 
     registry = _stage_factory()
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-", dir=ctx.temp_dir))
+    tmp_out: Path | None = None
     try:
         # --- split routes -------------------------------------------------
         pipe_route = next((r for r in the_plan.routes if r.action == "pipeline"), None)
@@ -131,6 +140,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             current: Path = staging
             skip_notes: list[str] = []
             for i, sid in enumerate(chain):
+                _wait_if_paused(ctx)
                 stage = registry[sid]
                 nxt = job_dir / f"s{i}{_PAYLOAD_EXT.get(sid, '.bin')}"
                 try:
@@ -176,6 +186,10 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         tmp_out.replace(out_path)
     finally:
         shutil.rmtree(job_dir, ignore_errors=True)
+        # A cancel or failure between write_container and replace() would
+        # otherwise strand a half-written .tmp beside the user's output.
+        if tmp_out is not None and tmp_out.exists():
+            tmp_out.unlink(missing_ok=True)
 
     orig = sum(m["size"] for m in ledger.values())
     return CompressResult(
@@ -220,6 +234,7 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
             current = payload
             stages = [s.stage for s in manifest.stages]
             for i, sid in enumerate(reversed(stages)):
+                _wait_if_paused(ctx)
                 stage = registry.get(sid)
                 if stage is None:
                     raise StageError(f"archive needs stage '{sid}' which is not available")

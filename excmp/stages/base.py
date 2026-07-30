@@ -4,6 +4,10 @@ A stage transforms one path into another in each direction:
 ``compress(src, dst, ctx)`` and ``extract(src, dst, ctx)``. Stages report
 progress through ``ctx.progress_cb(stage_id, percent)`` and honor
 ``ctx.cancel`` cooperatively (the running tool is killed).
+
+``ctx.pause`` is checked by the *engine* at stage boundaries, not inside
+stages: holding mid-stage would mean either leaving a tool suspended or
+throwing away its work, so "pause" means "finish this stage, then wait".
 """
 
 from __future__ import annotations
@@ -32,10 +36,14 @@ class StageContext:
     temp_dir: Path
     threads: int = 0  # 0 = tool default / all cores
     progress_cb: Callable[[str, float], None] = lambda stage, pct: None
+    log_cb: Callable[[str, str], None] = lambda stage, line: None
     cancel: threading.Event = field(default_factory=threading.Event)
+    pause: threading.Event = field(default_factory=threading.Event)  # set = hold
 
     def __post_init__(self) -> None:
-        self.temp_dir = Path(self.temp_dir)
+        # Absolute: stages hand this to subprocesses as their working
+        # directory, and a relative path would follow the caller around.
+        self.temp_dir = Path(self.temp_dir).absolute()
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -84,6 +92,7 @@ def run_tool(
             tail.append(line)
             if len(tail) > 40:
                 tail.pop(0)
+            ctx.log_cb(stage_id, line)
             if parse_line is not None:
                 pct = parse_line(line)
                 if pct is not None:

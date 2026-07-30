@@ -1,0 +1,12 @@
+# Runtime dependencies.
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# The engine (excmp/) needs only zstandard. Everything below it is the
+# desktop GUI; the app still starts if comtypes or windows-toasts are
+# missing - taskbar progress and toasts degrade to no-ops (see
+# gui/winintegration.py).
+
+zstandard>=0.22        # BSD-3; bundles libzstd, so Fast needs no external exe
+PySide6>=6.6           # LGPL-3.0; Qt bindings, dynamically linked and unmodified
+comtypes>=1.4          # MIT; ITaskbarList3 for taskbar progress (Qt6 dropped it)
+windows-toasts>=1.1    # Apache-2.0; completion notifications

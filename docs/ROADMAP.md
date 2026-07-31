@@ -1,11 +1,13 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-08-01**. Engine core DONE, Phase A (GUI) DONE, and
-> **Phase D0 (security hotfix) DONE and merged** — the path-traversal bug found in
-> our own reader is fixed, pinned by tests, and validated on 721 MB of real data.
-> **223 tests**, benchmarked, on GitHub.
-> **Next up: Phase J (Smart Advisor — recommend + preview + estimated size/time),
-> then G1-G2 (open/browse foreign archives), then D1-D3 + D7 (QA core + CI).**
+> Status date: **2026-08-01**. Engine core DONE, Phase A (GUI) DONE,
+> **Phase D0 (security hotfix) DONE and merged**, and **Phase J part 1 (J1-J4, J8)
+> done** — the app now shows estimated size and time for all four profiles before
+> anything is compressed, scored against two real corpora. **289 tests**.
+> **Next up: J5-J7 (remember last choice, long-job confirm, self-calibration),
+> then B11 + D9 — two integrity findings from the J8 run that outrank new
+> features: SREP failed a restore intermittently, and `compress()` can publish an
+> archive it cannot restore. Then G1-G2, then D1-D3 + D7.**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -234,6 +236,19 @@ display scaling — both need a human at the machine.
       win_amd64, Apache-2.0, in-process, bit-exact) — Microsoft ships no exe, so the
       wheel is the only zero-build Windows path. And **drop zstd.exe** from any tool
       manifest: the `zstandard` wheel already embeds libzstd in-process
+- [ ] B11. 🔴 **Remove SREP from the Extreme/Insane chains** — the source study
+      already decided this ([20 §4](research/20-source-study-lrzip-zpaqfranz.md),
+      [21 §5](research/21-source-study-synthesis.md): not OSI-clean, so it can never
+      ship, and B1's zpaqfranz CDC dedup replaces it) but `planner._CHAINS` still
+      lists it, so every Extreme run on this machine uses it.
+      **Now urgent rather than tidy:** on 2026-08-01 `srep64.exe` failed a restore
+      with "checksum of decompressed data is not the same as checksum of original
+      data" on **1 of 3 runs over byte-identical input** — intermittent, which is
+      worse than deterministic. Details in
+      [benchmarks/2026-08-01-estimator-backtest.md](benchmarks/2026-08-01-estimator-backtest.md).
+      Dropping the stage removes the fault and the licence problem together; the
+      chain becomes `precomp -> sevenzip`, whose estimator constants are already in
+      `excmp/estimate.py`. Do B1 first if the dedup is wanted back.
 
 ## Phase C — Media Shrink mode (opt-in, quality-targeted)
 
@@ -274,6 +289,22 @@ display scaling — both need a human at the machine.
 - [ ] D7. **CI**: GitHub Actions `windows-latest` (7-Zip preinstalled!) — matrix
       Python 3.11–3.13, `setup-python` pip cache, SHA-keyed tool cache; badge in README
 - [ ] D8. Atomic-write upgrade: temp + `fsync` + read-back hash + `os.replace`
+- [ ] D9. 🔴 **`compress()` can publish an archive it cannot restore** — found
+      2026-08-01 during the Phase J out-of-sample run, details in
+      [benchmarks/2026-08-01-estimator-backtest.md](benchmarks/2026-08-01-estimator-backtest.md).
+      `engine._self_test` tests only the **last** stage's container layer (`7z t`)
+      before the atomic publish, so a broken stage *underneath* it goes unnoticed.
+      Observed for real: an Extreme archive was written and reported as a success,
+      and `srep64.exe` then failed its own decompression checksum during extract.
+      The extract-time gate worked — the failure was loud, not silent — but the
+      user had already been told the archive was good.
+      **Fix:** replay the *whole* chain in the self-test before publishing, at least
+      for multi-stage chains, and compare against the ledger. That is the only thing
+      consistent with "post-restore SHA-256 comparison is the acceptance gate for
+      every stage". Cost is real (it doubles compress time for Extreme), so it may
+      need to be a profile-level or opt-in "verify deeply" setting — but the current
+      behaviour contradicts the stated guarantee, so the default must change or the
+      guarantee must be reworded. Pair with D5's deep-verify command.
 
 ## Phase E — Release engineering
 
@@ -537,7 +568,7 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       (`stored/` entries only), jump list (raw COM `ICustomDestinationList`; Qt 6
       removed `QWinJumpList`)
 
-## Phase J — Smart Advisor: recommend + preview + estimates ⬅️ NEXT
+## Phase J — Smart Advisor: recommend + preview + estimates 🟡 J1-J4 + J8 DONE (2026-08-01)
 
 The user's ask: *"add a recommend option so the user can just pick the
 recommended one, and a preview before compression with estimated time and
@@ -559,7 +590,66 @@ side by side.
 have waited. That single fact is the feature's whole justification — so the
 comparison view must make a bad trade *visible before it is paid for*.
 
-- [ ] J1. **Sample-based size estimator** (`excmp/estimate.py`, engine-side, Qt-free).
+**Shipped 2026-08-01 (J1-J4, J8; J5-J7 remain):** `excmp/estimate.py` (Qt-free,
+injectable `Rates`), `analyzer.sample_stats()` measuring compressibility in the
+read pass that already samples for entropy, `gui/suggest.profile_comparison()` +
+`recommend_with_estimates()`, `gui/widgets/compare_table.py`, a compression-side
+free-disk preflight, and `tools/estimate_report.py`. **289 tests pass** (was 223).
+Full scoring: [benchmarks/2026-08-01-estimator-backtest.md](benchmarks/2026-08-01-estimator-backtest.md).
+
+Nine things the implementation corrected against the plan below — the first four
+change how the feature works, and none of them were guessable from the desk:
+
+1. **The handoff's Extreme rate was wrong.** It divided Extreme's *time* by
+   Normal's *bytes*. With Precomp installed, Extreme's override moves the `.zip`
+   and `.msi` into the pipeline, so it pipes **431.7 MB, not 148.3 MB**. Corrected,
+   Extreme's throughput is **2.642 MB/s — the same as Normal's 2.616**. Extreme was
+   never slower per byte here; its extra 104 s is entirely 283 MB of extra routing.
+2. **Estimate from the *worst* sample, not the mean.** The analyzer already reads
+   head/middle/tail; an installer is a compressible stub in front of an
+   incompressible payload, so the mean over-promises. Predicting from the mean
+   needed a 1.28x fudge that disagreed between profiles; predicting from the worst
+   sample needs 0.947, stable. Out-of-sample size error then came in at **+0.07%
+   and −0.60%** on the zstd and 7-Zip chains.
+3. **Sampling cannot predict Precomp, and this is a limitation, not a bug.** Two
+   installers with near-identical probe readings (entropy 7.78 / 7.52, worst ratio
+   1.00 / 0.96): Precomp found nothing in one and a further ~33 points in the
+   other. So for Precomp chains `expected` is a **conservative ceiling** that
+   assumes Precomp fails (`SizeEstimate.upper_bound`; the UI prints "≤ 142.6 MB"
+   and "8% or better"), and `low` reaches to 0.30 so the range still contains the
+   case where it works. Before that fix, a measured 95.7 MB fell *outside* the
+   predicted range.
+4. **A conditional flag must not demote the recommendation.** The estimate-aware
+   override originally overruled the routing heuristic outright. Measured, that was
+   right on the 721 MB corpus and badly wrong on a 163 MB one, where it demoted
+   Extreme, which then delivered **41.4% against Normal's 7.3%** — a 34-point cost
+   to save two minutes. Now: overrule only on an *unconditional* flag; otherwise
+   keep the recommendation and put the condition on the row ("if Precomp cannot
+   open these streams…"). J3 asked for a bad trade to be *visible* before it is
+   paid for, not silently avoided on evidence labelled unknown.
+5. **Rates are keyed on the resolved chain, not the profile name** — so an Extreme
+   that degrades to zstd for want of Precomp predicts what it will actually run
+   instead of promising the absent tool's ratio.
+6. **The Precomp chain has two throughput regimes** (2.642 MB/s no-op, 0.842 MB/s
+   working — 3.1x), selected by the same unknown as #3. No single rate fits both
+   inside J8's ±40%, so that gate is **±80% for Precomp chains**, documented rather
+   than quietly widened. Range containment is asserted unconditionally.
+7. **ZstdStage's level 19 is not the handicap it looked like.** A 16 MB corpus
+   suggested Fast was 2x slower than Normal; measuring 139 MB put zstd at 3.63 MB/s
+   against 7-Zip's 4.03 — within 11%. The earlier inference was a small-sample
+   artifact.
+8. **No cache was added, against J1's instruction, because nothing needed one.**
+   The ratio is folded into `FileInfo`, and the GUI already re-plans from cached
+   `_infos` without re-reading. An LRU in `estimate.py` would have been dead code.
+9. **The ≤1 s cost budget is missed — by pre-existing code.** 300 files took
+   4.95 s; the new zstd probe is 0.07 s of that (1.4%) and Shannon entropy's
+   `Counter.update` is 1.57 s (~53 ms/MiB). `bytes.count()`x256 measured **3x
+   slower**, so there is no cheap stdlib fix; a real one needs numpy or a C
+   extension (a dependency decision, deliberately not taken mid-phase).
+
+⚠️ **Two integrity findings that are not Phase J's to fix — see D9 and B11 below.**
+
+- [x] J1. **Sample-based size estimator** (`excmp/estimate.py`, engine-side, Qt-free).
       Do not use a static ratio table — **measure**. The analyzer already reads up
       to 3×1 MiB per file for entropy (`analyzer.sample_entropy`); compress those
       same samples in-process with `zstandard` at a low level to get a *measured*
@@ -571,7 +661,7 @@ comparison view must make a bad trade *visible before it is paid for*.
       **range** (low/expected/high), never a single false-precision number; cache
       per `(path, size, mtime)` so re-analysis is instant. Cost budget: ≤1 s for a
       few hundred files.
-- [ ] J2. **Time estimator** — must be a **two-rate model**, because a single
+- [x] J2. **Time estimator** — must be a **two-rate model**, because a single
       MB/s figure is actively misleading: 81% of the real corpus was *stored*
       (disk-bound) and only 141 MiB was *piped* (CPU-bound). Blending them gave
       "11.6 MB/s" which would mispredict badly on any other mix.
@@ -582,18 +672,26 @@ comparison view must make a bad trade *visible before it is paid for*.
       dependent — the 2026-07-18 synthetic run hit ~6.5 MB/s on compressible data
       vs 2.5 here — so **ranges are mandatory** and J7 exists to fix it properly.
       Round honestly ("~1 min", "~3 min", "2-4 hours"), never "163 s".
-- [ ] J3. **Profile comparison table** (the headline UI). All four profiles as rows:
+- [x] J3. **Profile comparison table** (the headline UI). All four profiles as rows:
       estimated size, estimated time, % saved, recommended row highlighted with the
       existing `recommend_profile()` reason. Plus a **"not worth it" flag**: when a
       slower profile costs ≥2× the time of a cheaper one for <1 percentage point
       more saving, say so on the row. Reuses `AnalysisSummary`; needs a `Plan` per
       profile (cheap — `planner.plan()` is pure and already runs per profile for
       `reference_plan`).
-- [ ] J4. **Free-disk preflight for compression.** D0 shipped this for *extraction*
+- [x] J4. **Free-disk preflight for compression.** D0 shipped this for *extraction*
       (`engine._check_free_space`) — generalize it. Compression needs
       `output_estimate + peak temp`, and temp is the dangerous one: Precomp
       inflates 2-5× mid-pipeline ([research/10](research/10-security-and-integrity.md) C-3).
-      Warn before starting, with the number.
+      Warn before starting, with the number. **Shipped with two thresholds, which
+      the plan did not anticipate:** extraction can hard-fail on an exact figure
+      because the manifest declares every size, but compression cannot — the output
+      is an estimate and Precomp's inflation is data-dependent. So there is an
+      impossible *floor* that refuses and a pessimistic *peak* that only warns. A
+      preflight that refuses jobs which would have succeeded gets switched off, and
+      then it protects nobody. Needs are also **grouped by volume** (`st_dev`),
+      since temp and output are usually the same disk and then compete for the same
+      bytes — the extraction check looks at one directory only.
 - [ ] J5. **Remember the last choice per content type** — QSettings map
       `dominant category -> profile`, so a user who always picks Fast for video
       folders stops re-picking. **Depends on I1** (the app persists *nothing*
@@ -604,17 +702,35 @@ comparison view must make a bad trade *visible before it is paid for*.
       Generalizes the C4 media-specific warning. Inline banner, **not** a modal
       (I9 is fixing the one existing modal violation — do not add a second).
 - [ ] J7. **Self-calibrating rates** (what makes the estimates actually good).
-      After every completed job, record real `piped_bytes / elapsed` per profile
-      into QSettings and blend into future estimates (exponential moving average,
-      keep the shipped defaults as the cold-start prior). Estimates then converge
-      on *this* machine's true speed instead of a benchmark laptop's. Cheap, and it
-      is the honest answer to content-dependent rates.
-- [ ] J8. **Acceptance test — the estimator must be scored, not trusted.**
+      After every completed job, record real `piped_bytes / elapsed` **per resolved
+      chain** (not per profile — a degraded Extreme and a Fast run the same stages
+      and should share calibration) into QSettings and blend into future estimates
+      (exponential moving average, keep the shipped defaults as the cold-start
+      prior). `Rates` is already an injected argument, so this needs no model
+      change. Estimates then converge on *this* machine's true speed instead of a
+      benchmark laptop's — the two corpora measured on 2026-08-01 disagreed by
+      **2.5× on 7-Zip's throughput alone**, purely because one lived on an external
+      HDD. **Also learn `codec_factor`,** which is what would eventually fix the
+      Precomp blind spot in J1 note 3 — the only real fix, since no cheap probe can.
+- [x] J8. **Acceptance test — the estimator must be scored, not trusted.**
       Backtest J1/J2 against both recorded benchmark runs
       (`docs/benchmarks/2026-07-18-*`, `2026-08-01-*`): predicted size within
       ±10% and predicted time within ±40% of measured, as a real pytest. An
       estimator nobody scored is a guess with a progress bar. Also property-test
       that the store-route portion of the size estimate is *exact*.
+      **Shipped, with three corrections to the plan.** (a) The **2026-07-18 run
+      cannot be backtested at all**: its corpus was `%TEMP%\excmp-sample` and the
+      doc records no file list, so nothing is reproducible from it. It survives
+      only as evidence of the rate spread. Its lesson is now enforced —
+      `2026-08-01-estimator-backtest.md` records exact file names *and* byte sizes,
+      and the test voids itself if a size no longer matches. (b) A backtest against
+      2026-08-01 is **in-sample** (the factors were fitted on it), so it is a
+      regression guard, not validation; the genuine out-of-sample evidence is a
+      second 163 MB corpus predicted before it was compressed. (c) The ±40% time
+      gate is met for zstd/7-Zip chains and is **unachievable for Precomp chains**
+      (two regimes, 3.1× apart) — gated at ±80% with the reason written down.
+      Range containment is asserted for every chain, because a range that excludes
+      the truth is worse than no range.
 
 **Explicitly out of scope for J** (already covered elsewhere): I6 "compare presets
 by actually running them on a ≤100 MB sample" is the *measurement* upgrade to J3's
@@ -636,17 +752,19 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 |---|---|---|---|
 | ~~1~~ | ~~A (GUI)~~ | ✅ done | made every later feature visible and testable |
 | ~~2~~ | ~~D0 (security hotfix)~~ | ✅ done | an exploitable reader bug outranked every feature |
-| **3** | **J (Smart Advisor: recommend + preview + estimates)** | **~2 sessions** | **user-requested; measured proof it is needed — Extreme cost 2.7× the time for +0.17pp on the real corpus. Mostly extends existing `gui/suggest.py`** |
-| 4 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |
-| 5 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
-| 6 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |
-| 7 | E1-E2 (downloader + notices) | 1 session | unblocks every remaining specialist (par2, xtool, FFmpeg) |
-| 8 | I1-I2 (settings/persistence + archive browser) | 1-2 sessions | the app forgetting everything is the loudest daily annoyance |
-| 9 | F1-F3 (encryption + recovery records) | 2-3 sessions | table-stakes "secure"; F3 is the WinRAR feature nobody OSS has |
-| 10 | B6 (xtool + Oodle) | 1-2 sessions | the real FitGirl gap on modern games — needs E1 first |
-| 11 | C (video shrink) | 2-3 sessions | biggest user-visible win on media, but hours of CPU per job |
-| 12 | G3-G8, I3-I8, E3-E4 | as needed | parity + polish + release |
-| 13 | H (installer output) | 2-3 sessions | flagship differentiator, but needs E4 signing to be usable |
+| ~~3a~~ | ~~J1-J4 + J8 (estimator + comparison table + preflight + backtest)~~ | ✅ done | estimates are live and scored against two real corpora |
+| **3b** | **J5-J7 (per-type memory, long-job confirm, self-calibration)** | **1 session** | **finishes Phase J; J7 is what turns a cold-start prior into estimates that fit this machine** |
+| **4** | **B11 + D9 (drop SREP; make the self-test replay the chain)** | **1 session** | **two integrity findings from the J8 run. An archiver that can publish an unrestorable archive outranks features — same principle that put D0 first** |
+| 5 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |
+| 6 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
+| 7 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |
+| 8 | E1-E2 (downloader + notices) | 1 session | unblocks every remaining specialist (par2, xtool, FFmpeg) |
+| 9 | I1-I2 (settings/persistence + archive browser) | 1-2 sessions | the app forgetting everything is the loudest daily annoyance |
+| 10 | F1-F3 (encryption + recovery records) | 2-3 sessions | table-stakes "secure"; F3 is the WinRAR feature nobody OSS has |
+| 11 | B6 (xtool + Oodle) | 1-2 sessions | the real FitGirl gap on modern games — needs E1 first |
+| 12 | C (video shrink) | 2-3 sessions | biggest user-visible win on media, but hours of CPU per job |
+| 13 | G3-G8, I3-I8, E3-E4 | as needed | parity + polish + release |
+| 14 | H (installer output) | 2-3 sessions | flagship differentiator, but needs E4 signing to be usable |
 
 Two ordering principles behind this: **security before features** (D0 first — we
 found a real bug), and **cheap identity wins early** (G1-G2 are S-sized and change

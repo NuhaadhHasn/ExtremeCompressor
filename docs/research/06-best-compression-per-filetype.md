@@ -1,5 +1,10 @@
 # 06 — Best possible compression per file type (verified July 2026)
 
+> **⚠ Source-study update (2026-07-31):** corrections from the line-by-line
+> source studies (docs 13-21, read
+> [21-source-study-synthesis.md](21-source-study-synthesis.md) first) are
+> flagged inline as **[SOURCE-STUDY …]**.
+
 > How ExtremeCompressor becomes "the best compressor for everything": not one
 > magic algorithm, but the *best specialist per data type*, routed automatically,
 > with default / extreme / lossy-opt-in tiers. All tool statuses verified by
@@ -16,12 +21,12 @@
 | **Video** | store losslessly | — (physics) | SVT-AV1 quality-targeted (30-60% at equal perceived quality) | ~0% |
 | **PDF** | `qpdf --object-streams=generate --recompress-flate` (Apache-2.0) | + precomp deflate expansion into solid LZMA | Ghostscript `/ebook` (breaks signatures) | 5-25% |
 | **docx/xlsx/pptx/epub/jar** | unpack ZIP members into the solid stage | same (solid LZMA across members) | — | 5-15% |
-| **Executables (x86/x64)** | 7z **BCJ2** filter + LZMA2 | same, bigger dict | ⚠️ never UPX (AV false-positive magnet, *hurts* archive ratio) | +5-15% over plain LZMA |
-| **Game paks (zlib)** | Precomp `-intense` → SREP → 7z *(working today)* | **xtool** depth mode | per-game "lossy repack" (texture/audio downscale) | 30-70% |
+| **Executables (x86/x64)** | 7z **BCJ2** filter + LZMA2 — **[SOURCE-STUDY ⚠ pass `-mf=BCJ2` explicitly: auto-selection needs mx≥8 + MT mixer (doc 19 §4)]** | same, bigger dict | ⚠️ never UPX (AV false-positive magnet, *hurts* archive ratio) | +5-15% over plain LZMA **[benchmark-derived — no % in 7-Zip source]** |
+| **Game paks (zlib)** | Precomp `-intense` → SREP → 7z *(working today)* **[SOURCE-STUDY ⚠ SREP dropped — doc 20 §4: use zstd `--long`/7z big-dict + zpaqfranz (Insane) instead]** | **xtool** depth mode *(exact CLIs in doc 13 §9)* | per-game "lossy repack" (texture/audio downscale) | 30-70% |
 | **Game paks (Oodle/zstd/lz4)** | store (v1) | **xtool** + game's own `oo2core*.dll` (never redistribute the DLL) | same | up to 60% (engine-dependent) |
 | **Text/code/logs** | 7z LZMA2 solid / zstd --long | zpaqfranz `-m5` | — | 70-95% |
 | **Random/encrypted/.rar/.7z** | store + honest explanation | — | — | ~0% |
-| **Everything else** | 7z `-mx9` | **zpaqfranz `-m4`** (sweet spot) / `-m5` (overnight) | — | varies |
+| **Everything else** | 7z `-mx9` | **zpaqfranz `-m4`** (sweet spot) / `-m5` (overnight) **[SOURCE-STUDY ✓ confirmed — doc 20 §8: both fit 16 GB easily; `-m4 -t2` is the realistic 2-core ceiling, `-m5` is ~2-3× CPU for CM depth]** | — | varies |
 
 ## Key verified facts behind the table
 

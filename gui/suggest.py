@@ -16,10 +16,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
+from excmp.estimate import DEFAULT_RATES, Rates, compare_profiles
 from excmp.planner import Plan, Profile, store_reason
 from excmp.tools import ToolInfo
 
-from .format import fmt_percent, fmt_size
+from .format import fmt_eta, fmt_percent, fmt_size
 from .progress import expected_chain
 
 # Plain-English category names. "binary"/"compressed_archive" are engine
@@ -251,3 +252,176 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
             "exactly what the full chain is for.")
 
     return Profile.NORMAL, "A solid ratio without the long wait."
+
+
+# ---------------------------------------------------------------------------
+# The profile comparison table (J3)
+# ---------------------------------------------------------------------------
+# recommend_profile() answers "which one?"; this answers "and what do the others
+# cost?". Both are needed: the suggestion is only trustworthy if the user can
+# see the trade it made. The estimator supplies the numbers (excmp.estimate);
+# everything here is presentation.
+
+PROFILE_LABELS: dict[Profile, str] = {
+    Profile.FAST: "Fast",
+    Profile.NORMAL: "Normal",
+    Profile.EXTREME: "Extreme",
+    Profile.INSANE: "Insane",
+}
+
+# Short, honest names for the chain column - tool names, not stage ids.
+STAGE_LABELS: dict[str, str] = {
+    "tar": "tar",
+    "zstd": "Zstandard",
+    "sevenzip": "7-Zip",
+    "precomp": "Precomp",
+    "srep": "SREP",
+}
+
+
+def recommend_with_estimates(summary: AnalysisSummary, estimates, cores: int | None = None
+                             ) -> tuple[Profile, str]:
+    """:func:`recommend_profile` with the measured estimate as a final check.
+
+    The heuristic reasons about *routing*: how many bytes a profile is willing to
+    push through the chain. That is the right question until Precomp is involved,
+    because Precomp's override routes anything archive-shaped into the pipeline on
+    the chance it can expand the streams inside. When it cannot - a .rar payload
+    inside a .zip, an .msi - the pipeline fraction looks big while the gain is
+    nil, and the heuristic recommends an hour of work for nothing.
+
+    That is not hypothetical: on the recorded 721 MB corpus the heuristic picks
+    Extreme, which measured 2.7x Normal's time for 0.17 extra percentage points.
+    So the estimate gets the last word, and says why it overruled.
+
+    **But only when the estimate actually knows.** For a Precomp chain the size
+    estimate is a conservative ceiling, not a prediction - Precomp may open
+    streams the sample probe cannot see. Overruling on that would be the
+    estimator acting on an admitted unknown, and it measurably backfires: on a
+    163 MB installer corpus Extreme was flagged as a bad trade and then delivered
+    41.4% against Normal's 7.3%. Demoting it there would have cost the user 34
+    percentage points to save two minutes. So when the flag is conditional the
+    recommendation stands and the row carries the caveat instead - visible before
+    it is paid for, which is what was asked for, rather than a coin flip made on
+    the user's behalf.
+
+    ``recommend_profile`` itself is deliberately left alone - it is the routing
+    judgement, still correct on its own terms and still unit-tested as such.
+    """
+    profile, reason = recommend_profile(summary, cores)
+    row = next((e for e in estimates if e.profile is profile), None)
+    if row is None or not row.not_worth_it or row.beaten_by is None:
+        return profile, reason
+    if row.size.upper_bound:
+        return profile, reason
+    return row.beaten_by, (
+        f"{PROFILE_LABELS.get(profile, profile.value)} would push more data through "
+        f"the chain here, but samples of your files say it lands within "
+        f"{abs(row.extra_points):.1f} points of "
+        f"{PROFILE_LABELS.get(row.beaten_by, row.beaten_by.value)} while taking "
+        f"{row.time_multiple:.1f}× as long.")
+
+
+def _span(low: float, high: float, formatter) -> str:
+    """'34s – 2 min'. Endpoints lose the '~' that fmt_eta adds; the range
+    already says the number is approximate."""
+    lo, hi = formatter(low).lstrip("~ "), formatter(high).lstrip("~ ")
+    return lo if lo == hi else f"{lo} – {hi}"
+
+
+@dataclass(frozen=True)
+class ComparisonRow:
+    """One profile's predicted cost, ready to render."""
+
+    profile: Profile
+    title: str
+    chain: str
+    size_text: str
+    size_range: str
+    saved_text: str
+    time_text: str
+    time_range: str
+    recommended: bool = False
+    reason: str = ""      # why it is recommended (from recommend_profile)
+    note: str = ""        # the trade-off warning, when a cheaper profile wins
+    caveat: str = ""      # missing tools / not-yet-wired backends
+    tone: str = ""        # "", "ok", "warn" - always paired with words
+
+
+def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
+                       summary: AnalysisSummary,
+                       cores: int | None = None,
+                       rates: Rates = DEFAULT_RATES) -> list[ComparisonRow]:
+    """Every profile with its estimated size and time, recommendation marked.
+
+    Reads the recommendation from :func:`recommend_with_estimates` rather than
+    deciding again, so the highlighted row and the card badge can never disagree
+    - and so the table never recommends a row it has itself flagged.
+    """
+    if not infos:
+        return []
+
+    estimates = compare_profiles(infos, tools, rates)
+    recommended, reason = recommend_with_estimates(summary, estimates, cores)
+    rows: list[ComparisonRow] = []
+    for est in estimates:
+        chain = " → ".join(STAGE_LABELS.get(s, s)
+                           for s in expected_chain(est.stages)) or "store only"
+        is_recommended = est.profile is recommended
+
+        note = ""
+        if est.not_worth_it and est.beaten_by is not None:
+            beaten = PROFILE_LABELS[est.beaten_by]
+            if est.size.upper_bound:
+                # The estimate assumed Precomp finds nothing, so the warning is
+                # a condition, not a verdict. Saying otherwise would talk people
+                # out of the one profile that cracks repack-style data.
+                note = (f"If Precomp cannot open these streams, {beaten} gets "
+                        f"there {est.time_multiple:.1f}× quicker for the same "
+                        f"result. If it can, this wins — no way to know without "
+                        f"trying.")
+            else:
+                note = (f"{beaten} gets there {est.time_multiple:.1f}× quicker "
+                        f"and lands within {abs(est.extra_points):.1f} points "
+                        f"of this.")
+
+        # A Precomp chain's size is a ceiling, not a guess - see
+        # excmp.estimate._PRECOMP_OPTIMISTIC. The words have to say which.
+        if est.size.upper_bound:
+            size_text = f"≤ {fmt_size(est.size.expected)}"
+            saved_text = f"{fmt_percent(est.size.saved_fraction)} or better"
+        else:
+            size_text = f"about {fmt_size(est.size.expected)}"
+            saved_text = fmt_percent(est.size.saved_fraction)
+
+        rows.append(ComparisonRow(
+            profile=est.profile,
+            title=PROFILE_LABELS.get(est.profile, est.profile.value),
+            chain=chain,
+            size_text=size_text,
+            size_range=_span(est.size.low, est.size.high, fmt_size),
+            saved_text=saved_text,
+            time_text=fmt_eta(est.time.expected),
+            time_range=_span(est.time.low, est.time.high, fmt_eta),
+            recommended=is_recommended,
+            reason=reason if is_recommended else "",
+            note=note,
+            caveat=" · ".join(est.warnings),
+            tone="ok" if is_recommended else ("warn" if note else ""),
+        ))
+    return rows
+
+
+def comparison_caption(rows: list[ComparisonRow]) -> str:
+    """The sentence above the table. Leads with the bad trade when there is
+    one, because that is the thing the user cannot otherwise find out without
+    paying for it."""
+    if not rows:
+        return ""
+    flagged = [r for r in rows if r.note]
+    if flagged:
+        # The cheapest flagged row, not the most extreme: it is the one the user
+        # is most likely to be choosing between.
+        return f"Estimates for this input. {flagged[0].title}: {flagged[0].note}"
+    return ("Estimates for this input, measured from samples of your files — "
+            "ranges, not promises.")

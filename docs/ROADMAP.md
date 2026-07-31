@@ -1,9 +1,11 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-07-31**. Engine core DONE, Phase A (GUI) DONE, and
-> **Phase D0 (security hotfix) DONE** — the path-traversal bug found in our own
-> reader is fixed and pinned by tests. **223 tests**, benchmarked, on GitHub.
-> **Next up: G1-G2 (open/browse foreign archives), then D1-D3 + D7 (QA core + CI).**
+> Status date: **2026-08-01**. Engine core DONE, Phase A (GUI) DONE, and
+> **Phase D0 (security hotfix) DONE and merged** — the path-traversal bug found in
+> our own reader is fixed, pinned by tests, and validated on 721 MB of real data.
+> **223 tests**, benchmarked, on GitHub.
+> **Next up: Phase J (Smart Advisor — recommend + preview + estimated size/time),
+> then G1-G2 (open/browse foreign archives), then D1-D3 + D7 (QA core + CI).**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -535,6 +537,89 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       (`stored/` entries only), jump list (raw COM `ICustomDestinationList`; Qt 6
       removed `QWinJumpList`)
 
+## Phase J — Smart Advisor: recommend + preview + estimates ⬅️ NEXT
+
+The user's ask: *"add a recommend option so the user can just pick the
+recommended one, and a preview before compression with estimated time and
+estimated size."* Scope agreed 2026-08-01: **estimates + the extra smart
+features** (J1-J8), ~2 sessions.
+
+**Start by reading what already exists** — this is an extension, not a new build:
+`gui/suggest.py` already has `recommend_profile()` (returns profile + the reason
+string shown on the card), `summarize()`, `headline()`, `gain_note()`,
+`store_explanations()` and `strongest_profile()`, all Qt-free and unit-tested in
+`tests/test_gui_suggest.py`. **Do not rewrite them.** The genuinely missing
+pieces are *estimated output size*, *estimated time*, and surfacing all profiles
+side by side.
+
+**Why this matters, measured not guessed**
+([benchmarks/2026-08-01](benchmarks/2026-08-01-real-programs-folder.md)): on a real
+721 MB installer corpus, Extreme cost **2.7× the time of Normal (166s vs 62s) for
+0.17 extra percentage points**. Today nothing tells the user that until after they
+have waited. That single fact is the feature's whole justification — so the
+comparison view must make a bad trade *visible before it is paid for*.
+
+- [ ] J1. **Sample-based size estimator** (`excmp/estimate.py`, engine-side, Qt-free).
+      Do not use a static ratio table — **measure**. The analyzer already reads up
+      to 3×1 MiB per file for entropy (`analyzer.sample_entropy`); compress those
+      same samples in-process with `zstandard` at a low level to get a *measured*
+      ratio per file, then scale to the target profile. This is the same
+      poor-man's-detector idea as FreeArc's `-ma` content probe
+      ([21 §3.5](research/21-source-study-synthesis.md)), reused for prediction.
+      Rules: stored-route files contribute their size at **exactly 1.0** (they are
+      copied verbatim — that part of the estimate is not a guess); return a
+      **range** (low/expected/high), never a single false-precision number; cache
+      per `(path, size, mtime)` so re-analysis is instant. Cost budget: ≤1 s for a
+      few hundred files.
+- [ ] J2. **Time estimator** — must be a **two-rate model**, because a single
+      MB/s figure is actively misleading: 81% of the real corpus was *stored*
+      (disk-bound) and only 141 MiB was *piped* (CPU-bound). Blending them gave
+      "11.6 MB/s" which would mispredict badly on any other mix.
+      `time ≈ stored_bytes / io_rate + piped_bytes / codec_rate[profile] × core_scale`.
+      Measured 2-core starting points, piped-only: **normal ≈ 2.5 MiB/s, extreme
+      ≈ 0.9 MiB/s**; `io_rate` ≈ 100 MB/s and is capped by the *source* disk (the
+      benchmark corpus lived on an external HDD). Note the rate is content-
+      dependent — the 2026-07-18 synthetic run hit ~6.5 MB/s on compressible data
+      vs 2.5 here — so **ranges are mandatory** and J7 exists to fix it properly.
+      Round honestly ("~1 min", "~3 min", "2-4 hours"), never "163 s".
+- [ ] J3. **Profile comparison table** (the headline UI). All four profiles as rows:
+      estimated size, estimated time, % saved, recommended row highlighted with the
+      existing `recommend_profile()` reason. Plus a **"not worth it" flag**: when a
+      slower profile costs ≥2× the time of a cheaper one for <1 percentage point
+      more saving, say so on the row. Reuses `AnalysisSummary`; needs a `Plan` per
+      profile (cheap — `planner.plan()` is pure and already runs per profile for
+      `reference_plan`).
+- [ ] J4. **Free-disk preflight for compression.** D0 shipped this for *extraction*
+      (`engine._check_free_space`) — generalize it. Compression needs
+      `output_estimate + peak temp`, and temp is the dangerous one: Precomp
+      inflates 2-5× mid-pipeline ([research/10](research/10-security-and-integrity.md) C-3).
+      Warn before starting, with the number.
+- [ ] J5. **Remember the last choice per content type** — QSettings map
+      `dominant category -> profile`, so a user who always picks Fast for video
+      folders stops re-picking. **Depends on I1** (the app persists *nothing*
+      today, no QSettings anywhere); either do I1 first or ship the QSettings
+      bootstrap here and let I1 build on it.
+- [ ] J6. **Long-job confirmation** — past a threshold (~45 min estimated), an
+      inline confirm: "this is about 3 hours on this machine — run overnight?".
+      Generalizes the C4 media-specific warning. Inline banner, **not** a modal
+      (I9 is fixing the one existing modal violation — do not add a second).
+- [ ] J7. **Self-calibrating rates** (what makes the estimates actually good).
+      After every completed job, record real `piped_bytes / elapsed` per profile
+      into QSettings and blend into future estimates (exponential moving average,
+      keep the shipped defaults as the cold-start prior). Estimates then converge
+      on *this* machine's true speed instead of a benchmark laptop's. Cheap, and it
+      is the honest answer to content-dependent rates.
+- [ ] J8. **Acceptance test — the estimator must be scored, not trusted.**
+      Backtest J1/J2 against both recorded benchmark runs
+      (`docs/benchmarks/2026-07-18-*`, `2026-08-01-*`): predicted size within
+      ±10% and predicted time within ±40% of measured, as a real pytest. An
+      estimator nobody scored is a guess with a progress bar. Also property-test
+      that the store-route portion of the size estimate is *exact*.
+
+**Explicitly out of scope for J** (already covered elsewhere): I6 "compare presets
+by actually running them on a ≤100 MB sample" is the *measurement* upgrade to J3's
+*estimate* — keep them separate and ship J3 first.
+
 ## Recommended extras (post-v1 ideas)
 
 - Folder size treemap (WinDirStat-style) on the analysis screen
@@ -550,17 +635,18 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
 | Order | Phase | Rough effort | Why here |
 |---|---|---|---|
 | ~~1~~ | ~~A (GUI)~~ | ✅ done | made every later feature visible and testable |
-| **2** | **D0 (security hotfix)** | **1 session** | **an exploitable reader bug outranks every feature** |
-| 3 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |
-| 4 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
-| 5 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |
-| 6 | E1-E2 (downloader + notices) | 1 session | unblocks every remaining specialist (par2, xtool, FFmpeg) |
-| 7 | I1-I2 (settings/persistence + archive browser) | 1-2 sessions | the app forgetting everything is the loudest daily annoyance |
-| 8 | F1-F3 (encryption + recovery records) | 2-3 sessions | table-stakes "secure"; F3 is the WinRAR feature nobody OSS has |
-| 9 | B6 (xtool + Oodle) | 1-2 sessions | the real FitGirl gap on modern games — needs E1 first |
-| 10 | C (video shrink) | 2-3 sessions | biggest user-visible win on media, but hours of CPU per job |
-| 11 | G3-G8, I3-I8, E3-E4 | as needed | parity + polish + release |
-| 12 | H (installer output) | 2-3 sessions | flagship differentiator, but needs E4 signing to be usable |
+| ~~2~~ | ~~D0 (security hotfix)~~ | ✅ done | an exploitable reader bug outranked every feature |
+| **3** | **J (Smart Advisor: recommend + preview + estimates)** | **~2 sessions** | **user-requested; measured proof it is needed — Extreme cost 2.7× the time for +0.17pp on the real corpus. Mostly extends existing `gui/suggest.py`** |
+| 4 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |
+| 5 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
+| 6 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |
+| 7 | E1-E2 (downloader + notices) | 1 session | unblocks every remaining specialist (par2, xtool, FFmpeg) |
+| 8 | I1-I2 (settings/persistence + archive browser) | 1-2 sessions | the app forgetting everything is the loudest daily annoyance |
+| 9 | F1-F3 (encryption + recovery records) | 2-3 sessions | table-stakes "secure"; F3 is the WinRAR feature nobody OSS has |
+| 10 | B6 (xtool + Oodle) | 1-2 sessions | the real FitGirl gap on modern games — needs E1 first |
+| 11 | C (video shrink) | 2-3 sessions | biggest user-visible win on media, but hours of CPU per job |
+| 12 | G3-G8, I3-I8, E3-E4 | as needed | parity + polish + release |
+| 13 | H (installer output) | 2-3 sessions | flagship differentiator, but needs E4 signing to be usable |
 
 Two ordering principles behind this: **security before features** (D0 first — we
 found a real bug), and **cheap identity wins early** (G1-G2 are S-sized and change

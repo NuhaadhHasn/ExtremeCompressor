@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-90%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-223%20passing-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 Most archivers run one algorithm over everything. ExtremeCompressor works like a

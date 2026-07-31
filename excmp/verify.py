@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from .safepath import resolve_within
+
 
 class VerifyError(RuntimeError):
     """Restored data does not match the manifest's hash ledger."""
@@ -20,11 +22,18 @@ def hash_file(path: Path) -> str:
 
 def verify_restore(out_dir: Path, ledger: dict[str, dict]) -> int:
     """Check every ledger entry exists under ``out_dir`` with matching size
-    and SHA-256. Returns the number of verified files; raises VerifyError."""
+    and SHA-256. Returns the number of verified files; raises VerifyError.
+
+    Ledger keys come out of the archive, so they are validated too. A hostile
+    key raises :class:`~excmp.safepath.UnsafePathError` immediately rather than
+    joining the ``problems`` list below: "this archive is malicious" and "this
+    restore is corrupt" are different findings and should not share a message.
+    Read-only, but a naive join still probes arbitrary files for size and hash.
+    """
     out_dir = Path(out_dir)
     problems: list[str] = []
     for rel, meta in ledger.items():
-        p = out_dir / rel
+        p = resolve_within(out_dir, rel)
         if not p.is_file():
             problems.append(f"missing: {rel}")
             continue

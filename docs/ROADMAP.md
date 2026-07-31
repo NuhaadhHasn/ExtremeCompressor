@@ -1,8 +1,9 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-07-31**. Engine core DONE and Phase A (GUI) DONE — 90 tests,
-> benchmarked, on GitHub. **Next up: Phase D0 (security hotfix — a real
-> vulnerability was found in our own reader), then D1-D3 + D7 (QA core + CI).**
+> Status date: **2026-07-31**. Engine core DONE, Phase A (GUI) DONE, and
+> **Phase D0 (security hotfix) DONE** — the path-traversal bug found in our own
+> reader is fixed and pinned by tests. **223 tests**, benchmarked, on GitHub.
+> **Next up: G1-G2 (open/browse foreign archives), then D1-D3 + D7 (QA core + CI).**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -27,13 +28,37 @@
 
 ---
 
-## Phase D0 — Security hotfix ⚠️ DO THIS FIRST
+## Phase D0 — Security hotfix ✅ DONE (2026-07-31, D0.1-D0.5)
 
 Research on 2026-07-31 audited our own code and found an **exploitable
 path-traversal bug**. An archiver that can write outside its output folder has no
 business gaining features. Full analysis: [research/10](research/10-security-and-integrity.md).
 
-- [ ] D0.1. **Fix zip-slip in `extract_stored()`** (`excmp/manifest.py` ~107-122):
+**Shipped:** `excmp/safepath.py` (reject-never-mangle validator, the union of the
+7-Zip/NanaZip/PeaZip rule sets plus bidi overrides), wired into `extract_stored()`,
+`read_container()`, `verify_restore()` **and** `write_container()` — so we also
+cannot create an archive we would refuse to read. Extraction is bounded by the
+manifest's own ledger (exact per-entry size on the real stream, 8 MiB
+`manifest.json` cap, free-disk preflight, per-stage backstop). `SECURITY.md` added.
+**223 tests pass** (was 91): `tests/test_safepath.py`,
+`tests/test_malicious_archive.py`, `tests/test_tar_safety.py`.
+
+Two things the implementation corrected against the plan below, both verified live:
+
+1. **The absolute-path escape needs no `..` at all.** `Path("out") / "C:/evil"`
+   returns `C:\evil` — Python's `/` discards the left operand when the right side is
+   absolute. The traversal case got the attention, but this was the quieter half.
+2. **tarfile's `data` filter *strips* a leading `/`** rather than raising, and only
+   raises `AbsolutePathError` if the name is still absolute afterwards (on Windows,
+   a drive letter). So the D0.4 test pins *containment* for `/x` and a raise for
+   `C:/x`; expecting a raise for both would have encoded a misreading.
+
+Reject-not-mangle turned out to be forced by our own contract, not merely
+preferable: ledger keys are the authoritative filenames, so a rewritten name could
+never satisfy `verify_restore()` — mangling would convert a clear "hostile archive"
+into a puzzling hash mismatch.
+
+- [x] D0.1. **Fix zip-slip in `extract_stored()`** (`excmp/manifest.py` ~107-122):
       it builds `out_dir / rel` from the raw zip entry name and writes with no
       sanitization, so a crafted `.excmp` with `stored/..\..\Startup\evil.bat`
       (or a drive path, or an NTFS ADS name `x.txt:payload`) escapes the
@@ -43,7 +68,7 @@ business gaining features. Full analysis: [research/10](research/10-security-and
       keys: reject absolute paths, drive letters, `..`, `:`, reserved device names
       (CON/NUL/COM1), trailing dots/spaces — then belt-and-braces
       `target.resolve().is_relative_to(out_dir.resolve())` before any write
-- [ ] D0.2. **Malicious-archive test suite**: hand-craft hostile `.excmp` files
+- [x] D0.2. **Malicious-archive test suite**: hand-craft hostile `.excmp` files
       and assert refusal. The **full test matrix is now source-pinned** by the
       union of three archivers' sanitizers ([14 §6](research/14-source-study-nanazip.md),
       [17 §5](research/17-source-study-peazip.md), [19 §7](research/19-source-study-7zip.md)):
@@ -55,19 +80,21 @@ business gaining features. Full analysis: [research/10](research/10-security-and
       7-Zip itself does NOT sanitize in normal path components**, so D0 can
       honestly claim to exceed 7-Zip. Reject (don't mangle) on link escapes,
       mirroring 7-Zip's `IsSafePath`
-- [ ] D0.3. **Ledger-bounded extraction** (decompression-bomb defense): our
+- [x] D0.3. **Ledger-bounded extraction** (decompression-bomb defense): our
       manifest already declares every file's exact size and count — bound
       extraction to `sum(ledger sizes) + slack` and `len(ledger)` files, enforced
       on the real streams (headers can be forged); cap `manifest.json` at ~8 MiB
       before `json.loads`; free-disk preflight; per-stage bounds (Precomp
       legitimately inflates 2-5×, so bound each stage, not just the end)
-- [ ] D0.4. **Pin `filter="data"` with a regression test**: `tarstage.py` already
+- [x] D0.4. **Pin `filter="data"` with a regression test**: `tarstage.py` already
       passes it (PEP 706 — good), so add a hostile-tar test that fails if anyone
       ever removes the argument
-- [ ] D0.5. `SECURITY.md` + short threat model (pulled forward from E6): malicious
+- [x] D0.5. `SECURITY.md` + short threat model (pulled forward from E6): malicious
       archive, tampered tools, tampered archive, lost password. An archiver parses
       untrusted input — researchers need a disclosure channel before v1
-- [ ] D0.6. **(new, from [14 §3](research/14-source-study-nanazip.md))** Process
+- [ ] D0.6. **DEFERRED to its own session** (doc 21 §4 suggests it become a
+      standalone D-item; it is Windows ctypes work on subprocess spawning, not
+      part of the archive-parsing fix). **(new, from [14 §3](research/14-source-study-nanazip.md))** Process
       mitigations, S-effort: apply `PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY`
       (prohibit dynamic code + block non-system DLLs) and
       `CHILD_PROCESS_POLICY` + a kill-on-close Job object to every tool

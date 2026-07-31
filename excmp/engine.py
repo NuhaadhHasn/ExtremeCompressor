@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .analyzer import FileInfo, analyze_tree
-from .manifest import (Manifest, StageRecord, extract_stored, read_container,
-                       write_container)
+from .manifest import (ContainerError, Manifest, StageRecord, declared_total,
+                       extract_stored, read_container, write_container)
 from .planner import Plan, Profile, plan as make_plan
 from .stages.base import Stage, StageContext, StageError, StageSkip
 from .stages.sevenzip import SevenZipStage
@@ -32,6 +32,32 @@ _TREE_CAPABLE = {"sevenzip", "zstd"}
 
 _PAYLOAD_EXT = {"sevenzip": ".7z", "zstd": ".tar.zst", "tar": ".tar",
                 "precomp": ".pcf", "srep": ".srep"}
+
+
+# A restored stage output beyond this multiple of the declared total is a
+# runaway. Deliberately loose: Precomp legitimately inflates 2-5x mid-pipeline
+# (research/10 section C-3), so this is a "1 MB archive cannot become 500 GB"
+# backstop, not a precise bound.
+_STAGE_INFLATION_LIMIT = 8
+_STAGE_FLOOR_BYTES = 64 << 20
+
+
+def _tree_size(path: Path) -> int:
+    p = Path(path)
+    if p.is_file():
+        return p.stat().st_size
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+
+def _check_free_space(out_dir: Path, ledger: dict[str, dict]) -> None:
+    """Fail before doing work, not half way through writing the user's disk
+    full. Precomp inflates mid-pipeline, so the margin is on top of the total."""
+    need = int(declared_total(ledger) * 1.05)
+    free = shutil.disk_usage(out_dir).free
+    if free < need:
+        raise RuntimeError(
+            f"not enough free space in {out_dir}: this archive restores to about "
+            f"{need >> 20} MiB but only {free >> 20} MiB is available")
 
 
 def _wait_if_paused(ctx: StageContext) -> None:
@@ -229,6 +255,9 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-x-", dir=ctx.temp_dir))
     try:
         manifest, payload = read_container(archive, job_dir)
+        _check_free_space(out_dir, manifest.inputs)
+        stage_budget = max(declared_total(manifest.inputs) * _STAGE_INFLATION_LIMIT,
+                           _STAGE_FLOOR_BYTES)
         restored = 0
         if payload is not None:
             current = payload
@@ -241,6 +270,12 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
                 is_last = i == len(stages) - 1
                 dst = out_dir if is_last else job_dir / f"r{i}"
                 current = stage.extract(current, dst, ctx)
+                produced = _tree_size(current)
+                if produced > stage_budget:
+                    raise ContainerError(
+                        f"stage '{sid}' produced {produced >> 20} MiB, far beyond "
+                        f"the {stage_budget >> 20} MiB implied by the manifest "
+                        f"ledger - refusing to continue")
                 if not is_last and current.is_dir():
                     # intermediate extract of a single-file payload: descend
                     inner = [p for p in current.rglob("*") if p.is_file()]
@@ -248,7 +283,7 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
                         raise StageError(f"stage '{sid}' produced {len(inner)} files, expected 1")
                     current = inner[0]
         restored += len([1 for m in manifest.inputs.values() if m.get("route") == "pipeline"])
-        stored = extract_stored(archive, out_dir)
+        stored = extract_stored(archive, out_dir, manifest.inputs)
         restored += len(stored)
         verified = verify_restore(out_dir, manifest.inputs)
     finally:

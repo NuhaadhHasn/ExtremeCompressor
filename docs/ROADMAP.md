@@ -43,6 +43,14 @@ manifest's own ledger (exact per-entry size on the real stream, 8 MiB
 **223 tests pass** (was 91): `tests/test_safepath.py`,
 `tests/test_malicious_archive.py`, `tests/test_tar_safety.py`.
 
+**Real-data acceptance run** (not just fixtures) —
+[benchmarks/2026-08-01](benchmarks/2026-08-01-real-programs-folder.md): 721 MB of
+real installers and archives, both profiles, **6/6 byte-identical** under an
+independent SHA-256 check. Confirms the two things unit tests cannot: legitimate
+awkward filenames (spaces, parens, `=`) are *not* rejected, and the exact-size
+stream cap handles 250 MB single entries. Also yields throughput calibration
+(~11.6 MB/s normal, ~4.3 MB/s extreme compress on the 2-core target).
+
 Two things the implementation corrected against the plan below, both verified live:
 
 1. **The absolute-path escape needs no `..` at all.** `Path("out") / "C:/evil"`

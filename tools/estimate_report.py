@@ -40,8 +40,9 @@ BACKTEST_FILES = [
     "Winxvideo.AI.3.5.0.0.w64.rar",
     "Wondershare UniConverter 15.0.9.15 (x64) pass=123.zip",
 ]
-# docs/benchmarks/2026-08-01-real-programs-folder.md
-BACKTEST_MEASURED = {Profile.NORMAL: (0.0280, 62.4), Profile.EXTREME: (0.0297, 166.3)}
+# Post-B11/D9 run of 2026-08-01 (precomp->sevenzip chain, total includes the
+# pre-publish restore+verify gate) - keep in step with tests/test_estimate_backtest.py.
+BACKTEST_MEASURED = {Profile.NORMAL: (0.0280, 103.8), Profile.EXTREME: (0.0297, 254.3)}
 
 SIZE_TOLERANCE = 0.10
 TIME_TOLERANCE = 0.40

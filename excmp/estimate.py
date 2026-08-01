@@ -81,9 +81,14 @@ _CODEC_FACTOR: Mapping[str, float] = MappingProxyType({
 # (No key for chains containing srep: they are never planned any more. Old
 # srep archives still extract, but extraction needs no estimate.)
 _CODEC_RATE: Mapping[str, float] = MappingProxyType({
-    "zstd": 3.407e6,
-    "sevenzip": 3.247e6,
-    "precomp+sevenzip": 1.55e6,
+    "zstd": 3.50e6,      # 3.2 / 3.627 / 3.677 MB/s measured
+    "sevenzip": 3.38e6,  # 2.616 (external HDD) / 4.031 / 3.985 / 3.104 MB/s
+    # Post-B11 chain, both regimes measured on 2026-08-01: 2.218 MB/s when
+    # Precomp found nothing (721 MB corpus), 0.891 MB/s when it opened streams
+    # (163 MB corpus). Note the same corpora ran the old srep chain at 2.642
+    # no-op - srep's dedup used to SHRINK 7-Zip's input, so removing it costs
+    # some throughput as well as ratio. Geometric mean of the two regimes.
+    "precomp+sevenzip": 1.41e6,
 })
 
 _FALLBACK_FACTOR = 0.95
@@ -93,6 +98,22 @@ _FALLBACK_RATE = 2.5e6
 # 2x between corpora; a Precomp chain has to span its two regimes as well.
 _RATE_SPREAD = 2.0
 _PRECOMP_RATE_SPREAD = 3.2
+
+# Bytes/s for the D9 pre-publish self-test, which restores the WHOLE archive
+# (stored files included) and re-hashes it before the atomic rename. Every job
+# pays it, so the promised wait must include it. Keyed per chain because the
+# verify pass replays the chain's own restore: measured 62.8 MB/s for zstd,
+# 31.4 for 7-Zip - and only 3.5 MB/s for a Precomp chain whose streams Precomp
+# actually reconstructed, vs 12.4 when it had found nothing. Same two-regime
+# problem as compression, priors are geometric means across the measured runs.
+_VERIFY_RATE: Mapping[str, float] = MappingProxyType({
+    "zstd": 58e6,        # 62.8 MB/s measured
+    "sevenzip": 21e6,    # 31.4 / 14.3 MB/s - cache effects swing this 2x+:
+    #                      the same extract measured 50.3s inside the gate and
+    #                      19.9s user-side minutes later. Coarse on purpose.
+    "precomp+sevenzip": 6.5e6,   # 12.7 no-op regime / 3.5 working regime
+})
+_FALLBACK_VERIFY_RATE = 15e6
 
 # How much worse than the worst sample things can still turn out. Small, because
 # the worst sample is already the pessimistic reading.
@@ -145,6 +166,7 @@ class Rates:
     codec: Mapping[str, float] = _CODEC_RATE
     codec_factor: Mapping[str, float] = _CODEC_FACTOR
     rate_spread: float = _RATE_SPREAD
+    verify: Mapping[str, float] = _VERIFY_RATE
 
     @staticmethod
     def chain_key(stages: Sequence[str]) -> str:
@@ -166,6 +188,12 @@ class Rates:
         if "precomp" in stages:
             return max(self.rate_spread, _PRECOMP_RATE_SPREAD)
         return self.rate_spread
+
+    def verify_rate_for(self, stages: Sequence[str]) -> float:
+        # A store-only archive restores as a copy + hash: io-bound, no codec.
+        if not self.chain_key(stages):
+            return self.io_rate
+        return self.verify.get(self.chain_key(stages), _FALLBACK_VERIFY_RATE)
 
 
 DEFAULT_RATES = Rates()
@@ -322,7 +350,13 @@ def estimate_size(infos: list[FileInfo], the_plan: Plan,
 
 def estimate_time(infos: list[FileInfo], the_plan: Plan,
                   rates: Rates = DEFAULT_RATES) -> TimeEstimate:
-    """Predict compress seconds with the two-rate model."""
+    """Predict the seconds the user will wait, with the two-rate model.
+
+    Three terms since D9: stored bytes cost a disk copy, piped bytes cost the
+    codec, and then the pre-publish self-test restores and re-hashes the whole
+    archive. Leaving the third term out would make every estimate
+    systematically low by the exact amount of the integrity guarantee.
+    """
     stored, piped = _split(infos, the_plan)
     stored_bytes = sum(i.size for i in stored)
     piped_bytes = sum(i.size for i in piped)
@@ -331,12 +365,16 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     io_seconds = stored_bytes / rates.io_rate if rates.io_rate else 0.0
     rate = rates.rate_for(stages)
     codec_seconds = piped_bytes / rate if rate else 0.0
+    verify_rate = rates.verify_rate_for(stages)
+    verify_seconds = ((stored_bytes + piped_bytes) / verify_rate
+                      if verify_rate else 0.0)
     spread = max(1.0, rates.spread_for(stages))
 
+    base = io_seconds + verify_seconds
     return TimeEstimate(
-        low=io_seconds + codec_seconds / spread,
-        expected=io_seconds + codec_seconds,
-        high=io_seconds + codec_seconds * spread,
+        low=base + codec_seconds / spread,
+        expected=base + codec_seconds,
+        high=base + codec_seconds * spread,
     )
 
 

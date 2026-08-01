@@ -2,7 +2,9 @@
 
 Guarantees:
 - inputs are never touched; outputs are written to ``<out>.tmp`` and
-  atomically renamed only after the archive verifies;
+  atomically renamed only after the archive has been FULLY restored in temp
+  and every ledger hash verified (``_verify_before_publish`` - the same
+  ``extract()`` path users run, because tool exit codes cannot be trusted);
 - every original file's SHA-256 is recorded in the manifest, and
   ``extract`` re-checks the ledger before reporting success.
 """
@@ -96,6 +98,7 @@ def compress_space_needs(out_path: Path, temp_dir: Path, infos: list[FileInfo],
     """
     size = estimate_size(infos, the_plan)
     piped = size.piped_bytes
+    total = size.stored_bytes + size.piped_bytes
     stages = next((r.stages for r in the_plan.routes if r.action == "pipeline"), [])
     inflation = _PRECOMP_INFLATION if "precomp" in stages else 1
 
@@ -103,12 +106,15 @@ def compress_space_needs(out_path: Path, temp_dir: Path, infos: list[FileInfo],
     # of the estimate - being wrong here means a disk-full failure late in a long
     # job, which is the outcome this function exists to prevent.
     # Temp: the staging copy of the piped files lives until the chain finishes,
-    # and the tar that feeds the chain lives beside it. Precomp's output then
-    # lands on top of both.
+    # the tar that feeds the chain lives beside it, and Precomp's output lands
+    # on top of both. Then the pre-publish self-test (D9) restores the ENTIRE
+    # archive into temp - stored files included - so every job needs the full
+    # input size there again, even a store-only one.
     needs: dict[int, tuple[Path, int, int]] = {}
     for probe, floor, peak in (
         (out_path.parent, size.high, size.high),
-        (temp_dir, piped * 2, piped * (2 + inflation) if piped else 0),
+        (temp_dir, piped * 2 + total,
+         (piped * (2 + inflation) if piped else 0) + total),
     ):
         found = _free_bytes(probe)
         if found is None:
@@ -302,7 +308,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         write_container(tmp_out, manifest, payload_path, stored_map)
 
         # --- verify then atomically publish ---------------------------------
-        _self_test(tmp_out, manifest, registry, ctx, job_dir)
+        _verify_before_publish(tmp_out, ctx, job_dir)
         if out_path.exists():
             out_path.unlink()
         tmp_out.replace(out_path)
@@ -324,23 +330,34 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     )
 
 
-def _self_test(archive: Path, manifest: Manifest, registry: dict[str, Stage],
-               ctx: StageContext, job_dir: Path) -> None:
-    """Cheap integrity gate before publishing: test the payload container
-    layer (7z t / zstd stream read) without a full restore."""
-    if not manifest.payload_name:
-        return
-    test_dir = job_dir / "selftest"
-    _, payload = read_container(archive, test_dir)
-    assert payload is not None
-    last = manifest.stages[-1].stage
-    stage = registry[last]
-    if hasattr(stage, "test"):
-        stage.test(payload, ctx)  # type: ignore[attr-defined]
-    else:
-        probe = test_dir / "probe"
-        stage.extract(payload, probe, ctx)
-        shutil.rmtree(probe, ignore_errors=True)
+def _verify_before_publish(archive: Path, ctx: StageContext, job_dir: Path) -> int:
+    """The acceptance gate (D9): fully restore the archive and verify every
+    ledger hash BEFORE the atomic rename makes it the user's output.
+
+    This replaced a cheaper test that only exercised the *last* stage's
+    container layer (``7z t``), which let a broken stage underneath sail
+    through: srep64.exe once failed its own decompression checksum at extract
+    time on an archive compress() had already reported as a success
+    (benchmarks/2026-08-01-estimator-backtest.md). Tool exit codes cannot be
+    trusted, so the gate is the same ``extract()`` + ``verify_restore()`` path
+    users run - not a lookalike. The cost is one extra restore per job; the
+    product's tagline is "verifies a byte-identical restore before claiming
+    success", and this is what makes that sentence true rather than aspirational.
+
+    Progress is muted (the job's bar sits in the 95% band that
+    ``gui.progress`` reserves for exactly this); cancel/pause/logs pass through.
+    """
+    restore_dir = job_dir / "selftest"
+    quiet = StageContext(temp_dir=ctx.temp_dir, threads=ctx.threads,
+                         log_cb=ctx.log_cb, cancel=ctx.cancel, pause=ctx.pause)
+    ctx.log_cb("verify", "restoring the whole archive to check every hash "
+                         "before publishing…")
+    result = extract(archive, restore_dir, quiet)
+    shutil.rmtree(restore_dir, ignore_errors=True)
+    ctx.log_cb("verify", f"self-test passed: {result.files_restored} file(s) "
+                         f"restored, {result.verified} hash(es) verified in "
+                         f"{result.elapsed_s:.1f}s")
+    return result.verified
 
 
 def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:

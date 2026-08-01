@@ -26,13 +26,22 @@ ENTROPY_STORE_THRESHOLD = 7.9  # bits/byte; above this LZMA gains ~nothing
 _MEDIA = {Category.VIDEO, Category.AUDIO, Category.IMAGE}
 
 # Chains are expressed as (stage_id, required_tool | None); zstd needs no tool.
+#
+# SREP was removed from every chain on 2026-08-01 (roadmap B11). Two reasons,
+# either sufficient: it failed a real restore on 1 of 3 runs over byte-identical
+# input (intermittent checksum mismatch inside srep64.exe itself - see
+# benchmarks/2026-08-01-estimator-backtest.md), and it is closed freeware in an
+# OSI-clean project, already slated for replacement by zpaqfranz's dedup (B1).
+# Its long-range-dedup job falls to LZMA2's dictionary until B1 lands. Archives
+# that recorded an srep stage before this change still extract: the stage stays
+# registered in the engine - it just is never planned again.
 _CHAINS: dict[str, list[tuple[str, str | None]]] = {
     "fast": [("zstd", None)],
     "normal": [("sevenzip", "7z")],
-    "extreme": [("precomp", "precomp"), ("srep", "srep"), ("sevenzip", "7z")],
+    "extreme": [("precomp", "precomp"), ("sevenzip", "7z")],
     # INSANE upgrades the final codec to zpaqfranz when a stage exists for it;
     # until then it is the extreme chain (a warning tells the user).
-    "insane": [("precomp", "precomp"), ("srep", "srep"), ("sevenzip", "7z")],
+    "insane": [("precomp", "precomp"), ("sevenzip", "7z")],
 }
 
 

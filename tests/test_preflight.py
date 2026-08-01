@@ -79,11 +79,13 @@ def test_an_impossible_job_is_refused_before_any_work_happens(tmp_path, monkeypa
 
 @needs_7z
 def test_a_tight_but_possible_job_warns_and_still_runs(tmp_path, monkeypatch):
-    """Enough room for the archive and the staging copy, not enough for the
-    worst case Precomp could inflate to. That is a warning, not a refusal."""
+    """Enough room for the archive, the staging copy AND the self-test restore
+    (D9 restores the whole archive into temp before publishing), but not for
+    the pipeline's worst case. That is a warning, not a refusal."""
     src = _compressible_tree(tmp_path)
     ctx = StageContext(temp_dir=tmp_path / "tmp")
-    _pretend_free(monkeypatch, 6 * 1024 * 1024)   # 6 MB against a ~2 MB input
+    # ~2.1 MB input: floor = 2x staging + 1x restore ≈ 6.3 MB; peak ≈ 8.4 MB.
+    _pretend_free(monkeypatch, 7 * 1024 * 1024)
 
     result = engine.compress([src], tmp_path / "out.excmp", Profile.NORMAL, ctx)
 
@@ -108,9 +110,10 @@ def test_the_needs_add_up_when_temp_and_output_share_a_volume(tmp_path):
     assert 0 < floor <= peak
 
 
-def test_a_store_only_job_needs_no_temp_headroom(tmp_path):
-    """Nothing is piped, so nothing is staged or inflated - the only requirement
-    is room for the archive itself."""
+def test_a_store_only_job_still_budgets_the_self_test_restore(tmp_path):
+    """Nothing is piped, so nothing is staged or inflated - but D9's pre-publish
+    self-test restores the whole archive into temp, so even a store-only job
+    needs the input's size there. No inflation risk though: floor equals peak."""
     from excmp.analyzer import analyze_tree
     from excmp.planner import plan as make_plan
 
@@ -123,3 +126,5 @@ def test_a_store_only_job_needs_no_temp_headroom(tmp_path):
     (_probe, floor, peak), = engine.compress_space_needs(
         tmp_path / "out.excmp", tmp_path / "tmp", infos, the_plan)
     assert floor == peak, "no pipeline means no inflation risk to warn about"
+    assert floor >= sum(i.size for i in infos), \
+        "the self-test restore has to fit in temp"

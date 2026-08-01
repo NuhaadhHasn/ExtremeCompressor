@@ -60,9 +60,7 @@ _IO_RATE = 100e6
 _CODEC_FACTOR: Mapping[str, float] = MappingProxyType({
     "zstd": 0.960,
     "sevenzip": 0.947,
-    "srep+sevenzip": 0.944,
-    "precomp+sevenzip": 0.942,
-    "precomp+srep+sevenzip": 0.940,
+    "precomp+sevenzip": 0.941,
 })
 
 # Bytes/s through the chain, piped bytes only - geometric means of every real
@@ -72,17 +70,20 @@ _CODEC_FACTOR: Mapping[str, float] = MappingProxyType({
 # inferred from a 16 MB corpus; measuring 139 MB showed the two are within 5% of
 # each other, so ZstdStage's level 19 is not the handicap it looked like.)
 #
-# The Precomp chains are the hard case. Measured 2.642 MB/s when Precomp finds
-# nothing and streams straight through, and 0.842 MB/s when it does find
-# deflate streams and the inflated data lands on SREP and LZMA2 - a 3.1x spread
-# between two regimes, not noise. Nothing cheap predicts which one applies (see
-# _PRECOMP_OPTIMISTIC), so the rate is the middle and the range covers both.
+# The Precomp chain is the hard case. Measured with the pre-B11 srep chain:
+# 2.642 MB/s when Precomp finds nothing and streams straight through, and
+# 0.842 MB/s when it does find deflate streams and the inflated data lands on
+# the final codec - a 3.1x spread between two regimes, not noise. Nothing cheap
+# predicts which regime applies (see _PRECOMP_OPTIMISTIC), so the rate sits in
+# the middle and the range covers both. B11 removed srep from the chain, which
+# should only make it faster; the 2026-08-01 post-B11 runs re-anchor this.
+#
+# (No key for chains containing srep: they are never planned any more. Old
+# srep archives still extract, but extraction needs no estimate.)
 _CODEC_RATE: Mapping[str, float] = MappingProxyType({
     "zstd": 3.407e6,
     "sevenzip": 3.247e6,
-    "srep+sevenzip": 3.10e6,
     "precomp+sevenzip": 1.55e6,
-    "precomp+srep+sevenzip": 1.491e6,
 })
 
 _FALLBACK_FACTOR = 0.95
@@ -147,7 +148,7 @@ class Rates:
 
     @staticmethod
     def chain_key(stages: Sequence[str]) -> str:
-        """``['precomp', 'srep', 'sevenzip']`` -> ``'precomp+srep+sevenzip'``.
+        """``['precomp', 'sevenzip']`` -> ``'precomp+sevenzip'``.
 
         The engine prepends a ``tar`` stage at run time for multi-stage chains;
         it is pure I/O and carries no calibration, so it is ignored here.

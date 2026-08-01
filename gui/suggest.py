@@ -84,9 +84,15 @@ class AnalysisSummary:
 
 
 def strongest_profile(tools: dict[str, ToolInfo | None] | None) -> Profile:
-    """The best profile this machine can actually run end to end."""
+    """The best profile this machine can actually run end to end.
+
+    Precomp is the only tool that changes what Extreme *is* - it opens deflate
+    streams the other chains must store. SREP no longer counts (B11 removed it
+    from every chain), so without Precomp, Extreme would plan the same stages
+    as Normal and claiming it as "strongest" would be a lie.
+    """
     tools = tools or {}
-    if tools.get("precomp") is not None or tools.get("srep") is not None:
+    if tools.get("precomp") is not None:
         return Profile.EXTREME
     return Profile.NORMAL if tools.get("7z") is not None else Profile.FAST
 
@@ -211,7 +217,7 @@ def store_explanations(summary: AnalysisSummary, limit: int = 6) -> list[tuple[s
 # tuned against real runs on the machine it ships to. The trade-off it
 # balances:
 #
-#   Extreme (precomp -> srep -> 7z) wins enormously on repack-style data
+#   Extreme (precomp -> 7z) wins enormously on repack-style data
 #   - 72% on the benchmark corpus - but it is single-digit MB/s on two cores
 #   and can inflate temp space 2-5x mid-pipeline.
 #
@@ -230,7 +236,7 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
     selected profile happens to manage.
     """
     cores = cores or os.cpu_count() or 2
-    heavy_tools = summary.tools.get("precomp", False) or summary.tools.get("srep", False)
+    heavy_tools = summary.tools.get("precomp", False)
 
     if summary.floor_store_fraction >= MOSTLY_INCOMPRESSIBLE:
         return Profile.FAST, (

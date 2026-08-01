@@ -40,6 +40,21 @@ from .winintegration import (TBPF_ERROR, TBPF_PAUSED, Notifier, TaskbarProgress,
 DEFAULT_TEMP = Path.home() / ".excmp" / "tmp"
 
 
+def initial_size(avail_w: int, avail_h: int) -> tuple[int, int]:
+    """The window size for a given available screen area.
+
+    The target machine is a 1366x768 laptop, and the old hard-coded 1080x900
+    opened 132px taller than that entire display. Rule: take most of a small
+    screen (leaving breathing room and the taskbar's cut, which is already out
+    of ``availableGeometry``), and stop growing at a comfortable reading width
+    on big monitors. Pure function so the arithmetic is testable without a
+    screen.
+    """
+    width = min(1180, int(avail_w * 0.92))
+    height = min(940, int(avail_h * 0.94))
+    return max(width, 640), max(height, 480)
+
+
 def unique_path(path: Path) -> Path:
     """``out.excmp`` → ``out (2).excmp`` if needed.
 
@@ -65,7 +80,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.theme_name = theme
         self.setWindowTitle(self.tr("ExtremeCompressor"))
-        self.resize(1080, 900)
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            self.resize(*initial_size(avail.width(), avail.height()))
+        else:  # headless test environments
+            self.resize(*initial_size(1280, 720))
 
         self.tools = find_tools(with_versions=True)
         self.queue = QueueManager(DEFAULT_TEMP, self.tools, self)

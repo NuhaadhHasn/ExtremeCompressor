@@ -134,7 +134,7 @@ def test_the_window_never_suggests_an_unconditionally_bad_trade(window, qtbot, t
     rows = profile_comparison(window._infos, window.tools, window._summary)
     for row in rows:
         if row.recommended and row.note:
-            assert row.note.startswith("If Precomp cannot open"), row.note
+            assert "Precomp" in row.note, row.note
 
 
 def test_choosing_a_row_switches_the_preset_and_replans(window, qtbot, tmp_path):

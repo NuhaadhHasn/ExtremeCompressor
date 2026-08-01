@@ -98,7 +98,7 @@ class ProfileRow(QFrame):
         cells = (
             _cell(name, "", values, bold=True,
                   tone="ok" if row.recommended else row.tone),
-            _cell(row.chain, "", values, tone="warn" if row.caveat else ""),
+            _cell(row.chain, row.caveat, values, tone="warn" if row.caveat else ""),
             _cell(row.size_text, row.size_range, values),
             _cell(row.saved_text, "", values),
             _cell(row.time_text, row.time_range, values,
@@ -108,20 +108,22 @@ class ProfileRow(QFrame):
             line.addWidget(cell, stretch)
         stack.addWidget(values)
 
-        # All the prose goes on its own full-width line, never inside a column:
-        # the cells hold short values only. A row can be both recommended *and*
-        # carrying a conditional warning - that is the honest state for a Precomp
-        # chain - so both are shown. Wrapping either into a 110px cell made the
-        # row 600px tall.
-        detail = " ".join(part for part in (row.reason, row.note, row.caveat) if part)
-        if detail:
-            prose = QLabel(detail, self)
+        # The warning goes on its own full-width line, never inside a column -
+        # wrapping prose into a 110px cell made the row 600px tall.
+        #
+        # Only the warning. `row.reason` is deliberately NOT shown here: the
+        # preset cards above already print "Suggested: <reason>" in full, and
+        # seen on screen the table repeating it made the same sentence appear
+        # twice in one viewport. A recommended row is marked by its outline and
+        # its "(suggested)" label; the reason still travels on the row so
+        # MainWindow can hand it to the preset badge.
+        if row.note:
+            prose = QLabel(row.note, self)
             prose.setObjectName("Subtitle")
             prose.setWordWrap(True)
             prose.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-            if row.note and not row.recommended:
-                prose.setProperty("tone", "warn")
-                repolish(prose)
+            prose.setProperty("tone", "warn")
+            repolish(prose)
             stack.addWidget(prose)
 
         # One accessible sentence per row - a screen reader should not have to

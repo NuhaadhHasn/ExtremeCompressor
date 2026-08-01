@@ -160,9 +160,13 @@ def test_comparison_shows_every_profile_with_a_size_and_a_time():
 
     assert [r.profile for r in rows] == list(Profile)
     for row in rows:
-        assert row.size_text and row.time_text
-        assert "–" in row.size_range or row.size_range        # a range, or a single value
-        assert row.chain
+        assert row.size_text and row.time_text and row.chain
+        # A range is either a real span or absent - never a restatement of the
+        # value above it.
+        for span, value in ((row.size_range, row.size_text),
+                            (row.time_range, row.time_text)):
+            assert span == "" or "–" in span
+            assert span != value.lstrip("≤~ ").replace("about ", "")
 
 
 def test_exactly_one_row_is_recommended_and_it_owns_the_reason():
@@ -223,7 +227,9 @@ def test_a_conditional_flag_warns_but_does_not_demote_the_recommendation():
     rows = profile_comparison(infos, _TOOLS, summary, cores=2)
     marked = next(r for r in rows if r.recommended)
     assert marked.profile is Profile.EXTREME
-    assert marked.note.startswith("If Precomp cannot open")
+    # Asserted on meaning, not wording: the warning must name Precomp as the
+    # condition, so it reads as "it depends" rather than "do not do this".
+    assert "Precomp" in marked.note
 
 
 def test_an_unconditional_flag_does_overrule():
@@ -244,12 +250,16 @@ def test_an_unconditional_flag_does_overrule():
     assert not any(r.recommended and r.profile is Profile.NORMAL for r in rows)
 
 
-def test_the_caption_leads_with_the_bad_trade():
+def test_the_caption_points_at_the_flagged_rows_without_repeating_them():
+    """Seen on screen, a caption that restated the row's warning printed the same
+    sentence three times in one panel. It names the rows instead."""
     infos = _real_infos()
     rows = profile_comparison(infos, _TOOLS, _real_summary(infos), cores=2)
     caption = comparison_caption(rows)
-    assert "Extreme" in caption or "Insane" in caption
-    assert "quicker" in caption
+
+    assert "Extreme" in caption and "Insane" in caption
+    flagged = next(r for r in rows if r.note)
+    assert flagged.note not in caption
 
 
 def test_a_precomp_row_says_at_most_rather_than_about():
@@ -267,14 +277,17 @@ def test_a_precomp_row_says_at_most_rather_than_about():
 
 
 def test_the_precomp_warning_is_stated_as_a_condition():
-    """'Extreme is not worth it' would be a lie on repack data. 'If Precomp
-    cannot open these streams' is the truth, and it is what the row says."""
+    """'Extreme is not worth it' would be a lie on repack data, where Precomp is
+    the whole point. The row has to make Precomp the condition, and stay one
+    sentence - it is repeated on every flagged row."""
     infos = _real_infos()
     rows = {r.profile: r for r in profile_comparison(infos, _TOOLS,
                                                      _real_summary(infos), cores=2)}
     note = rows[Profile.EXTREME].note
-    assert note.startswith("If Precomp cannot open")
-    assert "no way to know without trying" in note
+    assert "Precomp" in note and "otherwise" in note
+    # One sentence. Counting "." would trip over the "5.7x" multiplier, so look
+    # for a real sentence break instead.
+    assert ". " not in note, f"one sentence, got: {note}"
 
 
 def test_the_caption_stays_neutral_when_every_profile_earns_its_time():
@@ -289,10 +302,30 @@ def test_the_caption_stays_neutral_when_every_profile_earns_its_time():
 
 
 def test_a_not_yet_wired_backend_is_disclosed_on_its_row():
+    """Insane shows the same chain and the same numbers as Extreme, so the row
+    has to explain why - naming the missing backend, not leaking the planner's
+    log sentence into the UI."""
     infos = _real_infos()
     rows = {r.profile: r for r in profile_comparison(infos, _TOOLS,
                                                      _real_summary(infos), cores=2)}
-    assert "zpaqfranz" in rows[Profile.INSANE].caveat
+    caveat = rows[Profile.INSANE].caveat
+    assert "zpaqfranz" in caveat
+    assert "Extreme" in caveat
+    assert "stage" not in caveat and "insane:" not in caveat, "engine vocabulary leaked"
+    assert len(caveat) < 60, f"chain column needs a phrase, not a sentence: {caveat}"
+
+
+def test_a_missing_tool_is_named_in_the_caveat():
+    """With nothing installed every profile silently degrades to Zstandard. The
+    chain column shows what will run; the caveat has to name what is absent, or
+    the user cannot tell a deliberate Fast from a broken Normal."""
+    infos = _real_infos()
+    nothing = {"7z": None, "precomp": None, "srep": None}
+    rows = {r.profile: r for r in profile_comparison(infos, nothing,
+                                                     _real_summary(infos), cores=2)}
+    assert rows[Profile.NORMAL].chain == "Zstandard"
+    assert "7z" in rows[Profile.NORMAL].caveat
+    assert not rows[Profile.FAST].caveat, "Fast wanted no external tool"
 
 
 def test_no_input_means_no_table():

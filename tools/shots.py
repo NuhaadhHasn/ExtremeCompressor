@@ -44,7 +44,10 @@ from gui.app import build_app  # noqa: E402
 from gui.mainwindow import MainWindow  # noqa: E402
 
 IMAGES_DIR = Path(__file__).resolve().parent.parent / "docs" / "images"
-WINDOW_SIZE = (1000, 830)      # logical pixels; doubled by QT_SCALE_FACTOR
+WINDOW_SIZE = (1000, 1010)     # logical pixels; doubled by QT_SCALE_FACTOR
+# Tall enough that the "Before you start" estimates panel (Phase J) is fully in
+# frame on the drop/analysis shot - it is the newest thing worth showing, and at
+# 830 it was cut off mid-table.
 
 GIF_WIDTH = 900
 GIF_FRAME_MS = 100             # 10 fps playback

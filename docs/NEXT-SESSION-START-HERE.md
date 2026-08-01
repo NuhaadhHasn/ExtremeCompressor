@@ -13,17 +13,23 @@
 
 ## 1. State of the repo
 
-`main` is at `ca77524` and clean. The J1-J4+J8 code is on branch
-**`phase-j-smart-advisor`**, unmerged, waiting for review:
+The J1-J4+J8 code is on branch **`phase-j-smart-advisor`**, unmerged, waiting for
+review — **two commits**:
+
+| commit | what |
+|---|---|
+| `9620888` | the estimator, the comparison table, the preflight, the backtest |
+| `5675c90` | copy and layout fixes found by rendering the window with real fonts |
 
 ```bash
 git merge --no-ff phase-j-smart-advisor
 ```
 
 Docs (`ROADMAP.md`, this file, `docs/benchmarks/2026-08-01-estimator-backtest.md`)
-went straight to `main` per the working agreement, so the branch is code + tests only.
+went straight to `main` per the working agreement. `docs/images/` is on the
+**branch**, not main, because those screenshots show UI that is not merged yet.
 
-**289 tests pass** (`.venv\Scripts\python.exe -m pytest -q`), up from 223.
+**290 tests pass** (`.venv\Scripts\python.exe -m pytest -q`), up from 223.
 
 Two stale branches remain, both verified **strictly behind** `main` — their only
 diff is the absence of files main already has. Safe to delete whenever:
@@ -80,6 +86,29 @@ degraded Extreme predicts what it will really run. ZstdStage's level 19 is *not*
 half 7-Zip's speed (within 11% — the earlier figure was a 16 MB-corpus artifact).
 The 2026-07-18 benchmark **cannot be backtested** at all: its corpus was a temp
 dir and the doc lists no files.
+
+### 3a. Always render the GUI with real fonts before believing it is finished
+
+The J3 table passed 9 pytest-qt tests and was only ever *rendered* headless.
+Qt's offscreen platform draws every glyph as a tofu box, so the screenshots
+looked fine as geometry and told me nothing about the copy. **`tools/shots.py`
+already had the fix and I did not read it:**
+
+```python
+os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")   # tools/shots.py:31
+```
+
+Rendered properly, four defects were obvious in seconds and *not one* was
+reachable by a unit test: the same warning printed three times in one panel, the
+recommendation reason printed twice, the planner's log sentence leaking into the
+UI verbatim, and a collapsed range restating the value above it. All fixed in
+`5675c90`.
+
+**So: for any GUI change, run `python tools/shots.py` and look at
+`docs/images/01-drop-analysis.png` before calling it done.** It regenerates the
+whole set from the real widget tree with real fonts, and it is the cheapest QA in
+the repo. Copy assertions were also rewritten to test *meaning* rather than exact
+wording, so the next rewording does not break five tests.
 
 ## 4. ⚠️ Decide this before starting J5
 

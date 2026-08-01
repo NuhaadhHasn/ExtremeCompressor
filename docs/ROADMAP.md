@@ -594,7 +594,7 @@ comparison view must make a bad trade *visible before it is paid for*.
 injectable `Rates`), `analyzer.sample_stats()` measuring compressibility in the
 read pass that already samples for entropy, `gui/suggest.profile_comparison()` +
 `recommend_with_estimates()`, `gui/widgets/compare_table.py`, a compression-side
-free-disk preflight, and `tools/estimate_report.py`. **289 tests pass** (was 223).
+free-disk preflight, and `tools/estimate_report.py`. **290 tests pass** (was 223).
 Full scoring: [benchmarks/2026-08-01-estimator-backtest.md](benchmarks/2026-08-01-estimator-backtest.md).
 
 Nine things the implementation corrected against the plan below — the first four
@@ -646,6 +646,18 @@ change how the feature works, and none of them were guessable from the desk:
    `Counter.update` is 1.57 s (~53 ms/MiB). `bytes.count()`x256 measured **3x
    slower**, so there is no cheap stdlib fix; a real one needs numpy or a C
    extension (a dependency decision, deliberately not taken mid-phase).
+10. **Headless rendering is not GUI QA.** The table passed 9 pytest-qt tests and
+   was only ever rendered on Qt's offscreen platform, which draws every glyph as a
+   tofu box unless `QT_QPA_FONTDIR` is set — something `tools/shots.py` has always
+   done and which went unread. Rendered with real fonts, four copy and layout
+   defects were obvious in seconds and **none was reachable by a unit test**: the
+   same warning printed three times in one panel, the recommendation reason printed
+   twice (the preset cards already print it), the planner's log sentence leaking
+   into the UI verbatim (`"insane: zpaqfranz backend not integrated yet - using
+   extreme chain"`), and a collapsed range restating the value above it. Fixed in
+   `5675c90`; `docs/images/` regenerated and the shot window raised to 1010 px so
+   the panel is in frame. **Run `python tools/shots.py` and look at the output
+   before calling any GUI change done** — it is the cheapest QA in this repo.
 
 ⚠️ **Two integrity findings that are not Phase J's to fix — see D9 and B11 below.**
 

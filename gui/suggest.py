@@ -323,10 +323,37 @@ def recommend_with_estimates(summary: AnalysisSummary, estimates, cores: int | N
 
 
 def _span(low: float, high: float, formatter) -> str:
-    """'34s – 2 min'. Endpoints lose the '~' that fmt_eta adds; the range
-    already says the number is approximate."""
+    """'34s – 2 min', or '' when the ends round to the same thing.
+
+    Endpoints lose the '~' that fmt_eta adds - the range already says the number
+    is approximate. A collapsed range returns empty rather than repeating the
+    value: on a small corpus the first draft printed "about 16.6 MB" with
+    "16.6 MB" underneath it, and "a few seconds" twice.
+    """
     lo, hi = formatter(low).lstrip("~ "), formatter(high).lstrip("~ ")
-    return lo if lo == hi else f"{lo} – {hi}"
+    return "" if lo == hi else f"{lo} – {hi}"
+
+
+def _short_caveat(warnings: list[str]) -> str:
+    """A few words for the chain column, not the planner's raw sentence.
+
+    ``planner`` writes for a log: "insane: zpaqfranz backend not integrated yet -
+    using extreme chain". Putting that on screen leaks stage vocabulary and an
+    ASCII hyphen into the UI, and the preset card already says it in prose. All
+    the table needs is enough to explain why two rows show the same chain.
+    """
+    for warning in warnings:
+        if "zpaqfranz" in warning:
+            # Keeps the tool name: which backend is missing is exactly the kind
+            # of thing this app does not get to be vague about.
+            return "zpaqfranz not wired up — same as Extreme"
+    missing = [w.split("tool '")[1].split("'")[0]
+               for w in warnings if "tool '" in w and "not installed" in w]
+    if missing:
+        return f"{', '.join(dict.fromkeys(missing))} missing — stage skipped"
+    if any("fell back to zstd" in w for w in warnings):
+        return "no tools found — Zstandard only"
+    return ""
 
 
 @dataclass(frozen=True)
@@ -369,6 +396,9 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
                            for s in expected_chain(est.stages)) or "store only"
         is_recommended = est.profile is recommended
 
+        # One sentence, because it is repeated on every flagged row and the panel
+        # already carries a caption and a footnote. The "no way to know" caveat
+        # lives in the footnote, said once.
         note = ""
         if est.not_worth_it and est.beaten_by is not None:
             beaten = PROFILE_LABELS[est.beaten_by]
@@ -376,14 +406,12 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
                 # The estimate assumed Precomp finds nothing, so the warning is
                 # a condition, not a verdict. Saying otherwise would talk people
                 # out of the one profile that cracks repack-style data.
-                note = (f"If Precomp cannot open these streams, {beaten} gets "
-                        f"there {est.time_multiple:.1f}× quicker for the same "
-                        f"result. If it can, this wins — no way to know without "
-                        f"trying.")
+                note = (f"Only worth it if Precomp can open these streams — "
+                        f"otherwise {beaten} is {est.time_multiple:.1f}× quicker "
+                        f"for the same result.")
             else:
-                note = (f"{beaten} gets there {est.time_multiple:.1f}× quicker "
-                        f"and lands within {abs(est.extra_points):.1f} points "
-                        f"of this.")
+                note = (f"{beaten} is {est.time_multiple:.1f}× quicker and lands "
+                        f"within {abs(est.extra_points):.1f} points of this.")
 
         # A Precomp chain's size is a ceiling, not a guess - see
         # excmp.estimate._PRECOMP_OPTIMISTIC. The words have to say which.
@@ -406,22 +434,23 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
             recommended=is_recommended,
             reason=reason if is_recommended else "",
             note=note,
-            caveat=" · ".join(est.warnings),
+            caveat=_short_caveat(est.warnings),
             tone="ok" if is_recommended else ("warn" if note else ""),
         ))
     return rows
 
 
 def comparison_caption(rows: list[ComparisonRow]) -> str:
-    """The sentence above the table. Leads with the bad trade when there is
-    one, because that is the thing the user cannot otherwise find out without
-    paying for it."""
+    """The line above the table.
+
+    Points at a flagged row rather than repeating its sentence. Seen on screen,
+    the first draft printed the same warning three times in one panel - caption,
+    Extreme row, Insane row - which reads as noise and trains people to skip it.
+    """
     if not rows:
         return ""
     flagged = [r for r in rows if r.note]
-    if flagged:
-        # The cheapest flagged row, not the most extreme: it is the one the user
-        # is most likely to be choosing between.
-        return f"Estimates for this input. {flagged[0].title}: {flagged[0].note}"
-    return ("Estimates for this input, measured from samples of your files — "
-            "ranges, not promises.")
+    if not flagged:
+        return "Estimates for this input — ranges, not promises."
+    names = " and ".join(dict.fromkeys(r.title for r in flagged))
+    return f"Estimates for this input. Read the note on {names} before starting."

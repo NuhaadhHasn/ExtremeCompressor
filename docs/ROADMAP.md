@@ -4,10 +4,11 @@
 > **Phase D0 (security hotfix) DONE and merged**, and **Phase J part 1 (J1-J4, J8)
 > done** — the app now shows estimated size and time for all four profiles before
 > anything is compressed, scored against two real corpora. **289 tests**.
-> **Next up: J5-J7 (remember last choice, long-job confirm, self-calibration),
-> then B11 + D9 — two integrity findings from the J8 run that outrank new
-> features: SREP failed a restore intermittently, and `compress()` can publish an
-> archive it cannot restore. Then G1-G2, then D1-D3 + D7.**
+> **B11 + D9 done 2026-08-02** — the chain is SREP-free and nothing publishes
+> without a fully verified restore (branch `phase-b11-d9-integrity`, stacked on
+> `phase-j-smart-advisor`; 299 tests).
+> **Next up: UI v3 wave 1 (the 1366×768 fit is a blocker on the target
+> hardware — see research/23 when it lands), then J5-J7, then G1-G2.**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -236,7 +237,14 @@ display scaling — both need a human at the machine.
       win_amd64, Apache-2.0, in-process, bit-exact) — Microsoft ships no exe, so the
       wheel is the only zero-build Windows path. And **drop zstd.exe** from any tool
       manifest: the `zstandard` wheel already embeds libzstd in-process
-- [ ] B11. 🔴 **Remove SREP from the Extreme/Insane chains** — the source study
+- [x] B11. ✅ **DONE 2026-08-02** (branch `phase-b11-d9-integrity`, measured in
+      [benchmarks/2026-08-02-b11-d9-acceptance.md](benchmarks/2026-08-02-b11-d9-acceptance.md)).
+      Chains are now `precomp → sevenzip`; old srep archives still extract
+      (pinned by a test that builds a genuine pre-B11 archive and restores it).
+      The measured price: −3.5 points on the dedup-friendly corpus, +31 s
+      compress on the 721 MB corpus — SREP's dedup used to shrink 7-Zip's input.
+      B1 (zpaqfranz) is how the points come back. Original item:
+      **Remove SREP from the Extreme/Insane chains** — the source study
       already decided this ([20 §4](research/20-source-study-lrzip-zpaqfranz.md),
       [21 §5](research/21-source-study-synthesis.md): not OSI-clean, so it can never
       ship, and B1's zpaqfranz CDC dedup replaces it) but `planner._CHAINS` still
@@ -289,7 +297,18 @@ display scaling — both need a human at the machine.
 - [ ] D7. **CI**: GitHub Actions `windows-latest` (7-Zip preinstalled!) — matrix
       Python 3.11–3.13, `setup-python` pip cache, SHA-keyed tool cache; badge in README
 - [ ] D8. Atomic-write upgrade: temp + `fsync` + read-back hash + `os.replace`
-- [ ] D9. 🔴 **`compress()` can publish an archive it cannot restore** — found
+- [x] D9. ✅ **DONE 2026-08-02** (branch `phase-b11-d9-integrity`).
+      `_verify_before_publish` fully restores the archive in temp and runs the
+      real `extract()` + `verify_restore()` before the atomic rename — no hash
+      match, no file. It went in as the **default, not an option**: the tagline
+      promises a verified byte-identical restore, so the default had to make it
+      true. Measured cost 6–48% of total job time depending on chain and mix
+      ([benchmarks/2026-08-02](benchmarks/2026-08-02-b11-d9-acceptance.md));
+      the estimator gained a per-chain verify term so promised waits include
+      it, and the J4 preflight budgets the restore in temp — store-only jobs
+      included. A corrupting stage now blocks publication outright
+      (`tests/test_publish_gate.py`). Original item:
+      **`compress()` can publish an archive it cannot restore** — found
       2026-08-01 during the Phase J out-of-sample run, details in
       [benchmarks/2026-08-01-estimator-backtest.md](benchmarks/2026-08-01-estimator-backtest.md).
       `engine._self_test` tests only the **last** stage's container layer (`7z t`)
@@ -766,7 +785,7 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 | ~~2~~ | ~~D0 (security hotfix)~~ | ✅ done | an exploitable reader bug outranked every feature |
 | ~~3a~~ | ~~J1-J4 + J8 (estimator + comparison table + preflight + backtest)~~ | ✅ done | estimates are live and scored against two real corpora |
 | **3b** | **J5-J7 (per-type memory, long-job confirm, self-calibration)** | **1 session** | **finishes Phase J; J7 is what turns a cold-start prior into estimates that fit this machine** |
-| **4** | **B11 + D9 (drop SREP; make the self-test replay the chain)** | **1 session** | **two integrity findings from the J8 run. An archiver that can publish an unrestorable archive outranks features — same principle that put D0 first** |
+| ~~4~~ | ~~B11 + D9 (drop SREP; make the self-test replay the chain)~~ | ✅ done | the chain is SREP-free and nothing publishes without a verified restore — four clean Extreme round-trips on real corpora |
 | 5 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |
 | 6 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
 | 7 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |

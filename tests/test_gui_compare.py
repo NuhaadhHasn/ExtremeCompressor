@@ -48,17 +48,35 @@ def window(qtbot):
 
 # -- the widget on its own -------------------------------------------------
 
-def test_the_table_hides_itself_when_there_is_nothing_to_estimate(qtbot):
+def test_the_chooser_shows_placeholders_when_there_is_nothing_to_estimate(qtbot):
+    """W1-13 changed this contract on purpose: the chooser is now the ONLY
+    place a profile can be picked, so it never disappears - before analysis it
+    shows the four profiles with their blurbs, and rows() stays empty so the
+    two states are distinguishable."""
     table = CompareTable()
     qtbot.addWidget(table)
-    assert not table.isVisible()
+    assert table.rows() == []
+    assert len(table.cards) == 4, "all four profiles pickable before analysis"
 
     table.set_rows([_row()])
     assert table.rows() and len(table.rows()) == 1
 
     table.set_rows([])
-    assert not table.isVisible()
     assert table.rows() == []
+    assert len(table.cards) == 4
+
+
+def test_selection_survives_the_flip_between_placeholders_and_estimates(qtbot):
+    table = CompareTable()
+    qtbot.addWidget(table)
+    table.select(Profile.EXTREME)
+    table.set_rows([_row(p) for p in Profile])
+    assert table.current_profile() is Profile.EXTREME
+    assert table.cards[Profile.EXTREME].is_selected()
+
+    table.clear()
+    assert table.current_profile() is Profile.EXTREME
+    assert table.cards[Profile.EXTREME].is_selected()
 
 
 def test_rebuilding_the_table_does_not_accumulate_rows(qtbot):
@@ -137,23 +155,42 @@ def test_the_window_never_suggests_an_unconditionally_bad_trade(window, qtbot, t
             assert "Precomp" in row.note, row.note
 
 
-def test_choosing_a_row_switches_the_preset_and_replans(window, qtbot, tmp_path):
+def test_clicking_a_row_switches_the_preset_and_replans(window, qtbot, tmp_path):
+    """Through the REAL path a click takes - row.clicked -> chooser select ->
+    profileChanged -> the window replans. (An earlier version drove a private
+    window method the production wiring never called; the audit caught it.)"""
     with qtbot.waitSignal(window.analysisFinished, timeout=60_000):
         window.add_paths([_mixed_tree(tmp_path)])
 
     target = next(p for p in Profile if p is not window.presets.current_profile())
-    window._choose_profile(target)
+    window.compare_table.cards[target].clicked.emit(target)
     assert window.presets.current_profile() is target
     # Re-planning is what keeps the analysis card honest about the new chain.
     assert window._summary is not None
     assert len(window.compare_table.rows()) == len(list(Profile))
 
 
-def test_clearing_the_input_clears_the_table(window, qtbot, tmp_path):
+def test_the_keyboard_path_survives_a_chooser_rebuild(window, qtbot, tmp_path):
+    """The chooser destroys and recreates its rows on every analysis; the
+    window's explicit tab order must be re-applied or Tab falls off a cliff
+    the first time estimates arrive."""
+    rebuilt = []
+    window.compare_table.rowsRebuilt.connect(lambda: rebuilt.append(1))
+    with qtbot.waitSignal(window.analysisFinished, timeout=60_000):
+        window.add_paths([_mixed_tree(tmp_path)])
+    assert rebuilt, "rowsRebuilt never fired - tab order silently severed"
+    # And the rows the order was rebuilt onto are the LIVE ones.
+    for row in window.compare_table.cards.values():
+        assert row.focusPolicy() is not None
+
+
+def test_clearing_the_input_reverts_the_chooser_to_placeholders(window, qtbot, tmp_path):
     with qtbot.waitSignal(window.analysisFinished, timeout=60_000):
         window.add_paths([_mixed_tree(tmp_path)])
     assert window.compare_table.rows()
 
     window.clear_pending()
     assert window.compare_table.rows() == []
-    assert not window.compare_table.isVisible()
+    # Still visible, still pickable - it is the only profile chooser now.
+    assert window.compare_table.isVisibleTo(window)
+    assert len(window.compare_table.cards) == 4

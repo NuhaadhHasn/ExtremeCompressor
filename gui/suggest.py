@@ -351,8 +351,9 @@ def _short_caveat(warnings: list[str]) -> str:
     for warning in warnings:
         if "zpaqfranz" in warning:
             # Keeps the tool name: which backend is missing is exactly the kind
-            # of thing this app does not get to be vague about.
-            return "zpaqfranz not wired up — same as Extreme"
+            # of thing this app does not get to be vague about. Short enough
+            # for the chain column - the cells clip rather than wrap now.
+            return "zpaqfranz missing — runs as Extreme"
     missing = [w.split("tool '")[1].split("'")[0]
                for w in warnings if "tool '" in w and "not installed" in w]
     if missing:

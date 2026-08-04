@@ -8,7 +8,7 @@ instead of letting the user find out three hours later.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
                                QVBoxLayout, QWidget)
 

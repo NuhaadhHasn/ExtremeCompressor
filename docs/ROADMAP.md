@@ -1,14 +1,13 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-08-01**. Engine core DONE, Phase A (GUI) DONE,
-> **Phase D0 (security hotfix) DONE and merged**, and **Phase J part 1 (J1-J4, J8)
-> done** — the app now shows estimated size and time for all four profiles before
-> anything is compressed, scored against two real corpora. **289 tests**.
-> **B11 + D9 done 2026-08-02** — the chain is SREP-free and nothing publishes
-> without a fully verified restore (branch `phase-b11-d9-integrity`, stacked on
-> `phase-j-smart-advisor`; 299 tests).
-> **Next up: UI v3 wave 1 (the 1366×768 fit is a blocker on the target
-> hardware — see research/23 when it lands), then J5-J7, then G1-G2.**
+> Status date: **2026-08-04**. Engine core, Phase A (GUI), Phase D0 (security
+> hotfix), **Phase J part 1** (estimates before compressing, scored on two real
+> corpora), **B11 + D9** (SREP-free chains; nothing publishes without a fully
+> verified restore), and **UI v3 wave 1** (all 13 items of
+> [research/23](research/23-ui-v3-redesign.md) §7 — screen fit, one merged
+> chooser, fixed action bar, action registry, WCAG fixes, the 1366×768
+> regression gate) are **DONE and merged to `main`**. **324 tests.**
+> **Next up: UI wave 2 (research/23 §7), then J5-J7, then G1-G2.**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -784,6 +783,8 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 | ~~1~~ | ~~A (GUI)~~ | ✅ done | made every later feature visible and testable |
 | ~~2~~ | ~~D0 (security hotfix)~~ | ✅ done | an exploitable reader bug outranked every feature |
 | ~~3a~~ | ~~J1-J4 + J8 (estimator + comparison table + preflight + backtest)~~ | ✅ done | estimates are live and scored against two real corpora |
+| ~~UI-1~~ | ~~UI v3 wave 1 (screen fit, merged chooser, action bar, registry, WCAG, fit gate)~~ | ✅ done, merged | all 13 items of research/23 §7; the 1366×768 gate pins the fix |
+| **UI-2** | **UI v3 wave 2 (Activity tab, compact results, token sweep, SVG icons, dark title bar, Banner/I9)** | **1-2 sessions** | **finishes the fit blocker's second half (populated ≤300px @150%) and removes the last modal — research/23 §7 wave 2, incl. W2-7 queue density** |
 | **3b** | **J5-J7 (per-type memory, long-job confirm, self-calibration)** | **1 session** | **finishes Phase J; J7 is what turns a cold-start prior into estimates that fit this machine** |
 | ~~4~~ | ~~B11 + D9 (drop SREP; make the self-test replay the chain)~~ | ✅ done | the chain is SREP-free and nothing publishes without a verified restore — four clean Extreme round-trips on real corpora |
 | 5 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |

@@ -19,7 +19,9 @@ from ..theme import repolish
 
 COL_NAME, COL_PROFILE, COL_SIZE, COL_PROGRESS, COL_ETA, COL_STATE, COL_ACTIONS = range(7)
 
-_MIN_TABLE_HEIGHT = 120
+# The empty queue used to reserve a 120px featureless slab; on the 1366x768
+# target that is a third of the 150%-scaled viewport spent saying nothing.
+_MIN_TABLE_HEIGHT = 64
 _MAX_TABLE_HEIGHT = 430
 
 _STATE_TONE = {
@@ -51,9 +53,11 @@ class QueueTable(QTreeWidget):
         self._rows: dict[str, _JobRow] = {}
 
         self.setColumnCount(7)
+        # "Time", not "Time left": finished rows show elapsed time in this
+        # column, and an honesty-first app must not mislabel a number.
         self.setHeaderLabels([
             self.tr("Job"), self.tr("Profile"), self.tr("Size"),
-            self.tr("Progress"), self.tr("Time left"), self.tr("State"), "",
+            self.tr("Progress"), self.tr("Time"), self.tr("State"), "",
         ])
         self.setRootIsDecorated(True)
         self.setAlternatingRowColors(True)
@@ -98,7 +102,11 @@ class QueueTable(QTreeWidget):
         # U+00D7, not a dingbat: it exists in every Windows UI font, so the
         # button never renders as an empty box.
         cancel = QPushButton("×", actions)
-        cancel.setFixedWidth(30)
+        # 28x28 with its own 2px padding rule (theme.py #CancelJob): the global
+        # button padding of 7px 14px left a 0px content box in the old
+        # fixedWidth(30), rendering the x as an empty pill.
+        cancel.setObjectName("CancelJob")
+        cancel.setFixedSize(28, 28)
         cancel.setProperty("variant", "danger")
         cancel.setAccessibleName(self.tr("Cancel %s") % job.display_name)
         cancel.setToolTip(self.tr("Cancel this job"))
@@ -156,7 +164,7 @@ class QueueTable(QTreeWidget):
 
         if job.state is JobState.DONE:
             row.bar.setValue(100)
-            row.item.setText(COL_ETA, fmt_duration(job.elapsed_s))
+            row.item.setText(COL_ETA, self.tr("took %s") % fmt_duration(job.elapsed_s))
             if job.kind is JobKind.COMPRESS and job.final_bytes:
                 row.item.setText(
                     COL_SIZE, f"{fmt_size(job.orig_bytes)} → {fmt_size(job.final_bytes)}")

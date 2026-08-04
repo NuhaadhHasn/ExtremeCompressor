@@ -26,12 +26,12 @@ from .models import Job, JobKind, JobState
 from .queue_manager import AnalysisSignals, AnalysisWorker, QueueManager
 from .suggest import (AnalysisSummary, profile_comparison, recommend_profile,
                       strongest_profile, summarize)
-from .theme import qss, repolish
+from .theme import GAP_BLOCK, GUTTER, VGAP, qss, repolish
 from .widgets.analysis_card import AnalysisCard
 from .widgets.compare_table import CompareTable
 from .widgets.dropzone import DropZone
 from .widgets.extract_tab import ExtractTab
-from .widgets.preset_cards import AdvancedPanel, AdvancedToggle, PresetSelector
+from .widgets.preset_cards import AdvancedPanel, AdvancedToggle
 from .widgets.queue_table import QueueTable
 from .widgets.results import ResultsPanel
 from .winintegration import (TBPF_ERROR, TBPF_PAUSED, Notifier, TaskbarProgress,
@@ -115,8 +115,8 @@ class MainWindow(QMainWindow):
 
         page = QWidget(self)
         column = QVBoxLayout(page)
-        column.setContentsMargins(20, 16, 20, 20)
-        column.setSpacing(14)
+        column.setContentsMargins(GUTTER, VGAP, GUTTER, VGAP)
+        column.setSpacing(GAP_BLOCK)
 
         self.drop_zone = DropZone(page)
         column.addWidget(self.drop_zone)
@@ -124,13 +124,13 @@ class MainWindow(QMainWindow):
         self.analysis_card = AnalysisCard(page)
         column.addWidget(self.analysis_card)
 
-        self.presets = PresetSelector(page)
-        self.presets.set_tool_availability(self.tools)
-        column.addWidget(self.presets)
-
-        # Sits between "what each preset does" and the Compress button on
-        # purpose: this is the last thing the user sees before committing hours.
+        # ONE chooser (W1-13): the four preset cards and the estimate table
+        # used to render the same decision twice, costing 400-500px of a
+        # 150%-scaled laptop's ~430px client. `presets` stays as an alias so
+        # every caller and test keeps its contract.
         self.compare_table = CompareTable(page)
+        self.compare_table.set_tool_availability(self.tools)
+        self.presets = self.compare_table
         column.addWidget(self.compare_table)
 
         self.advanced_panel = AdvancedPanel(DEFAULT_TEMP, page)
@@ -172,10 +172,10 @@ class MainWindow(QMainWindow):
         column.addWidget(self.results)
         column.addStretch(1)
 
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(page)
-        self.tabs.addTab(scroll, self.tr("Compress"))
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setWidget(page)
+        self.tabs.addTab(self._scroll, self.tr("Compress"))
 
         self.extract_tab = ExtractTab(self)
         self.tabs.addTab(self.extract_tab, self.tr("Extract"))
@@ -203,10 +203,12 @@ class MainWindow(QMainWindow):
 
     def _set_tab_order(self) -> None:
         """Explicit keyboard path through the flow, top to bottom."""
+        cards = self.presets.cards
         chain: list[QWidget] = [
             self.drop_zone.files_button, self.drop_zone.folder_button,
-            *[self.presets.cards[p] for p in
-              (Profile.FAST, Profile.NORMAL, Profile.EXTREME, Profile.INSANE)],
+            *[cards[p] for p in
+              (Profile.FAST, Profile.NORMAL, Profile.EXTREME, Profile.INSANE)
+              if p in cards],
             self.advanced_toggle, self.clear_button, self.compress_button,
             self.clear_done_button, self.pause_button, self.queue_table,
         ]
@@ -216,7 +218,6 @@ class MainWindow(QMainWindow):
     def _wire(self) -> None:
         self.drop_zone.pathsAdded.connect(self.add_paths)
         self.presets.profileChanged.connect(self._on_profile_changed)
-        self.compare_table.profileChosen.connect(self._choose_profile)
         self.compress_button.clicked.connect(self.start_compression)
         self.clear_button.clicked.connect(self.clear_pending)
         self.pause_button.clicked.connect(self._toggle_pause)
@@ -401,6 +402,9 @@ class MainWindow(QMainWindow):
             return
         self.queue_table.update_state(job)
         self.results.show_job(job)
+        # A finished job used to produce NO visible change: the results panel
+        # appeared 660-1090px below every viewport. Bring it into view.
+        self._scroll.ensureWidgetVisible(self.results, 0, VGAP)
         if job.kind is JobKind.EXTRACT:
             self.extract_tab.set_finished(getattr(result, "files_restored", 0),
                                           getattr(result, "verified", 0))

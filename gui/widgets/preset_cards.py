@@ -1,9 +1,10 @@
-"""Preset cards + the Advanced expander.
+"""The preset catalogue + the Advanced expander.
 
-Four cards instead of a dropdown, because the choice is a real trade-off and
-the user deserves to see what they are trading. Each card states its cost in
-plain terms, and cards whose tools are missing say what will actually happen
-rather than silently degrading at run time.
+The four-card PresetSelector that used to live here was merged into the
+profile chooser (widgets/compare_table.py, W1-13 in research/23): the cards
+and the estimate table rendered the same decision twice. What remains is the
+catalogue the chooser renders from - honest one-liners, no silent degrading -
+and the Advanced panel.
 """
 
 from __future__ import annotations
@@ -11,16 +12,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFrame,
-                               QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QSpinBox, QToolButton, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QCheckBox, QFileDialog, QFrame, QGridLayout,
+                               QLabel, QLineEdit, QPushButton, QSpinBox,
+                               QToolButton, QWidget)
 
 from excmp.planner import Profile
 from excmp.tools import ToolInfo
 
-from ..theme import repolish
 
 # (profile, glyph, title, honest one-liner, tools it wants)
 PRESETS: list[tuple[Profile, str, str, str, tuple[str, ...]]] = [
@@ -35,148 +33,6 @@ PRESETS: list[tuple[Profile, str, str, str, tuple[str, ...]]] = [
      "Extreme plus a stronger final codec — an overnight job.",
      ("7z", "precomp", "zpaqfranz")),
 ]
-
-
-class PresetCard(QPushButton):
-    """A checkable card. Labels are click-transparent so the whole tile is
-    one big button - and one single tab stop for keyboard users."""
-
-    def __init__(self, profile: Profile, glyph: str, title: str, blurb: str,
-                 parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.profile = profile
-        self.setObjectName("PresetCard")
-        self.setCheckable(True)
-        self.setMinimumHeight(150)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        column = QVBoxLayout(self)
-        column.setContentsMargins(14, 12, 14, 12)
-        column.setSpacing(4)
-
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        self._title = QLabel(f"{glyph}  {title}", self)
-        self._title.setObjectName("Title")
-        top.addWidget(self._title)
-        top.addStretch(1)
-        self._badge = QLabel(self.tr("Suggested"), self)
-        self._badge.setProperty("tone", "ok")
-        self._badge.setVisible(False)
-        top.addWidget(self._badge)
-        column.addLayout(top)
-
-        self._blurb = QLabel(blurb, self)
-        self._blurb.setObjectName("Subtitle")
-        self._blurb.setWordWrap(True)
-        column.addWidget(self._blurb)
-
-        self._note = QLabel("", self)
-        self._note.setObjectName("Subtitle")
-        self._note.setWordWrap(True)
-        self._note.setVisible(False)
-        column.addWidget(self._note)
-        column.addStretch(1)
-
-        for label in (self._title, self._blurb, self._note, self._badge):
-            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-
-        self._base_description = blurb
-        self.setAccessibleName(f"{title} preset")
-        self.setAccessibleDescription(blurb)
-
-    def set_note(self, note: str, tone: str = "warn") -> None:
-        self._note.setText(note)
-        self._note.setProperty("tone", tone if note else "")
-        self._note.setVisible(bool(note))
-        repolish(self._note)
-        self.setAccessibleDescription(
-            f"{self._base_description} {note}".strip())
-
-    def set_recommended(self, recommended: bool, reason: str = "") -> None:
-        self._badge.setVisible(recommended)
-        if recommended and reason:
-            self.setToolTip(reason)
-            self.setAccessibleDescription(
-                f"{self._base_description} Suggested: {reason}")
-        elif not recommended:
-            self.setToolTip("")
-
-
-class PresetSelector(QWidget):
-    """The four cards plus the recommendation line above them."""
-
-    profileChanged = Signal(object)   # Profile
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        column = QVBoxLayout(self)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(10)
-
-        self._reason = QLabel("", self)
-        self._reason.setObjectName("Subtitle")
-        self._reason.setWordWrap(True)
-        self._reason.setVisible(False)
-        column.addWidget(self._reason)
-
-        grid = QGridLayout()
-        grid.setSpacing(10)
-        self._group = QButtonGroup(self)
-        self._group.setExclusive(True)
-        self.cards: dict[Profile, PresetCard] = {}
-        for index, (profile, glyph, title, blurb, _tools) in enumerate(PRESETS):
-            card = PresetCard(profile, glyph, title, blurb, self)
-            self._group.addButton(card, index)
-            grid.addWidget(card, 0, index)
-            self.cards[profile] = card
-        column.addLayout(grid)
-
-        self.cards[Profile.NORMAL].setChecked(True)
-        self._group.idClicked.connect(self._emit_change)
-
-    def _emit_change(self, index: int) -> None:
-        self.profileChanged.emit(PRESETS[index][0])
-
-    def current_profile(self) -> Profile:
-        for profile, card in self.cards.items():
-            if card.isChecked():
-                return profile
-        return Profile.NORMAL
-
-    def select(self, profile: Profile, emit: bool = False) -> None:
-        card = self.cards.get(profile)
-        if card is not None and not card.isChecked():
-            card.setChecked(True)
-            if emit:
-                self.profileChanged.emit(profile)
-
-    def set_tool_availability(self, tools: dict[str, ToolInfo | None]) -> None:
-        """Say up front what a preset will really do on this machine."""
-        for profile, _glyph, _title, _blurb, needed in PRESETS:
-            missing = [name for name in needed if tools.get(name) is None]
-            card = self.cards[profile]
-            if profile is Profile.INSANE:
-                extra = self.tr("zpaqfranz isn't wired up yet — runs the "
-                                "Extreme chain today.")
-                card.set_note(extra)
-                continue
-            if missing:
-                card.set_note(self.tr("Missing: %s — those stages are skipped.")
-                              % ", ".join(missing))
-            else:
-                card.set_note("")
-
-    def set_recommendation(self, profile: Profile, reason: str) -> None:
-        for candidate, card in self.cards.items():
-            card.set_recommended(candidate is profile, reason)
-        self._reason.setText(self.tr("Suggested: %s") % reason)
-        self._reason.setVisible(bool(reason))
-        # emit=True matters: the analysis that produced this recommendation
-        # was planned against the *previous* profile, so switching cards has
-        # to trigger a re-plan or the routing shown would be for the wrong
-        # preset.
-        self.select(profile, emit=True)
 
 
 class AdvancedPanel(QFrame):

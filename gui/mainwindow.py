@@ -24,10 +24,11 @@ from excmp.tools import find_tools
 from .format import fmt_eta, fmt_size
 from .models import Job, JobKind, JobState
 from .queue_manager import AnalysisSignals, AnalysisWorker, QueueManager
-from .suggest import (AnalysisSummary, recommend_profile, strongest_profile,
-                      summarize)
+from .suggest import (AnalysisSummary, profile_comparison, recommend_profile,
+                      strongest_profile, summarize)
 from .theme import qss, repolish
 from .widgets.analysis_card import AnalysisCard
+from .widgets.compare_table import CompareTable
 from .widgets.dropzone import DropZone
 from .widgets.extract_tab import ExtractTab
 from .widgets.preset_cards import AdvancedPanel, AdvancedToggle, PresetSelector
@@ -106,6 +107,11 @@ class MainWindow(QMainWindow):
         self.presets = PresetSelector(page)
         self.presets.set_tool_availability(self.tools)
         column.addWidget(self.presets)
+
+        # Sits between "what each preset does" and the Compress button on
+        # purpose: this is the last thing the user sees before committing hours.
+        self.compare_table = CompareTable(page)
+        column.addWidget(self.compare_table)
 
         self.advanced_panel = AdvancedPanel(DEFAULT_TEMP, page)
         self.advanced_toggle = AdvancedToggle(self.advanced_panel, page)
@@ -190,6 +196,7 @@ class MainWindow(QMainWindow):
     def _wire(self) -> None:
         self.drop_zone.pathsAdded.connect(self.add_paths)
         self.presets.profileChanged.connect(self._on_profile_changed)
+        self.compare_table.profileChosen.connect(self._choose_profile)
         self.compress_button.clicked.connect(self.start_compression)
         self.clear_button.clicked.connect(self.clear_pending)
         self.pause_button.clicked.connect(self._toggle_pause)
@@ -245,6 +252,7 @@ class MainWindow(QMainWindow):
         self._infos = []
         self._summary = None
         self.analysis_card.clear()
+        self.compare_table.clear()
         self.results.hide_panel()
         self._refresh_actions()
 
@@ -258,14 +266,24 @@ class MainWindow(QMainWindow):
         self._infos = list(infos or [])
         self._summary = summary
         self.analysis_card.set_summary(summary)
-        profile, reason = recommend_profile(summary)
-        self.presets.set_recommendation(profile, reason)
+
+        # The table's recommendation is the estimate-aware one, so take the badge
+        # from there rather than calling recommend_profile() again - otherwise the
+        # card could suggest a preset the table has flagged as not worth it.
+        rows = self._refresh_estimates()
+        suggested = next((r for r in rows if r.recommended), None)
+        if suggested is not None:
+            self.presets.set_recommendation(suggested.profile, suggested.reason)
+        else:
+            profile, reason = recommend_profile(summary)
+            self.presets.set_recommendation(profile, reason)
         self._refresh_actions()
         self.analysisFinished.emit()
 
     def _on_analysis_failed(self, message: str) -> None:
         self.analysis_card.set_error(message)
         self._summary = None
+        self.compare_table.clear()
         self._refresh_actions()
         self.analysisFinished.emit()
 
@@ -278,7 +296,24 @@ class MainWindow(QMainWindow):
         reference = make_plan(self._infos, strongest_profile(self.tools), self.tools)
         self._summary = summarize(self._infos, the_plan, self.tools, reference)
         self.analysis_card.set_summary(self._summary)
+        self._refresh_estimates()
         self._refresh_actions()
+
+    def _refresh_estimates(self) -> list:
+        """Recompute the comparison table. Costs four ``planner.plan()`` calls
+        and some arithmetic - no file is re-read."""
+        if not self._infos or self._summary is None:
+            self.compare_table.clear()
+            return []
+        rows = profile_comparison(self._infos, self.tools, self._summary)
+        self.compare_table.set_rows(rows)
+        return rows
+
+    def _choose_profile(self, profile: object) -> None:
+        """A click on a table row picks that preset - seeing that Normal is
+        2.7x quicker is only useful if switching to it is one click away."""
+        if isinstance(profile, Profile):
+            self.presets.select(profile, emit=True)
 
     # -- running -----------------------------------------------------------
     def _output_path_for(self, inputs: list[Path]) -> Path:
@@ -299,6 +334,7 @@ class MainWindow(QMainWindow):
                                 self.presets.current_profile(), self._summary)
         self._pending = []
         self.analysis_card.clear()
+        self.compare_table.clear()
         self._infos = []
         self._summary = None
         self._refresh_actions()

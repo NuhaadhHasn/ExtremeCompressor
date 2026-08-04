@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .analyzer import FileInfo, analyze_tree
+from .estimate import estimate_size
 from .manifest import (ContainerError, Manifest, StageRecord, declared_total,
                        extract_stored, read_container, write_container)
 from .planner import Plan, Profile, plan as make_plan
@@ -41,6 +42,10 @@ _PAYLOAD_EXT = {"sevenzip": ".7z", "zstd": ".tar.zst", "tar": ".tar",
 _STAGE_INFLATION_LIMIT = 8
 _STAGE_FLOOR_BYTES = 64 << 20
 
+# Precomp legitimately inflates its output 2-5x mid-pipeline (research/10 C-3),
+# which is why temp space - not the output path - is what actually runs out.
+_PRECOMP_INFLATION = 5
+
 
 def _tree_size(path: Path) -> int:
     p = Path(path)
@@ -58,6 +63,93 @@ def _check_free_space(out_dir: Path, ledger: dict[str, dict]) -> None:
         raise RuntimeError(
             f"not enough free space in {out_dir}: this archive restores to about "
             f"{need >> 20} MiB but only {free >> 20} MiB is available")
+
+
+def _free_bytes(path: Path) -> tuple[int, int] | None:
+    """``(free_bytes, volume_id)`` for the volume holding ``path``.
+
+    Walks up to the nearest existing ancestor, because the output folder may not
+    exist yet. Returns None when nothing on the path exists - an unknown volume
+    is not grounds for refusing a job.
+    """
+    for candidate in [path, *path.parents]:
+        if not candidate.exists():
+            continue
+        try:
+            return shutil.disk_usage(candidate).free, candidate.stat().st_dev
+        except OSError:
+            return None
+    return None
+
+
+def compress_space_needs(out_path: Path, temp_dir: Path, infos: list[FileInfo],
+                         the_plan: Plan) -> list[tuple[Path, int, int]]:
+    """What compressing this will need, as ``(probe_path, floor, peak)`` per volume.
+
+    ``floor`` is what the job cannot possibly run without; ``peak`` adds Precomp's
+    worst-case mid-pipeline inflation. Requirements are grouped by volume because
+    the temp folder and the output folder are usually the same disk, and then they
+    compete for the same free bytes.
+
+    Public so the GUI can show the number before the user commits, and so the
+    arithmetic is testable without filling a disk.
+    """
+    size = estimate_size(infos, the_plan)
+    piped = size.piped_bytes
+    stages = next((r.stages for r in the_plan.routes if r.action == "pipeline"), [])
+    inflation = _PRECOMP_INFLATION if "precomp" in stages else 1
+
+    # Output: the .tmp twin, which is the whole archive. Use the pessimistic end
+    # of the estimate - being wrong here means a disk-full failure late in a long
+    # job, which is the outcome this function exists to prevent.
+    # Temp: the staging copy of the piped files lives until the chain finishes,
+    # and the tar that feeds the chain lives beside it. Precomp's output then
+    # lands on top of both.
+    needs: dict[int, tuple[Path, int, int]] = {}
+    for probe, floor, peak in (
+        (out_path.parent, size.high, size.high),
+        (temp_dir, piped * 2, piped * (2 + inflation) if piped else 0),
+    ):
+        found = _free_bytes(probe)
+        if found is None:
+            continue
+        _free, volume = found
+        if volume in needs:
+            first, prev_floor, prev_peak = needs[volume]
+            needs[volume] = (first, prev_floor + floor, prev_peak + peak)
+        else:
+            needs[volume] = (probe, floor, peak)
+    return list(needs.values())
+
+
+def _check_compress_space(out_path: Path, temp_dir: Path, infos: list[FileInfo],
+                          the_plan: Plan) -> list[str]:
+    """Refuse impossible jobs, warn about tight ones. Returns the warnings.
+
+    Extraction can hard-fail on an exact figure - the manifest declares every
+    size. Compression cannot: the output size is an estimate and Precomp's
+    inflation is data-dependent. Two thresholds keep that honest. A preflight
+    that refuses jobs which would have succeeded gets switched off, and then it
+    protects nobody.
+    """
+    warnings: list[str] = []
+    for probe, floor, peak in compress_space_needs(out_path, temp_dir, infos, the_plan):
+        found = _free_bytes(probe)
+        if found is None:
+            continue
+        free, _volume = found
+        if free < floor:
+            raise RuntimeError(
+                f"not enough free space on the volume holding {probe}: this job "
+                f"needs at least {floor >> 20} MiB (archive plus a staging copy) "
+                f"but only {free >> 20} MiB is available")
+        if free < peak:
+            warnings.append(
+                f"free space on {probe} is {free >> 20} MiB; this job should fit "
+                f"in {floor >> 20} MiB but Precomp can inflate mid-pipeline and "
+                f"the worst case is {peak >> 20} MiB - point the temp folder at a "
+                f"roomier drive if it fails")
+    return warnings
 
 
 def _wait_if_paused(ctx: StageContext) -> None:
@@ -130,6 +222,10 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     if not infos:
         raise ValueError("nothing to compress")
     the_plan: Plan = make_plan(infos, profile, tools)
+    # Before copying a single byte: will this fit? (J4 - the compression-side
+    # twin of the check extract() has done since D0.)
+    the_plan.warnings.extend(
+        _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
 
     registry = _stage_factory()
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-", dir=ctx.temp_dir))

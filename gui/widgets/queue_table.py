@@ -47,10 +47,15 @@ class _JobRow:
 
 class QueueTable(QTreeWidget):
     cancelRequested = Signal(str)
+    # (job_id, global QPoint). The table knows rows; the WINDOW knows jobs,
+    # output paths and slots - so it builds the menu (W1-8).
+    menuRequested = Signal(str, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: dict[str, _JobRow] = {}
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_menu)
 
         self.setColumnCount(7)
         # "Time", not "Time left": finished rows show elapsed time in this
@@ -175,6 +180,23 @@ class QueueTable(QTreeWidget):
             if job.error:
                 row.item.setToolTip(COL_STATE, job.error)
                 row.item.setExpanded(True)
+
+    def _on_menu(self, pos) -> None:
+        item = self.itemAt(pos)
+        if item is None:
+            return
+        if item.parent() is not None:       # the log child row -> its job
+            item = item.parent()
+        for job_id, row in self._rows.items():
+            if row.item is item:
+                self.menuRequested.emit(job_id, self.viewport().mapToGlobal(pos))
+                return
+
+    def show_log(self, job_id: str) -> None:
+        row = self._rows.get(job_id)
+        if row is not None:
+            row.item.setExpanded(True)
+            self.scrollToItem(row.child)
 
     def append_log(self, job_id: str, line: str) -> None:
         row = self._rows.get(job_id)

@@ -27,10 +27,14 @@ DARK: dict[str, str] = {
     "accent": "#4c8dff",
     "accent_hi": "#6ba0ff",
     "accent_dim": "#1e3a6b",
+    # Text painted ON an accent fill. White on #4c8dff is 3.2:1 - fails WCAG AA
+    # at body size - so dark mode uses near-black ink (~6.5:1), the Win11 idiom.
+    "on_accent": "#0b0d12",
     "ok": "#3ecf8e",
     "warn": "#f5a524",
-    "danger": "#f04f5b",
-    "shadow": "#0b0d12",
+    # #f04f5b measured 4.24:1 on surface2 - found by the AA test, not the
+    # audit. One step lighter passes on every surface it sits on.
+    "danger": "#f2606b",
 }
 
 LIGHT: dict[str, str] = {
@@ -45,19 +49,32 @@ LIGHT: dict[str, str] = {
     "accent": "#2f6fe0",
     "accent_hi": "#1f5bc4",
     "accent_dim": "#d6e3fb",
-    "ok": "#15a06a",
-    "warn": "#a86a00",
-    "danger": "#cf2f3b",
-    "shadow": "#c3c9d4",
+    "on_accent": "#ffffff",   # white on #2f6fe0 is 4.9:1 - passes
+    # ok/warn darkened from #15a06a / #a86a00 (3.35:1 / 4.4:1 on white - both
+    # under the 4.5:1 AA floor at 10pt body size).
+    "ok": "#0e7a52",
+    "warn": "#8a5700",
+    "danger": "#c62835",   # #cf2f3b was 4.42:1 on surface2 - the test caught it
 }
+# (the unused `shadow` token is gone - elevation comes from layout, not fakes)
 
 # Non-colour tokens are shared by both palettes.
 METRICS: dict[str, str] = {
     "radius": "10px",
     "radius_sm": "6px",
-    "pad": "12px",
     "font": '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
 }
+
+# Layout constants (px). Imported by widgets so setContentsMargins/setSpacing
+# calls stop inventing numbers - six different card paddings coexisted before
+# these. 4px grid per the Windows guidance; GUTTER is HORIZONTAL only, page
+# vertical margins are VGAP (the 150%-scaling height budget in research/23
+# section 2.4 depends on that split).
+GUTTER = 20
+VGAP = 12
+GAP_BLOCK = 12
+GAP_INTRA = 8
+CARD_MARGINS = (16, 12, 16, 12)
 
 _QSS = Template("""
 QWidget {
@@ -92,9 +109,9 @@ QWidget#Plain { background: transparent; }
 /* ---- typography ------------------------------------------------------ */
 QLabel { background: transparent; }
 QLabel#Hero {
-    font-size: 30pt;
-    font-weight: 700;
-    color: $ok;
+    font-size: 21pt;
+    font-weight: 600;
+    color: $text;
     padding: 2px 0;
 }
 QLabel#HeroSub  { font-size: 12pt; color: $muted; }
@@ -109,6 +126,13 @@ QLabel#Mono {
 QLabel[tone="ok"]     { color: $ok; }
 QLabel[tone="warn"]   { color: $warn; }
 QLabel[tone="danger"] { color: $danger; }
+/* ID selectors (specificity 101) beat attribute selectors (11), so the toned
+   variants of named labels need their own ID+attribute rules (111) or a
+   FAILURE hero renders in celebratory green and every toned Subtitle note
+   silently falls back to muted grey. Pinned by test_gui_theme.py. */
+QLabel#Hero[tone="ok"],     QLabel#Subtitle[tone="ok"]     { color: $ok; }
+QLabel#Hero[tone="warn"],   QLabel#Subtitle[tone="warn"]   { color: $warn; }
+QLabel#Hero[tone="danger"], QLabel#Subtitle[tone="danger"] { color: $danger; }
 
 /* ---- drop zone ------------------------------------------------------- */
 QFrame#DropZone {
@@ -135,18 +159,25 @@ QPushButton:disabled       { color: $muted; background: $surface; }
 QPushButton[variant="primary"] {
     background: $accent;
     border-color: $accent;
-    color: #ffffff;
+    color: $on_accent;
     font-weight: 600;
 }
 QPushButton[variant="primary"]:hover:enabled { background: $accent_hi; }
 QPushButton[variant="primary"]:disabled {
     background: $surface2; border-color: $border; color: $muted;
 }
-QPushButton[variant="danger"]:hover:enabled { border-color: $danger; color: $danger; }
+/* Danger is a RESTING state, not a hover surprise - colour-only-on-hover
+   would skirt the no-colour-only rule for keyboard and touch users. */
+QPushButton[variant="danger"] { border-color: $danger; color: $danger; }
+QPushButton[variant="danger"]:hover:enabled { background: $danger; color: $on_accent; }
+/* The queue's cancel glyph: kill the 7px 14px padding that clipped the x
+   into an empty pill inside its 28px fixed box. */
+QPushButton#CancelJob { padding: 2px; font-weight: 600; }
 
 QToolButton {
     background: transparent;
-    border: none;
+    /* Permanent transparent border: focus recolors it without reflowing. */
+    border: 1px solid transparent;
     border-radius: $radius_sm;
     padding: 4px 6px;
     color: $muted;
@@ -154,19 +185,23 @@ QToolButton {
 QToolButton:hover  { background: $surface2; color: $text; }
 QToolButton:focus  { border: 1px solid $accent; }
 
-/* ---- preset cards ---------------------------------------------------- */
-QPushButton#PresetCard {
-    background: $surface;
-    border: 1px solid $border;
-    border-radius: $radius;
-    padding: 0px;
-    text-align: left;
-}
-QPushButton#PresetCard:hover:enabled { border-color: $border_hi; background: $surface2; }
-QPushButton#PresetCard:checked {
-    border: 2px solid $accent;
+/* ---- menus (context menus + the corner action button) ----------------- */
+QMenu {
     background: $surface2;
+    color: $text;
+    border: 1px solid $border_hi;
+    border-radius: $radius_sm;
+    padding: 4px;
 }
+QMenu::item { padding: 6px 24px 6px 12px; border-radius: 4px; background: transparent; }
+QMenu::item:selected { background: $accent_dim; }
+QMenu::item:disabled { color: $muted; }
+QMenu::separator { height: 1px; background: $border; margin: 4px 8px; }
+
+/* ---- the profile chooser's rows --------------------------------------- */
+/* Selection is carried by the radio glyph in the row's own text; the border
+   is the second signal. Recommended rows keep their accent tone. */
+QFrame#Card[selected="true"] { border: 2px solid $accent_hi; }
 
 /* ---- inputs ---------------------------------------------------------- */
 QLineEdit, QSpinBox, QComboBox {
@@ -261,10 +296,18 @@ QScrollBar::handle:hover { background: $muted; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
-/* ---- focus ring: keyboard users must always see where they are ------- */
-QPushButton:focus, QCheckBox:focus, QTreeWidget:focus, QTabBar::tab:focus {
-    border: 1px solid $accent;
+/* ---- focus ring: keyboard users must always see where they are -------
+   2px accent_hi with padding compensated 1px, so focusing never reflows -
+   and because the PRIMARY button's resting border is already $accent, a
+   1px $accent ring on it was literally invisible. Tabs thicken their
+   underline instead of growing a box. */
+QPushButton:focus {
+    border: 2px solid $accent_hi;
+    padding: 6px 13px;
 }
+QPushButton#CancelJob:focus { padding: 1px; }
+QCheckBox:focus, QTreeWidget:focus { border: 1px solid $accent; }
+QTabBar::tab:focus { border-bottom: 3px solid $accent_hi; }
 """)
 
 

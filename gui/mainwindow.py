@@ -29,7 +29,8 @@ from .models import Job, JobKind, JobState
 from .queue_manager import AnalysisSignals, AnalysisWorker, QueueManager
 from .suggest import (AnalysisSummary, profile_comparison, recommend_profile,
                       strongest_profile, summarize)
-from .theme import GAP_BLOCK, GAP_INTRA, GUTTER, VGAP, qss, repolish
+from .theme import (CARD_MARGINS, GAP_BLOCK, GAP_INTRA, GUTTER, VGAP, qss,
+                    repolish)
 from .widgets.analysis_card import AnalysisCard
 from .widgets.compare_table import CompareTable
 from .widgets.dropzone import DropZone
@@ -263,7 +264,7 @@ class MainWindow(QMainWindow):
             card = QFrame(self)
             card.setObjectName("Card")
             box = QVBoxLayout(card)
-            box.setContentsMargins(16, 12, 16, 12)
+            box.setContentsMargins(*CARD_MARGINS)
             box.setSpacing(GAP_INTRA)
             head = QHBoxLayout()
             title = QLabel(self.tr("ExtremeCompressor v%s") % __version__, card)
@@ -393,6 +394,10 @@ class MainWindow(QMainWindow):
     def _wire(self) -> None:
         self.drop_zone.pathsAdded.connect(self.add_paths)
         self.presets.profileChanged.connect(self._on_profile_changed)
+        # The chooser's rows are destroyed and recreated on every analysis;
+        # without this, the keyboard path through them dies the first time
+        # estimates arrive (found by the pre-merge audit).
+        self.presets.rowsRebuilt.connect(self._set_tab_order)
         self.compress_button.clicked.connect(self.start_compression)
         self.clear_button.clicked.connect(self.clear_pending)
         self.pause_button.clicked.connect(self._toggle_pause)
@@ -506,11 +511,6 @@ class MainWindow(QMainWindow):
         self.compare_table.set_rows(rows)
         return rows
 
-    def _choose_profile(self, profile: object) -> None:
-        """A click on a table row picks that preset - seeing that Normal is
-        2.7x quicker is only useful if switching to it is one click away."""
-        if isinstance(profile, Profile):
-            self.presets.select(profile, emit=True)
 
     # -- running -----------------------------------------------------------
     def _output_folder_for(self, inputs: list[Path]) -> Path:

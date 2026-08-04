@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QFrame, QGridLayout,
                                QToolButton, QWidget)
 
 from excmp.planner import Profile
-from excmp.tools import ToolInfo
+
+from ..theme import CARD_MARGINS
 
 
 # (profile, glyph, title, honest one-liner, tools it wants)
@@ -44,7 +45,7 @@ class AdvancedPanel(QFrame):
         self.setVisible(False)
 
         grid = QGridLayout(self)
-        grid.setContentsMargins(16, 14, 16, 14)
+        grid.setContentsMargins(*CARD_MARGINS)
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(10)
 

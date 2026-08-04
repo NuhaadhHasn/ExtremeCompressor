@@ -14,7 +14,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .analyzer import FileInfo, analyze_tree
@@ -27,7 +27,7 @@ from .stages.sevenzip import SevenZipStage
 from .stages.tarstage import TarStage
 from .stages.zstdstage import ZstdStage
 from .tools import ToolInfo, find_tools
-from .verify import VerifyError, hash_file, verify_restore
+from .verify import hash_file, verify_restore
 
 # Stages that can consume a directory tree directly (anything else forces a
 # leading tar stage so the chain operates on one file).

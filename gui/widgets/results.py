@@ -51,6 +51,9 @@ class ResultsPanel(QFrame):
         self.hero = QLabel("", self)
         self.hero.setObjectName("Hero")
         self.hero.setWordWrap(True)
+        # W1-8: the headline is the thing people paste into chats - let them.
+        self.hero.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.hero.customContextMenuRequested.connect(self._hero_menu)
         column.addWidget(self.hero)
 
         self.subline = QLabel("", self)
@@ -109,6 +112,16 @@ class ResultsPanel(QFrame):
         else:
             self._show_compress(job)
         self.setVisible(True)
+
+    def _hero_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QApplication, QMenu
+        if not self.hero.text():
+            return
+        menu = QMenu(self)
+        copy = menu.addAction(self.tr("Copy summary"))
+        copy.triggered.connect(lambda: QApplication.clipboard().setText(
+            f"{self.hero.text()} — {self.subline.text()}"))
+        menu.exec(self.hero.mapToGlobal(pos))
 
     def hide_panel(self) -> None:
         self.setVisible(False)
@@ -221,6 +234,9 @@ class ResultsPanel(QFrame):
                 caption = self.tr("all compressed")
             detail = QLabel(caption, self)
             detail.setObjectName("Subtitle")
+            # W1-10: the widest label in the app (899px unwrapped) - it alone
+            # forced a horizontal scrollbar at 910px logical width.
+            detail.setWordWrap(True)
 
             for widget in (name, size_label, bar, detail):
                 widget.setAccessibleName(f"{label}, {fmt_size(size)}, {caption}")

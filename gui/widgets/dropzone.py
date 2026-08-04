@@ -52,23 +52,20 @@ class DropZone(QFrame):
         self.setObjectName("DropZone")
         self.setAcceptDrops(True)
         self.setProperty("dragActive", False)
-        self.setMinimumHeight(150)
+        # No minimum height: the old 150px floor plus the preset cards' twin
+        # floor spent 330px of a 432px (150%-scaled) client saying "drop here".
         self.setAccessibleName(self.tr("Drop area for files and folders"))
 
         column = QVBoxLayout(self)
-        column.setContentsMargins(20, 18, 20, 18)
-        column.setSpacing(6)
+        column.setContentsMargins(20, 12, 20, 12)
+        column.setSpacing(4)
         column.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # U+2193, not U+2B07: the latter has no text-presentation glyph in
         # Segoe UI (it renders as tofu, or as a jarring blue emoji tile once
-        # you force emoji presentation with U+FE0F).
-        icon = QLabel("↓", self)
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet("font-size: 30pt;")
-        icon.setAccessibleName(self.tr("Drop indicator"))
-
-        title = QLabel(self.tr("Drop files or folders here"), self)
+        # you force emoji presentation with U+FE0F). Glyph and title share a
+        # line now - a 30pt arrow on its own row bought nothing but height.
+        title = QLabel("↓  " + self.tr("Drop files or folders here"), self)
         title.setObjectName("Title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -93,7 +90,7 @@ class DropZone(QFrame):
         row.addWidget(self.files_button)
         row.addWidget(self.folder_button)
 
-        for widget in (icon, title, hint, buttons):
+        for widget in (title, hint, buttons):
             column.addWidget(widget)
 
     # -- drag and drop -----------------------------------------------------

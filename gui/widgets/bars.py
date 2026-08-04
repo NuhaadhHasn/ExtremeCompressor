@@ -18,14 +18,17 @@ from excmp.analyzer import Category
 from ..format import fmt_percent, fmt_size
 
 # Distinct in both palettes and distinguishable in greyscale by lightness.
+# CATEGORY_COLORS must not intersect theme tokens: TEXT used to equal the `ok`
+# green and BINARY the `accent` blue, so an 86%-binary breakdown bar read as a
+# progress bar and a text-heavy one as a success banner.
 CATEGORY_COLORS: dict[Category, str] = {
     Category.VIDEO: "#8b5cf6",
     Category.AUDIO: "#ec4899",
     Category.IMAGE: "#f59e0b",
     Category.COMPRESSED_ARCHIVE: "#64748b",
     Category.EXECUTABLE: "#06b6d4",
-    Category.TEXT: "#3ecf8e",
-    Category.BINARY: "#4c8dff",
+    Category.TEXT: "#14b8a6",
+    Category.BINARY: "#818cf8",
 }
 FALLBACK_COLOR = "#94a3b8"
 

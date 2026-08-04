@@ -31,7 +31,7 @@ from excmp.planner import Profile
 from excmp.tools import ToolInfo
 
 from ..suggest import ComparisonRow, comparison_caption
-from ..theme import GAP_INTRA, repolish
+from ..theme import CARD_MARGINS, GAP_INTRA, repolish
 
 # (header, stretch). Shared by the header strip and every row, which is what
 # keeps the columns lined up without a grid.
@@ -206,6 +206,7 @@ class CompareTable(QFrame):
 
     profileChosen = Signal(object)    # Profile - any click on a row
     profileChanged = Signal(object)   # Profile - selection actually moved
+    rowsRebuilt = Signal()            # rows are NEW widgets - re-apply tab order
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -217,7 +218,7 @@ class CompareTable(QFrame):
         self._estimated = False
 
         self._column = QVBoxLayout(self)
-        self._column.setContentsMargins(16, 12, 16, 12)
+        self._column.setContentsMargins(*CARD_MARGINS)
         self._column.setSpacing(GAP_INTRA)
 
         title = QLabel(self.tr("Pick a profile"), self)
@@ -339,6 +340,9 @@ class CompareTable(QFrame):
         for row_widget in self._rows:
             row_widget.set_selected(row_widget.profile is self._current)
         self.setVisible(True)
+        # Every rebuild deletes the old row widgets, which severs any explicit
+        # tab order routed through them - the window re-applies it on this.
+        self.rowsRebuilt.emit()
 
     def _on_row_clicked(self, profile: object) -> None:
         if isinstance(profile, Profile):

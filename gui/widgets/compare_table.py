@@ -39,7 +39,7 @@ _COLUMNS: tuple[tuple[str, int], ...] = (
     ("Profile", 3),
     ("What runs", 3),
     ("Estimated size", 3),
-    ("Saved", 1),
+    ("Saved", 2),      # 1 clipped "51% or better" - the honesty wording
     ("Estimated time", 3),
 )
 
@@ -57,8 +57,12 @@ def _cell(text: str, sub: str = "", parent: QWidget | None = None,
     box.setContentsMargins(0, 0, 0, 0)
     box.setSpacing(1)
 
+    # No wordWrap on cells: the values are short, and a wrapping QLabel
+    # reports a minimum height that assumes wrapping at minimum width -
+    # QScrollArea sizes the page by MINIMUM hint, so four rows of wrapped
+    # labels manufactured a scrollbar the real layout never needed. Long text
+    # clips at its column edge (the holder's Ignored width policy).
     main = QLabel(text, holder)
-    main.setWordWrap(True)
     if bold:
         main.setStyleSheet("font-weight: 600;")
     if tone:
@@ -69,7 +73,6 @@ def _cell(text: str, sub: str = "", parent: QWidget | None = None,
     if sub:
         note = QLabel(sub, holder)
         note.setObjectName("Subtitle")
-        note.setWordWrap(True)
         box.addWidget(note)
     holder.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
     return holder
@@ -107,7 +110,6 @@ class ProfileRow(QFrame):
 
         name = self.tr("%s (suggested)") % row.title if row.recommended else row.title
         self._name = QLabel(f"{_RADIO_OFF}  {name}", values)
-        self._name.setWordWrap(True)
         self._name.setStyleSheet("font-weight: 600;")
         if row.recommended:
             self._name.setProperty("tone", "ok")
@@ -119,16 +121,25 @@ class ProfileRow(QFrame):
         nbox.addWidget(self._name)
         name_holder.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
 
-        cells = (
-            name_holder,
-            _cell(row.chain, row.caveat, values, tone="warn" if row.caveat else ""),
-            _cell(row.size_text, row.size_range, values),
-            _cell(row.saved_text, "", values),
-            _cell(row.time_text, row.time_range, values,
-                  tone="warn" if row.note else ""),
-        )
-        for cell, (_header, stretch) in zip(cells, _COLUMNS):
-            line.addWidget(cell, stretch)
+        if row.size_text:
+            cells = (
+                name_holder,
+                _cell(row.chain, row.caveat, values, tone="warn" if row.caveat else ""),
+                _cell(row.size_text, row.size_range, values),
+                _cell(row.saved_text, "", values),
+                _cell(row.time_text, row.time_range, values,
+                      tone="warn" if row.note else ""),
+            )
+            for cell, (_header, stretch) in zip(cells, _COLUMNS):
+                line.addWidget(cell, stretch)
+        else:
+            # Placeholder mode (before analysis): no numbers exist, so the
+            # blurb spans their columns on ONE line - four wrapped blurbs used
+            # to cost the empty state 190px it does not have at 125% scaling.
+            line.addWidget(name_holder, _COLUMNS[0][1])
+            blurb = _cell(row.chain, row.caveat, values,
+                          tone="warn" if row.caveat else "")
+            line.addWidget(blurb, sum(stretch for _h, stretch in _COLUMNS[1:]))
         stack.addWidget(values)
 
         # The warning goes on its own full-width line, never inside a column -
@@ -145,8 +156,13 @@ class ProfileRow(QFrame):
 
         # One accessible sentence per row - a screen reader should not have to
         # stitch five cells together to learn what the row says.
-        spoken = self.tr("%s: %s, %s, saves %s, takes %s") % (
-            row.title, row.chain, row.size_text, row.saved_text, row.time_text)
+        if row.size_text:
+            spoken = self.tr("%s: %s, %s, saves %s, takes %s") % (
+                row.title, row.chain, row.size_text, row.saved_text, row.time_text)
+        else:
+            spoken = f"{row.title}: {row.chain}"
+            if row.caveat:
+                spoken += " " + row.caveat
         if row.note:
             spoken += " " + row.note
         if row.recommended and row.reason:
@@ -213,17 +229,17 @@ class CompareTable(QFrame):
         self._caption.setWordWrap(True)
         self._column.addWidget(self._caption)
 
-        head = QWidget(self)
-        head.setObjectName("Plain")
-        head_line = QHBoxLayout(head)
+        self._head = QWidget(self)
+        self._head.setObjectName("Plain")
+        head_line = QHBoxLayout(self._head)
         head_line.setContentsMargins(12, 0, 12, 0)
         head_line.setSpacing(14)
         for header, stretch in _COLUMNS:
-            label = QLabel(self.tr(header), head)
+            label = QLabel(self.tr(header), self._head)
             label.setObjectName("Muted")
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
             head_line.addWidget(label, stretch)
-        self._column.addWidget(head)
+        self._column.addWidget(self._head)
 
         self._rows: list[ProfileRow] = []
         self._footnote = QLabel(
@@ -298,8 +314,8 @@ class CompareTable(QFrame):
             caveat = (self.tr("missing: %s") % ", ".join(missing)) if missing else ""
             placeholder_rows.append(ComparisonRow(
                 profile=profile, title=f"{glyph} {title}", chain=blurb,
-                size_text="—", size_range="", saved_text="—",
-                time_text="—", time_range="", caveat=caveat,
+                size_text="", size_range="", saved_text="",
+                time_text="", time_range="", caveat=caveat,
             ))
         self._rebuild(placeholder_rows)
 
@@ -317,6 +333,9 @@ class CompareTable(QFrame):
             self._column.insertWidget(footnote_at + offset, widget)
             self._rows.append(widget)
         self._footnote.setVisible(self._estimated)
+        # Column headers describe the estimate columns; in placeholder mode
+        # those show nothing, so the header row is pure height.
+        self._head.setVisible(self._estimated)
         for row_widget in self._rows:
             row_widget.set_selected(row_widget.profile is self._current)
         self.setVisible(True)

@@ -273,6 +273,13 @@ QPlainTextEdit {
     color: $muted;
 }
 
+/* ---- the fixed action bar (W1-2) -------------------------------------- */
+QFrame#ActionBar {
+    background: $surface;
+    border: none;
+    border-top: 1px solid $border;
+}
+
 /* ---- tabs ------------------------------------------------------------ */
 QTabWidget::pane { border: none; top: -1px; }
 QTabBar::tab {

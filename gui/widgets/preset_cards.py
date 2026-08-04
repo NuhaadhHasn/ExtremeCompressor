@@ -29,11 +29,11 @@ PRESETS: list[tuple[Profile, str, str, str, tuple[str, ...]]] = [
     (Profile.NORMAL, "⚖️", "Normal",
      "7-Zip LZMA2 at maximum. The sensible everyday choice.", ("7z",)),
     (Profile.EXTREME, "🔥", "Extreme",
-     "Precomp → SREP → LZMA2. Best ratio; slow, and hungry for temp space.",
-     ("7z", "precomp", "srep")),
+     "Precomp → LZMA2. Best ratio; slow, and hungry for temp space.",
+     ("7z", "precomp")),
     (Profile.INSANE, "🌙", "Insane",
      "Extreme plus a stronger final codec — an overnight job.",
-     ("7z", "precomp", "srep", "zpaqfranz")),
+     ("7z", "precomp", "zpaqfranz")),
 ]
 
 

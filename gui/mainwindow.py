@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
     def _build_status_bar(self) -> None:
         bar = self.statusBar()
         found = [name for name, info in self.tools.items() if info is not None]
-        missing = [name for name in ("7z", "precomp", "srep") if self.tools.get(name) is None]
+        missing = [name for name in ("7z", "precomp") if self.tools.get(name) is None]
         text = self.tr("Tools found: %s") % (", ".join(found) or self.tr("none"))
         if missing:
             text += self.tr("  ·  missing: %s") % ", ".join(missing)

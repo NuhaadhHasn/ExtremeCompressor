@@ -114,6 +114,21 @@ def test_recommendation_backs_off_without_the_repack_tools():
     assert recommend_profile(summary, cores=8)[0] is Profile.NORMAL
 
 
+def test_srep_alone_is_no_longer_a_reason_to_go_extreme():
+    """B11: SREP is out of every chain, so its presence on the machine buys the
+    Extreme profile nothing - only Precomp does. Before the change, a machine
+    with srep but no precomp was steered into a chain identical to Normal."""
+    from gui.suggest import strongest_profile
+    from excmp.tools import ToolInfo
+
+    srep_only = {"7z": ToolInfo("7z", "x"), "srep": ToolInfo("srep", "x"),
+                 "precomp": None}
+    assert strongest_profile(srep_only) is Profile.NORMAL
+
+    summary = _fake(2 * 1024**3, 0, tools={"7z": True, "precomp": False, "srep": True})
+    assert recommend_profile(summary, cores=8)[0] is Profile.NORMAL
+
+
 def test_recommendation_is_not_circular():
     """A folder of zlib-wrapped game paks looks ~90% incompressible to Normal
     (no Precomp) but is mostly compressible under Extreme. Recommending Fast

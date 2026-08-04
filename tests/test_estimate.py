@@ -147,13 +147,14 @@ def test_only_precomp_chains_are_flagged_as_upper_bounds():
 
 
 def test_the_precomp_time_range_spans_both_of_its_regimes():
-    """2.642 MB/s when Precomp finds nothing, 0.842 when it does. One rate cannot
-    serve both, so the range has to hold them."""
-    infos = _real_infos()
-    est = estimate_time(infos, _plan_for(infos, Profile.EXTREME))
-    piped = estimate_size(infos, _plan_for(infos, Profile.EXTREME)).piped_bytes
-    assert est.low <= piped / 2.642e6
-    assert est.high >= piped / 0.842e6
+    """Measured on the precomp->7z chain: 2.642 MB/s when Precomp finds nothing
+    to expand, 0.891 MB/s when it does. One rate cannot serve both, so the
+    window the spread opens around the shipped rate has to hold them."""
+    chain = ["precomp", "sevenzip"]
+    rate = DEFAULT_RATES.rate_for(chain)
+    spread = DEFAULT_RATES.spread_for(chain)
+    assert rate / spread <= 0.891e6, "the working regime falls out of the range"
+    assert rate * spread >= 2.642e6, "the no-op regime falls out of the range"
 
 
 def test_the_least_compressible_sample_drives_the_estimate():
@@ -179,18 +180,26 @@ def test_the_least_compressible_sample_drives_the_estimate():
 
 def test_stored_bytes_are_io_bound_and_piped_bytes_are_codec_bound():
     """A single MB/s figure would mispredict on any mix but the one it was
-    measured on. Stored bytes cost a disk copy; piped bytes cost the codec."""
+    measured on. Stored bytes cost a disk copy; piped bytes cost the codec.
+    And since D9, EVERY byte costs a third thing: the pre-publish self-test
+    restores the whole archive, so the wait the user is being promised must
+    include it or the estimate is systematically low."""
     stored_only = [_info("clip.mp4", 400_000_000, Category.VIDEO, 7.99, mean=0.99)]
     piped_only = [_info("data.bin", 400_000_000, entropy=3.0, mean=0.4)]
 
     io_time = estimate_time(stored_only, _plan_for(stored_only, Profile.NORMAL))
     codec_time = estimate_time(piped_only, _plan_for(piped_only, Profile.NORMAL))
 
-    assert io_time.expected == pytest.approx(400_000_000 / DEFAULT_RATES.io_rate, rel=0.01)
-    assert codec_time.expected == pytest.approx(
-        400_000_000 / DEFAULT_RATES.rate_for(SEVENZIP), rel=0.01)
-    # And the disk copy is the cheap one by a wide margin.
-    assert codec_time.expected > io_time.expected * 10
+    # Both jobs pay the D9 self-test, each at its own chain's restore speed:
+    # a store-only archive verifies as a copy + hash (io-bound), a 7-Zip one
+    # replays LZMA2 decode.
+    io_expected = (400_000_000 / DEFAULT_RATES.io_rate          # copy in
+                   + 400_000_000 / DEFAULT_RATES.io_rate)       # verify back
+    codec_expected = (400_000_000 / DEFAULT_RATES.rate_for(SEVENZIP)
+                      + 400_000_000 / DEFAULT_RATES.verify_rate_for(SEVENZIP))
+    assert io_time.expected == pytest.approx(io_expected, rel=0.01)
+    assert codec_time.expected == pytest.approx(codec_expected, rel=0.01)
+    assert codec_time.expected > io_time.expected * 5
 
 
 def test_extreme_costs_more_time_than_normal_on_the_real_corpus():
@@ -208,9 +217,14 @@ def test_rates_are_injectable_for_self_calibration():
     infos = [_info("data.bin", 100_000_000, entropy=3.0, mean=0.4)]
     the_plan = _plan_for(infos, Profile.NORMAL)
     key = Rates.chain_key(SEVENZIP)
-    slow = Rates(codec={**DEFAULT_RATES.codec, key: DEFAULT_RATES.codec[key] / 4})
-    assert (estimate_time(infos, the_plan, slow).expected
-            == pytest.approx(estimate_time(infos, the_plan).expected * 4, rel=0.01))
+    rate = DEFAULT_RATES.codec[key]
+    slow = Rates(codec={**DEFAULT_RATES.codec, key: rate / 4})
+
+    # Quartering the codec rate must add exactly the extra codec seconds; the
+    # io and verify terms are untouched by it.
+    delta = (estimate_time(infos, the_plan, slow).expected
+             - estimate_time(infos, the_plan).expected)
+    assert delta == pytest.approx(3 * 100_000_000 / rate, rel=0.01)
 
 
 # ---------------------------------------------------------------------------

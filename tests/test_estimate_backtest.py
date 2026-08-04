@@ -1,14 +1,19 @@
 """J8: score the estimator against a recorded real run instead of trusting it.
 
 An estimator nobody backtested is a guess with a progress bar. This file replays
-the 721 MB corpus from ``docs/benchmarks/2026-08-01-real-programs-folder.md``
-through the analyzer, planner and estimator, and checks the prediction against
-what that run actually measured.
+the 721 MB corpus through the analyzer, planner and estimator, and checks the
+prediction against what a real run measured.
 
-Honest caveat, and the reason this file is not the whole of J8: those numbers are
-the set the shipped rates were *calibrated on*, so this is an in-sample check.
-It is a regression guard - it catches the day someone changes the model and
-quietly breaks the fit - not evidence the estimator generalises. The
+The reference run is the POST-B11/D9 one (chain is precomp->sevenzip, and the
+measured time includes the pre-publish restore+verify the user now always waits
+for). The original srep-chain run in
+``docs/benchmarks/2026-08-01-real-programs-folder.md`` measured a workflow that
+no longer exists and stays as history only.
+
+Honest caveat, and the reason this file is not the whole of J8: these numbers
+are the set the shipped rates were *calibrated on*, so this is an in-sample
+check. It is a regression guard - it catches the day someone changes the model
+and quietly breaks the fit - not evidence the estimator generalises. The
 out-of-sample evidence lives in
 ``docs/benchmarks/2026-08-01-estimator-backtest.md``.
 
@@ -40,10 +45,13 @@ FILES = {
 }
 TOTAL = sum(FILES.values())          # 721,076,752
 
-# profile -> (measured saved fraction, measured compress seconds)
+# profile -> (measured saved fraction, measured total seconds including the
+# D9 restore+verify gate). Post-B11 chain, run 2026-08-01:
+#   normal  700,884,250 B, 103.8s (53.5 compress + 50.3 verify)
+#   extreme 699,648,205 B, 254.3s (197.5 compress + 56.8 verify)
 MEASURED = {
-    Profile.NORMAL: (0.0280, 62.4),
-    Profile.EXTREME: (0.0297, 166.3),
+    Profile.NORMAL: (0.0280, 103.8),
+    Profile.EXTREME: (0.0297, 254.3),
 }
 
 SIZE_TOLERANCE = 0.10   # +/-10% of the measured archive size

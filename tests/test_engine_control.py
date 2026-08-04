@@ -135,5 +135,8 @@ def test_log_callback_receives_the_tools_own_output(tmp_path):
     engine.compress([src], tmp_path / "out.excmp", Profile.NORMAL, ctx)
 
     assert lines, "no tool output was forwarded"
-    assert {stage for stage, _ in lines} == {"sevenzip"}
+    # The tool's own output, plus the pre-publish verification announcing
+    # itself (D9) - the guarantee is meant to be visible, not silent.
+    assert {stage for stage, _ in lines} == {"sevenzip", "verify"}
     assert any("7-Zip" in line for _stage, line in lines)
+    assert any(stage == "verify" and "hash" in line for stage, line in lines)

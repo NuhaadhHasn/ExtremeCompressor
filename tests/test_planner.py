@@ -37,15 +37,32 @@ def test_fast_uses_zstd():
 
 
 def test_extreme_full_chain_with_tools():
+    """B11: SREP is out of every compression chain. It failed a real restore on
+    1 of 3 runs over byte-identical input (see benchmarks/2026-08-01-estimator-
+    backtest.md), and it was already slated for removal as non-OSI. Old archives
+    that recorded an srep stage still extract - the stage stays registered."""
     p = plan([fi("data.pak", Category.BINARY)], Profile.EXTREME, TOOLS_ALL)
-    assert p.routes[0].stages == ["precomp", "srep", "sevenzip"]
+    assert p.routes[0].stages == ["precomp", "sevenzip"]
 
 
-def test_extreme_degrades_without_precomp_and_srep():
+def test_insane_runs_the_same_chain_until_zpaqfranz_lands():
+    p = plan([fi("data.pak", Category.BINARY)], Profile.INSANE, TOOLS_ALL)
+    assert p.routes[0].stages == ["precomp", "sevenzip"]
+
+
+def test_no_profile_ever_plans_an_srep_stage():
+    for profile in Profile:
+        p = plan([fi("data.pak", Category.BINARY)], profile, TOOLS_ALL)
+        for route in p.routes:
+            assert "srep" not in route.stages, profile
+
+
+def test_extreme_degrades_without_precomp():
     p = plan([fi("data.pak", Category.BINARY)], Profile.EXTREME, TOOLS_MINIMAL)
     assert p.routes[0].stages == ["sevenzip"]
     assert any("precomp" in w for w in p.warnings)
-    assert any("srep" in w for w in p.warnings)
+    # And it must not nag about a tool that is no longer part of any chain.
+    assert not any("srep" in w for w in p.warnings)
 
 
 def test_high_entropy_archive_stored():

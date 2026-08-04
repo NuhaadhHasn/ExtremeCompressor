@@ -472,11 +472,13 @@ single caption→action dispatcher pattern (doc 17 §6, F12 `runfunctions` →
 ## 7. Implementation plan, in waves
 
 Verification baseline for every wave: `.venv\Scripts\python.exe -m pytest -q`
-stays green (**302 tests as of 2026-08-02** — the "223" in the first draft was
-a stale CLAUDE.md figure) and tools/shots.py is re-captured (dark + light,
+stays green (**324 tests as of 2026-08-04**, merged; the first draft said 302,
+itself correcting a stale CLAUDE.md 223) and tools/shots.py is re-captured (dark + light,
 100/125/150 %).
 
-### Wave 1 — cheap, class-changing (13 items)
+### Wave 1 — cheap, class-changing (13 items) ✅ SHIPPED 2026-08-02/04
+
+(`4a25530` wave 1a, `b40f2ef` wave 1b, `45e8110` audit fixes — merged to main.)
 
 **Honest scope (amended after review): Wave 1 makes the flow *operable* on
 1366×768 — the commit action, the chooser and the results are always reachable

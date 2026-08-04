@@ -9,22 +9,20 @@
 
 ## 1. State of the repo
 
-**323 tests pass.** Three stacked branches await review, merge bottom-up:
+**Everything is MERGED to `main` (tip `fa1a4f2`, three `--no-ff` merges keeping
+the phase boundaries) and the suite passes there: 324 tests.** The phase
+branches and the two stale backups are deleted. `main` is ahead of
+`origin/main` — nothing from this whole effort is pushed yet:
 
 ```bash
-git merge --no-ff phase-j-smart-advisor     # estimator + comparison UI (J1-J4, J8)
-git merge --no-ff phase-b11-d9-integrity    # SREP removed; verify-before-publish
-git merge --no-ff phase-ui-v3               # screen fit + wave 1a of the redesign
+git push origin main
 ```
 
-| branch | commits | what |
-|---|---|---|
-| `phase-j-smart-advisor` | `9620888`, `5675c90` | estimates + chooser table, visual-QA fixes |
-| `phase-b11-d9-integrity` | `c6285df`, `d01c8ae` | chains SREP-free; full restore+verify gates every publish; estimator models the verify pass |
-| `phase-ui-v3` | `c094ddf`..`b40f2ef` | screen fit, merged chooser, cascade/contrast fixes, action bar, menus, persistence, fit gate |
-
-Docs already on `main`: `3aff9e3` (B11+D9 benchmark), `bd02a03` (research/23,
-the UI spec), plus this handoff. `docs/images/` lives on `phase-j`/`phase-ui-v3`.
+| merge | what |
+|---|---|
+| `9d3e323` | Phase J part 1 — estimator + comparison chooser (J1-J4, J8) |
+| `5a868b9` | B11+D9 — SREP-free chains; verified restore gates every publish |
+| `fa1a4f2` | UI v3 wave 1 — all 13 items + pre-merge audit fixes |
 
 ## 2. What landed, one line each
 
@@ -60,6 +58,7 @@ Wave 2 next, from `docs/research/23-ui-v3-redesign.md` §7:
 | **W2-4** token sweep | 4px grid constants exist in theme.py (GUTTER/VGAP/GAP_*); sweep the remaining ad-hoc paddings/radii. |
 | **W2-5** Fluent SVG icons | replace the ⚡⚖️🔥🌙 emoji; MIT, tint-by-token via QtSvg. |
 | **W2-6** dark title bar + follow-system | DWMWA_USE_IMMERSIVE_DARK_MODE next to the existing COM code in winintegration.py; QStyleHints.colorScheme hook. |
+| **W2-7** queue table density | merge Profile+Size under Job, progress 150→110; empty-state hint painted on the viewport. (Was silently missing from this table — audit catch.) |
 | **W2-8** analysis busy progress | "scanning 34/81" — the HDD corpus reads as a hang today. |
 | **W2-9** Banner widget | replaces the closeEvent QMessageBox (I9) — the last modal. |
 | **W2-10** pending-items list | review/remove inputs before compressing; re-summarize from cached FileInfo. |

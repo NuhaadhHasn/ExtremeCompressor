@@ -53,7 +53,7 @@ commit, stop. Do not roll into the following phase.
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-223 tests as of 2026-08-01; all must pass before a commit. Use TDD for anything
+324 tests as of 2026-08-04; all must pass before a commit. Use TDD for anything
 security- or integrity-related: write the failing test first.
 
 Real corpora for end-to-end runs (slow external drive — never run recursive `du`,

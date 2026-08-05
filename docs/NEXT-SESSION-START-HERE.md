@@ -9,14 +9,11 @@
 
 ## 1. State of the repo
 
-**Everything is MERGED to `main` (tip `fa1a4f2`, three `--no-ff` merges keeping
-the phase boundaries) and the suite passes there: 324 tests.** The phase
-branches and the two stale backups are deleted. `main` is ahead of
-`origin/main` — nothing from this whole effort is pushed yet:
-
-```bash
-git push origin main
-```
+**Everything is MERGED to `main` (three `--no-ff` merges keeping the phase
+boundaries), PUSHED to `origin/main`, and the suite passes there: 324 tests.**
+The phase branches and the two stale backups are deleted; only `main` exists.
+The graphify knowledge graph was regenerated at session close, so its hook
+context describes the current codebase.
 
 | merge | what |
 |---|---|

@@ -176,8 +176,11 @@ rather than new ones:
 
 - **D0** — replace the ad-hoc sanitizer note with the union test matrix from
   §3.2; add RLO U+202E (beats 7-Zip); cite docs 14/17/19.
-- **New D-item (D9)** — child-process mitigations + safe self-process subset
-  (doc 14 §3). Optional, S-effort.
+- **New D-item** — child-process mitigations + safe self-process subset
+  (doc 14 §3). Optional, S-effort. *(Label settled as **D0.6** in the roadmap
+  and in doc 22 §3 — not D9, which 2026-08-02 assigned to the pre-publish
+  verify gate. This line originally proposed "D9"; corrected 2026-08-05 after
+  a graph pass surfaced the collision.)*
 - **B1** — annotate with the exact zpaqfranz CLIs (`a … -m4 -longpath -test`;
   verify `t` + `v -ssd`); note `-m4` is the realistic Insane ceiling on 2 cores,
   `-m5` is a niche; keep archives 7.15-compatible (plain `a`, no `backup`

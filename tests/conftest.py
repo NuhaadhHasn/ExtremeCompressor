@@ -5,6 +5,13 @@ steals focus mid-run, and on CI there is no display at all. Setting the Qt
 platform plugin here works because pytest imports ``conftest.py`` before any
 test module, and therefore before PySide6 is first imported.
 
+**The font directory is part of that setup, not a nicety.** Qt's offscreen
+plugin ships no font database; without ``QT_QPA_FONTDIR`` every glyph is a
+tofu box of the wrong width, so every layout measurement a test makes is
+fiction. The height gates in test_gui_fit.py were quietly measuring tofu and
+under-reporting the populated page by ~80px until this was set (tools/shots.py
+had it right all along - that is where this line comes from).
+
 QSettings is rerouted to a per-test temp directory (W1-1's other half): the
 app persists window geometry now, and without this fixture the GUI tests
 would read the developer's real stored geometry - machine-dependent,
@@ -12,10 +19,13 @@ order-dependent, and polluting the registry on every CI run.
 """
 
 import os
+import sys
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if sys.platform == "win32" and os.path.isdir(r"C:\Windows\Fonts"):
+    os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")
 
 
 @pytest.fixture(autouse=True)

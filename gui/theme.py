@@ -174,6 +174,20 @@ QPushButton[variant="danger"]:hover:enabled { background: $danger; color: $on_ac
    into an empty pill inside its 28px fixed box. */
 QPushButton#CancelJob { padding: 2px; font-weight: 600; }
 
+/* Collapsible section headings (W2-3). A button that reads as a heading:
+   no chrome at rest, but it focuses and hovers like the control it is. */
+QPushButton#SectionToggle {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: $radius_sm;
+    padding: 2px 6px;
+    color: $text;
+    font-weight: 600;
+    text-align: left;
+}
+QPushButton#SectionToggle:hover:enabled { background: $surface2; }
+QPushButton#SectionToggle:focus { border: 2px solid $accent_hi; padding: 1px 5px; }
+
 QToolButton {
     background: transparent;
     /* Permanent transparent border: focus recolors it without reflowing. */
@@ -279,6 +293,40 @@ QFrame#ActionBar {
     border: none;
     border-top: 1px solid $border;
 }
+
+/* ---- the inline banner (W2-9) — the widget that replaced the modals ----
+   A left accent stripe rather than a flooded background: the strip sits
+   above the whole window and a saturated 48px band reads as an error even
+   when it is only saying "note". Tone tints the stripe and the glyph; the
+   sentence always says it too. */
+QFrame#Banner {
+    background: $surface2;
+    border: none;
+    border-left: 4px solid $accent;
+    border-bottom: 1px solid $border;
+}
+QFrame#Banner[tone="warn"]   { border-left-color: $warn; }
+QFrame#Banner[tone="danger"] { border-left-color: $danger; }
+QFrame#Banner[tone="ok"]     { border-left-color: $ok; }
+QLabel#BannerGlyph { font-size: 13pt; color: $accent; }
+QFrame#Banner[tone="warn"]   QLabel#BannerGlyph { color: $warn; }
+QFrame#Banner[tone="danger"] QLabel#BannerGlyph { color: $danger; }
+QFrame#Banner[tone="ok"]     QLabel#BannerGlyph { color: $ok; }
+
+/* ---- the persistent status strip (W2-1) -------------------------------
+   The job line is a flat button, not a label: it navigates to Activity, so
+   it must be focusable and announce itself as the control it is. */
+QPushButton#StatusJob {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: $radius_sm;
+    padding: 2px 8px;
+    color: $text;
+    font-weight: 600;
+    text-align: left;
+}
+QPushButton#StatusJob:hover:enabled { background: $surface2; }
+QPushButton#StatusJob:focus { border: 2px solid $accent_hi; padding: 1px 7px; }
 
 /* ---- tabs ------------------------------------------------------------ */
 QTabWidget::pane { border: none; top: -1px; }

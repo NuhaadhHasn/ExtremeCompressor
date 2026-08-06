@@ -208,8 +208,7 @@ def write_gif(frames: list[QImage], target: Path) -> tuple[bool, int]:
 
 def scroll_to(window: MainWindow, widget) -> None:
     """Bring a widget into view inside the Compress tab's scroll area."""
-    area = window.tabs.widget(0)
-    area.ensureWidgetVisible(widget, 0, 40)
+    window._scroll.ensureWidgetVisible(widget, 0, 40)
 
 
 # --------------------------------------------------------------------------
@@ -257,8 +256,10 @@ def main() -> int:
     window.start_compression()
     job = window.queue.jobs[-1]
     spin(app, lambda: job.percent > 25, 600_000, "past 25%")
+    # Wave 2 moved the queue and the results onto their own tab; the shots
+    # follow the app rather than the app keeping a page for the shots.
+    window.tabs.setCurrentWidget(window.activity_page)
     window.queue_table.expandAll()
-    scroll_to(window, window.queue_table)
     settle(app, 300)
     save_png(window, "02-queue-running.png")
 
@@ -268,8 +269,6 @@ def main() -> int:
 
     print("4/4  results")
     window.queue_table.collapseAll()
-    settle(app, 400)
-    scroll_to(window, window.results)
     settle(app, 600)
     save_png(window, "03-results.png")
 

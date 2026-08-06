@@ -24,14 +24,24 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
 from ..format import fmt_duration, fmt_percent, fmt_size
 from ..models import Job, JobKind, JobState
 from ..suggest import CATEGORY_LABELS, AnalysisSummary, store_explanations
-from ..theme import repolish, tokens
+from ..theme import CARD_MARGINS, GAP_INTRA, repolish, tokens
 from .bars import CATEGORY_COLORS, BeforeAfterBar, StackedBar
 
-_MAX_EXPLANATIONS = 6
+# W2-3: three lines, then "show all N". Six wrapped explanations plus their
+# heading were 180px of a panel that has to fit inside a ~320px viewport at
+# 150% scaling - and the fourth reason is nearly always a repeat of the third.
+_MAX_EXPLANATIONS = 3
 
 
 class ResultsPanel(QFrame):
-    """Shown when a job finishes; hidden the moment a new one is queued."""
+    """Shown when a job finishes; hidden the moment a new one is queued.
+
+    Compact by construction (W2-3): the headline and its subline share a row,
+    the before/after bars are a two-column grid rather than four stacked
+    rows, and "Where the bytes went" starts collapsed. What never collapses
+    is the list of files that did not shrink and why - that is the reason the
+    project exists, and hiding it behind a click would be hiding the answer.
+    """
 
     openFolderRequested = Signal(object)   # Path
     dismissed = Signal()
@@ -39,57 +49,80 @@ class ResultsPanel(QFrame):
     def __init__(self, theme: str = "dark", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Card")
-        self.setProperty("tone", "accent")
         self._tokens = tokens(theme)
         self._output: Path | None = None
+        self._explanations: list[tuple[str, str]] = []
+        self._show_all = False
         self.setAccessibleName(self.tr("Results"))
 
         column = QVBoxLayout(self)
-        column.setContentsMargins(20, 18, 20, 18)
-        column.setSpacing(12)
+        column.setContentsMargins(*CARD_MARGINS)
+        column.setSpacing(GAP_INTRA)
 
+        # Headline and subline on ONE row (Windows title/subtitle pattern):
+        # two stacked rows cost 28px that the 150% budget does not have.
+        head = QHBoxLayout()
+        head.setSpacing(GAP_INTRA)
         self.hero = QLabel("", self)
         self.hero.setObjectName("Hero")
         self.hero.setWordWrap(True)
         # W1-8: the headline is the thing people paste into chats - let them.
         self.hero.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.hero.customContextMenuRequested.connect(self._hero_menu)
-        column.addWidget(self.hero)
+        head.addWidget(self.hero, 0, Qt.AlignmentFlag.AlignBottom)
 
         self.subline = QLabel("", self)
         self.subline.setObjectName("HeroSub")
         self.subline.setWordWrap(True)
-        column.addWidget(self.subline)
+        head.addWidget(self.subline, 1, Qt.AlignmentFlag.AlignBottom)
+        column.addLayout(head)
 
         self.bars = BeforeAfterBar(self)
         column.addWidget(self.bars)
 
-        self._breakdown_title = QLabel(self.tr("Where the bytes went"), self)
-        self._breakdown_title.setObjectName("Title")
-        column.addWidget(self._breakdown_title)
+        # Collapsed by default: the per-category split is the "tell me more"
+        # answer, not the answer.
+        self.breakdown_toggle = QPushButton("", self)
+        self.breakdown_toggle.setObjectName("SectionToggle")
+        self.breakdown_toggle.setCheckable(True)
+        self.breakdown_toggle.toggled.connect(self._set_breakdown_open)
+        column.addWidget(self.breakdown_toggle)
 
         self._breakdown = QWidget(self)
         self._breakdown.setObjectName("Plain")
         self._breakdown_grid = QGridLayout(self._breakdown)
         self._breakdown_grid.setContentsMargins(0, 0, 0, 0)
         self._breakdown_grid.setHorizontalSpacing(12)
-        self._breakdown_grid.setVerticalSpacing(8)
+        self._breakdown_grid.setVerticalSpacing(GAP_INTRA)
         self._breakdown_grid.setColumnStretch(2, 1)
+        self._breakdown.setVisible(False)
         column.addWidget(self._breakdown)
 
+        why_head = QHBoxLayout()
+        why_head.setSpacing(GAP_INTRA)
         self._why_title = QLabel(self.tr("Why some files didn't shrink"), self)
         self._why_title.setObjectName("Title")
-        column.addWidget(self._why_title)
+        why_head.addWidget(self._why_title)
+        why_head.addStretch(1)
+        # The expander shares the heading's row - a button on its own line was
+        # 28px spent on one word.
+        self.more_button = QPushButton("", self)
+        self.more_button.setObjectName("SectionToggle")
+        self.more_button.clicked.connect(self._toggle_all_reasons)
+        self.more_button.setVisible(False)
+        why_head.addWidget(self.more_button)
+        self._why_head = why_head
+        column.addLayout(why_head)
 
         self._why = QWidget(self)
         self._why.setObjectName("Plain")
         self._why_column = QVBoxLayout(self._why)
         self._why_column.setContentsMargins(0, 0, 0, 0)
-        self._why_column.setSpacing(6)
+        self._why_column.setSpacing(4)
         column.addWidget(self._why)
 
         buttons = QHBoxLayout()
-        buttons.setSpacing(8)
+        buttons.setSpacing(GAP_INTRA)
         self.open_button = QPushButton(self.tr("Open output folder"), self)
         self.open_button.setProperty("variant", "primary")
         self.open_button.clicked.connect(self._open_folder)
@@ -100,11 +133,19 @@ class ResultsPanel(QFrame):
         buttons.addStretch(1)
         column.addLayout(buttons)
 
+        self._set_breakdown_open(False)
         self.setVisible(False)
 
     # -- public ------------------------------------------------------------
+    def explanation_count(self) -> int:
+        """How many "why it didn't shrink" lines are on screen right now."""
+        return sum(1 for i in range(self._why_column.count())
+                   if self._why_column.itemAt(i).widget() is not None
+                   and self._why_column.itemAt(i).widget().property("explains"))
+
     def show_job(self, job: Job) -> None:
         self._output = job.out_path
+        self._show_all = False
         if job.state is JobState.FAILED:
             self._show_failure(job)
         elif job.kind is JobKind.EXTRACT:
@@ -163,8 +204,10 @@ class ResultsPanel(QFrame):
         self.bars.setVisible(False)
         self._clear_breakdown()
         self._clear_reasons()
-        self._breakdown_title.setVisible(False)
+        self.breakdown_toggle.setVisible(False)
+        self._breakdown.setVisible(False)
         self._why_title.setVisible(False)
+        self.more_button.setVisible(False)
         self.open_button.setVisible(True)
 
     def _show_failure(self, job: Job) -> None:
@@ -175,11 +218,27 @@ class ResultsPanel(QFrame):
         self.bars.setVisible(False)
         self._clear_breakdown()
         self._clear_reasons()
-        self._breakdown_title.setVisible(False)
+        self.breakdown_toggle.setVisible(False)
+        self._breakdown.setVisible(False)
         self._why_title.setVisible(False)
+        self.more_button.setVisible(False)
         self.open_button.setVisible(False)
 
     # -- sections ----------------------------------------------------------
+    def _set_breakdown_open(self, open_: bool) -> None:
+        """Text carries the state (▸/▾ plus the word), never the arrow alone."""
+        self.breakdown_toggle.setText(
+            self.tr("▾  Where the bytes went") if open_
+            else self.tr("▸  Where the bytes went"))
+        self.breakdown_toggle.setAccessibleName(
+            self.tr("Where the bytes went, expanded") if open_
+            else self.tr("Where the bytes went, collapsed"))
+        self._breakdown.setVisible(open_ and self._breakdown_grid.count() > 0)
+
+    def _toggle_all_reasons(self) -> None:
+        self._show_all = not self._show_all
+        self._render_reasons()
+
     def _clear_breakdown(self) -> None:
         while self._breakdown_grid.count():
             item = self._breakdown_grid.takeAt(0)
@@ -195,11 +254,10 @@ class ResultsPanel(QFrame):
     def _fill_breakdown(self, summary: AnalysisSummary | None) -> None:
         self._clear_breakdown()
         if summary is None or not summary.total_bytes:
-            self._breakdown_title.setVisible(False)
+            self.breakdown_toggle.setVisible(False)
             self._breakdown.setVisible(False)
             return
-        self._breakdown_title.setVisible(True)
-        self._breakdown.setVisible(True)
+        self.breakdown_toggle.setVisible(True)
 
         note = QLabel(self.tr(
             "Input bytes by type. The archive is one solid block, so there is no "
@@ -244,33 +302,46 @@ class ResultsPanel(QFrame):
             self._breakdown_grid.addWidget(size_label, row, 1)
             self._breakdown_grid.addWidget(bar, row, 2)
             self._breakdown_grid.addWidget(detail, row, 3)
+        self._set_breakdown_open(self.breakdown_toggle.isChecked())
 
     def _fill_reasons(self, summary: AnalysisSummary | None) -> None:
+        self._explanations = (
+            store_explanations(summary, len(summary.store_files)) if summary else [])
+        self._render_reasons()
+
+    def _render_reasons(self) -> None:
+        """Three lines by default, all of them behind "Show all N".
+
+        The cap is a height decision, not an honesty one: the total is always
+        stated in the button, so nothing is ever silently dropped.
+        """
         self._clear_reasons()
-        explanations = store_explanations(summary, _MAX_EXPLANATIONS) if summary else []
-        if not explanations:
+        total = len(self._explanations)
+        if not total:
             self._why_title.setVisible(False)
+            self.more_button.setVisible(False)
             self._why.setVisible(False)
             return
         self._why_title.setVisible(True)
         self._why.setVisible(True)
 
-        for name, reason in explanations:
+        shown = self._explanations if self._show_all \
+            else self._explanations[:_MAX_EXPLANATIONS]
+        for name, reason in shown:
             line = QLabel(f"ⓘ  <b>{name}</b> — {reason}", self)
             line.setTextFormat(Qt.TextFormat.RichText)
             line.setWordWrap(True)
             line.setObjectName("Subtitle")
+            line.setProperty("explains", True)
             line.setAccessibleName(f"{name}: {reason}")
             self._why_column.addWidget(line)
 
-        hidden = len(summary.store_files) - len(explanations) if summary else 0
-        if hidden > 0:
-            more = QLabel(
-                self.tr("…and 1 more file stored for the same reason.") if hidden == 1
-                else self.tr("…and %d more files stored for the same reasons.") % hidden,
-                self)
-            more.setObjectName("Muted")
-            self._why_column.addWidget(more)
+        self.more_button.setVisible(total > _MAX_EXPLANATIONS)
+        self.more_button.setText(
+            self.tr("Show fewer") if self._show_all
+            else self.tr("Show all %d") % total)
+        self.more_button.setAccessibleName(
+            self.tr("Showing %d of %d stored files") % (len(shown), total))
 
     # -- actions -----------------------------------------------------------
     def _open_folder(self) -> None:

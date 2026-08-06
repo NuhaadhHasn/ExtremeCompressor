@@ -1,28 +1,42 @@
 """The always-visible job queue.
 
 HandBrake hides its queue behind a menu item, and its most-upvoted issue is
-people asking where their jobs went. This one lives in the main window and
-never moves. Each row expands into the tool's real output, so a job that
+people asking where their jobs went. This one lives in the app's Activity tab
+and never moves. Each row expands into the tool's real output, so a job that
 takes an hour is never a mystery box.
+
+Two shape decisions, both from UI v3 wave 2:
+
+**Density (W2-7).** Profile and Size used to own two columns of two short
+words each — more width than the progress bar itself — while the job name,
+the only thing anyone scans for, was squeezed. They fold into a second line
+under the name, and the progress column drops 150px to 110px. The whole table
+now fits inside 860 logical pixels of width.
+
+**It fills its host.** The old ``_adjust_height`` grew the table row by row
+and capped it at 430px, because the queue shared one scrolling column with
+the drop zone, the analysis card and the chooser — an empty queue would
+otherwise have pushed the results panel off the bottom of the window. On its
+own tab that arithmetic has nothing left to protect, so the table simply
+takes the space it is given and scrolls internally.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QPlainTextEdit,
-                               QProgressBar, QPushButton, QTreeWidget,
-                               QTreeWidgetItem, QWidget)
+                               QProgressBar, QPushButton, QSizePolicy,
+                               QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                               QWidget)
 
 from ..format import fmt_duration, fmt_eta, fmt_size
 from ..models import Job, JobKind, JobState
 from ..theme import repolish
 
-COL_NAME, COL_PROFILE, COL_SIZE, COL_PROGRESS, COL_ETA, COL_STATE, COL_ACTIONS = range(7)
+COL_NAME, COL_PROGRESS, COL_ETA, COL_STATE, COL_ACTIONS = range(5)
 
-# The empty queue used to reserve a 120px featureless slab; on the 1366x768
-# target that is a third of the 150%-scaled viewport spent saying nothing.
-_MIN_TABLE_HEIGHT = 64
-_MAX_TABLE_HEIGHT = 430
+_PROGRESS_WIDTH = 110
 
 _STATE_TONE = {
     JobState.DONE: "ok",
@@ -57,47 +71,76 @@ class QueueTable(QTreeWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_menu)
 
-        self.setColumnCount(7)
+        self.setColumnCount(5)
         # "Time", not "Time left": finished rows show elapsed time in this
         # column, and an honesty-first app must not mislabel a number.
         self.setHeaderLabels([
-            self.tr("Job"), self.tr("Profile"), self.tr("Size"),
-            self.tr("Progress"), self.tr("Time"), self.tr("State"), "",
+            self.tr("Job"), self.tr("Progress"), self.tr("Time"),
+            self.tr("State"), "",
         ])
         self.setRootIsDecorated(True)
         self.setAlternatingRowColors(True)
         self.setUniformRowHeights(False)
         self.setSelectionBehavior(QTreeWidget.SelectionBehavior.SelectRows)
         self.setAccessibleName(self.tr("Job queue"))
-        self.setMinimumHeight(_MIN_TABLE_HEIGHT)
-        self.setMaximumHeight(_MIN_TABLE_HEIGHT)
-        self.itemExpanded.connect(lambda _i: self._adjust_height())
-        self.itemCollapsed.connect(lambda _i: self._adjust_height())
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # W2-7: an empty grid is the worst possible answer to "did my job
+        # register?". Painted on the viewport, the same idiom the log
+        # expander already uses via setPlaceholderText.
+        self.empty_hint = self.tr(
+            "Nothing running yet.\nJobs you start on the Compress tab appear "
+            "here with live progress, and every row opens into the tool's own "
+            "output.")
 
         header = self.header()
         header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
-        for column in (COL_PROFILE, COL_SIZE, COL_ETA, COL_STATE, COL_ACTIONS):
+        for column in (COL_ETA, COL_STATE, COL_ACTIONS):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(COL_PROGRESS, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(COL_PROGRESS, 150)
+        self.setColumnWidth(COL_PROGRESS, _PROGRESS_WIDTH)
 
     # -- rows --------------------------------------------------------------
+    @staticmethod
+    def _detail(job: Job) -> str:
+        """The second line under the job name: what profile, and how big.
+
+        Once a compress job finishes this is also where the before/after pair
+        goes - it is the same fact, better told after the event.
+        """
+        kind = "extract" if job.kind is JobKind.EXTRACT else job.profile.value
+        if job.state is JobState.DONE and job.kind is JobKind.COMPRESS and job.final_bytes:
+            return (f"{kind}  ·  {fmt_size(job.orig_bytes)} → "
+                    f"{fmt_size(job.final_bytes)}")
+        return f"{kind}  ·  {fmt_size(job.orig_bytes)}" if job.orig_bytes else kind
+
+    def _set_name(self, row_item: QTreeWidgetItem, job: Job) -> None:
+        row_item.setText(COL_NAME, f"{job.display_name}\n{self._detail(job)}")
+
     def add_job(self, job: Job) -> None:
         item = QTreeWidgetItem(self)
-        item.setText(COL_NAME, job.display_name)
+        self._set_name(item, job)
         item.setToolTip(COL_NAME, "\n".join(str(p) for p in job.inputs))
-        item.setText(COL_PROFILE, self.tr("extract") if job.kind is JobKind.EXTRACT
-                     else job.profile.value)
-        item.setText(COL_SIZE, fmt_size(job.orig_bytes) if job.orig_bytes else "—")
         item.setText(COL_ETA, "—")
         item.setText(COL_STATE, job.state.label)
 
+        # The bar goes in a centering holder, not straight into the cell.
+        # Since W2-7 made rows two lines tall, an item widget dropped into the
+        # cell stretches to fill it - the 10px bar rendered as a 55px slab of
+        # flat colour. QSS `height` does not constrain a laid-out QProgressBar;
+        # only setFixedHeight does.
         bar = QProgressBar(self)
         bar.setRange(0, 100)
         bar.setValue(0)
         bar.setTextVisible(False)
+        bar.setFixedHeight(10)
         bar.setAccessibleName(self.tr("Progress for %s") % job.display_name)
-        self.setItemWidget(item, COL_PROGRESS, bar)
+        holder = QWidget(self)
+        holder.setObjectName("Plain")
+        holder_box = QVBoxLayout(holder)
+        holder_box.setContentsMargins(0, 0, 8, 0)
+        holder_box.addWidget(bar, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.setItemWidget(item, COL_PROGRESS, holder)
 
         actions = QWidget(self)
         actions.setObjectName("Plain")
@@ -131,18 +174,7 @@ class QueueTable(QTreeWidget):
 
         self._rows[job.id] = _JobRow(item, child, bar, log, cancel)
         self.scrollToItem(item)
-        self._adjust_height()
-
-    def _adjust_height(self) -> None:
-        """Grow with the queue instead of leaving a slab of empty table.
-
-        The queue is permanently on screen, so an empty one must not push the
-        results panel off the bottom of the window.
-        """
-        rows = len(self._rows)
-        expanded = sum(1 for row in self._rows.values() if row.item.isExpanded())
-        wanted = self.header().height() + rows * 42 + expanded * 150 + 16
-        self.setMaximumHeight(max(_MIN_TABLE_HEIGHT, min(wanted, _MAX_TABLE_HEIGHT)))
+        self.viewport().update()
 
     def update_progress(self, job: Job) -> None:
         row = self._rows.get(job.id)
@@ -159,6 +191,7 @@ class QueueTable(QTreeWidget):
         if row is None:
             return
         row.item.setText(COL_STATE, job.state.label)
+        self._set_name(row.item, job)
         # Hidden, not merely disabled: a dead grey box in every finished row
         # is visual noise that means nothing.
         row.cancel.setVisible(not job.state.is_terminal)
@@ -171,8 +204,6 @@ class QueueTable(QTreeWidget):
             row.bar.setValue(100)
             row.item.setText(COL_ETA, self.tr("took %s") % fmt_duration(job.elapsed_s))
             if job.kind is JobKind.COMPRESS and job.final_bytes:
-                row.item.setText(
-                    COL_SIZE, f"{fmt_size(job.orig_bytes)} → {fmt_size(job.final_bytes)}")
                 row.item.setText(
                     COL_STATE, self.tr("Done · %d%% saved") % round(job.saved_fraction * 100))
         elif job.state in (JobState.FAILED, JobState.CANCELLED):
@@ -210,4 +241,21 @@ class QueueTable(QTreeWidget):
             index = self.indexOfTopLevelItem(row.item)
             if index >= 0:
                 self.takeTopLevelItem(index)
-        self._adjust_height()
+        self.viewport().update()
+
+    # -- the empty state (W2-7) ---------------------------------------------
+    def _should_paint_hint(self) -> bool:
+        return not self._rows
+
+    def paintEvent(self, event) -> None:   # noqa: N802 - Qt naming
+        super().paintEvent(event)
+        if not self._should_paint_hint():
+            return
+        painter = QPainter(self.viewport())
+        color = self.palette().text().color()
+        color.setAlpha(150)                     # muted without a theme lookup
+        painter.setPen(color)
+        rect = self.viewport().rect().adjusted(32, 0, -32, 0)
+        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter
+                                   | Qt.TextFlag.TextWordWrap), self.empty_hint)
+        painter.end()

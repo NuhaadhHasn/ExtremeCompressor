@@ -26,7 +26,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-from excmp.analyzer import analyze_tree
+from excmp.analyzer import analyze_file, iter_files
 from excmp.planner import Profile, plan as make_plan
 from excmp.stages.base import StageContext
 from excmp.tools import ToolInfo, find_tools
@@ -65,14 +65,27 @@ class AnalysisSignals(QObject):
     # The raw FileInfo list rides along so that switching profile can re-plan
     # instantly instead of re-reading every file's entropy.
     ready = Signal(object, object)   # list[FileInfo], AnalysisSummary
+    progress = Signal(int, int)      # files read, files found
     failed = Signal(str)
+
+
+# At most this many progress emissions per scan, however big the tree. On the
+# real HDD corpus (42 files, 6.4 GB) a fixed tick of 5 still left a 4.7s
+# silence on the big installers, so small trees now report every single file;
+# a 10k-file tree still emits only ~200 signals.
+_SCAN_UPDATES = 200
+
+
+def _scan_tick(total: int) -> int:
+    return max(1, total // _SCAN_UPDATES)
 
 
 class AnalysisWorker(QRunnable):
     """Runs the analyzer + planner off the GUI thread.
 
-    Entropy sampling reads up to 3 MiB per file; on a folder of a few
-    thousand files that is very much not instant.
+    Entropy sampling reads up to 3 MiB per file; on the real HDD corpus
+    (81 files, 5.76 GB, external drive) that is minutes, and a card that
+    never changed read as a hang - hence the per-file tick (W2-8).
     """
 
     def __init__(self, paths: list[Path], profile: Profile,
@@ -85,9 +98,21 @@ class AnalysisWorker(QRunnable):
 
     def run(self) -> None:  # pragma: no cover - exercised via the GUI tests
         try:
-            infos = []
+            # Walking the tree is one cheap pass; do it first so the count is
+            # known and the bar can be determinate for the expensive part.
+            files: list[Path] = []
             for path in self.paths:
-                infos.extend(analyze_tree(path))
+                files.extend(iter_files(path))
+            total = len(files)
+            self.signals.progress.emit(0, total)
+
+            tick = _scan_tick(total)
+            infos = []
+            for index, file in enumerate(files, start=1):
+                infos.append(analyze_file(file))
+                if index % tick == 0 or index == total:
+                    self.signals.progress.emit(index, total)
+
             the_plan = make_plan(infos, self.profile, self.tools)
             reference = make_plan(infos, strongest_profile(self.tools), self.tools)
             self.signals.ready.emit(

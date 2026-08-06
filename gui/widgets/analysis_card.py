@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
-                               QVBoxLayout, QWidget)
+                               QProgressBar, QVBoxLayout, QWidget)
 
 from ..suggest import CATEGORY_LABELS, AnalysisSummary, gain_note, headline, shrink_mode_hint
 from ..theme import repolish
@@ -46,6 +46,16 @@ class AnalysisCard(QFrame):
         self._headline.setWordWrap(True)
         column.addWidget(self._headline)
 
+        # W2-8: the scan of the real 5.76 GB corpus on an external drive takes
+        # minutes. Without a moving bar and a file count the card looked
+        # identical from second one to second two hundred, which reads as a
+        # hang - the single most common reason people kill a working process.
+        self.progress = QProgressBar(self)
+        self.progress.setTextVisible(False)
+        self.progress.setAccessibleName(self.tr("Analysis progress"))
+        self.progress.setVisible(False)
+        column.addWidget(self.progress)
+
         self._breakdown = CategoryBreakdown(self)
         column.addWidget(self._breakdown)
 
@@ -80,9 +90,16 @@ class AnalysisCard(QFrame):
         self.setVisible(False)
 
     # -- states ------------------------------------------------------------
+    def status_text(self) -> str:
+        return self._status.text()
+
     def set_busy(self, count: int) -> None:
         self.setVisible(True)
-        self._status.setText(self.tr("analyzing…"))
+        # Indeterminate until the tree walk has counted the files: a bar that
+        # claims 0 of 0 is worse than one that admits it does not know yet.
+        self.progress.setRange(0, 0)
+        self.progress.setVisible(True)
+        self._status.setText(self.tr("looking for files…"))
         self._headline.setText(
             self.tr("Reading 1 item: detecting types and sampling entropy…")
             if count == 1 else
@@ -91,8 +108,22 @@ class AnalysisCard(QFrame):
         self._hint.setVisible(False)
         self._warnings.setVisible(False)
 
+    def set_progress(self, done: int, total: int) -> None:
+        """One tick per handful of files read. ``total`` is exact - it comes
+        from the tree walk, not an estimate."""
+        if total <= 0:
+            return
+        self.setVisible(True)
+        self.progress.setVisible(True)
+        self.progress.setRange(0, total)
+        self.progress.setValue(done)
+        self._status.setText(self.tr("scanning %d/%d") % (done, total))
+        self.progress.setAccessibleDescription(
+            self.tr("%d of %d files read") % (done, total))
+
     def set_error(self, message: str) -> None:
         self.setVisible(True)
+        self.progress.setVisible(False)
         self._status.setText(self.tr("failed"))
         self._headline.setText(self.tr("Could not analyze these files."))
         self._gain.setText(message)
@@ -101,6 +132,7 @@ class AnalysisCard(QFrame):
 
     def set_summary(self, summary: AnalysisSummary) -> None:
         self.setVisible(True)
+        self.progress.setVisible(False)
         self._status.setText("")
         self._headline.setText(headline(summary))
         self._headline.setAccessibleName(headline(summary))

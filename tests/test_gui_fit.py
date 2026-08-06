@@ -73,6 +73,78 @@ def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size):
         f"empty state scrolls at {size}")
 
 
+# ---------------------------------------------------------------------------
+# The height budget, in measured pixels rather than intentions.
+#
+# Everything below is measured with the REAL Windows fonts (conftest sets
+# QT_QPA_FONTDIR). That matters more than it sounds: Qt's offscreen plugin
+# renders tofu boxes of the wrong width without it, and these gates spent
+# wave 1 measuring tofu - the populated page reported 669px when it was
+# really 748px.
+#
+# Wave 2a (Activity tab) took the populated Compress page from 869px to
+# 748px by moving the queue and the results panel off it. research/23 §2.4's
+# real target is <=300px against a ~321px viewport at 150% scaling; the
+# remaining 448px needs three things that wave 2a does not own:
+#
+#   * the intake chip      - drop zone collapses to ~36px once files are in
+#   * the analysis card    - detail line folds into an expander (200 -> ~96)
+#   * the chooser diet     - 32px rows, footnote behind the (i) disclosure
+#                            W1-13 specified but never actually built (401 -> ~172)
+#
+# So there are two tests: a regression gate pinned at today's truth, which
+# can only ever go down, and a strict-xfail target that will FAIL the suite
+# the moment wave 2b makes it pass - which is the point. A target nobody is
+# forced to look at is a target that quietly expires.
+# ---------------------------------------------------------------------------
+
+POPULATED_PAGE_MEASURED = 748     # 2026-08-06, real fonts, after wave 2a
+POPULATED_PAGE_TARGET = 300       # research/23 §2.4
+
+
+def _populate(window, qtbot, tmp_path):
+    src = tmp_path / "data"
+    src.mkdir()
+    (src / "a.txt").write_text("compress me. " * 4000)
+    (src / "b.bin").write_bytes(bytes(range(256)) * 500)
+
+    window.resize(910, 512)
+    window.show()
+    qtbot.waitExposed(window)
+    with qtbot.waitSignal(window.analysisFinished, timeout=60_000):
+        window.add_paths([src])
+    qtbot.wait(50)
+    return window._scroll.widget()
+
+
+def test_the_populated_compress_page_never_grows_again(window, qtbot, tmp_path):
+    page = _populate(window, qtbot, tmp_path)
+    height = page.sizeHint().height()
+    assert height <= POPULATED_PAGE_MEASURED, (
+        f"populated Compress page grew to {height}px "
+        f"(was {POPULATED_PAGE_MEASURED}px after wave 2a)")
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "research/23 §2.4's <=300px budget needs wave 2b: the intake chip, the "
+    "analysis card's collapsible detail, and the chooser row diet. Delete "
+    "this xfail when they land - the assertion is already the real gate."))
+def test_the_populated_compress_page_meets_the_150_percent_budget(
+        window, qtbot, tmp_path):
+    page = _populate(window, qtbot, tmp_path)
+    assert page.sizeHint().height() <= POPULATED_PAGE_TARGET
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "overflows by 35px at 150% with real fonts - the chooser's placeholder "
+    "rows and the drop zone are the whole of it (wave 2b)."))
+def test_the_empty_compress_page_needs_no_scrolling_at_150_percent(window, qtbot):
+    window.resize(910, 512)
+    window.show()
+    qtbot.waitExposed(window)
+    assert window._scroll.verticalScrollBar().maximum() == 0
+
+
 def test_the_page_fits_910_logical_pixels_of_width(window, qtbot):
     """150% scaling leaves 910 logical px. The widest label used to force the
     page minimum to 939px and grow a horizontal scrollbar."""

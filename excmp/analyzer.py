@@ -197,8 +197,20 @@ def analyze_file(path: Path) -> FileInfo:
     )
 
 
-def analyze_tree(root: Path) -> list[FileInfo]:
+def iter_files(root: Path) -> list[Path]:
+    """Every regular file under ``root``, in stable order (``root`` itself if
+    it is a file).
+
+    Split out of :func:`analyze_tree` so a caller that wants to report
+    progress can learn the denominator before spending minutes on the
+    entropy sampling - walking the tree is one cheap pass, reading up to
+    3 MiB per file is not.
+    """
     root = Path(root)
     if root.is_file():
-        return [analyze_file(root)]
-    return [analyze_file(p) for p in sorted(root.rglob("*")) if p.is_file()]
+        return [root]
+    return [p for p in sorted(root.rglob("*")) if p.is_file()]
+
+
+def analyze_tree(root: Path) -> list[FileInfo]:
+    return [analyze_file(p) for p in iter_files(root)]

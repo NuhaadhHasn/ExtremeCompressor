@@ -167,7 +167,7 @@ documents fighting the resulting triple "Suggested" assertion
 top tabs — `Compress | Extract | Activity | Settings` — on the existing,
 already-styled QTabWidget, with a persistent one-line job-status strip visible
 on every tab, and rebuild the Compress page so its populated height budget is
-≤ 355 logical px.**
+≤ 300 logical px.**
 
 Rationale, in order:
 

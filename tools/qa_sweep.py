@@ -8,7 +8,7 @@ was sliced mid-word, or that the chooser was advertising "100% or better" - an
 archive of zero bytes or smaller. Every one of those shipped past a green
 suite during UI wave 2 and was caught by looking at a PNG.
 
-So: 12 surfaces x 2 themes, including the ones no test and no README
+So: 13 surfaces x 2 themes, including the ones no test and no README
 screenshot ever renders - the banner, the Extract tab, the expanded pending
 list, a failed-job results panel, everything-disclosed-at-once. Cheap to run,
 and the only thing that has ever caught this class of defect here.
@@ -105,6 +105,7 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     win.compare_table.info_toggle.setChecked(False)
 
     win.tabs.setCurrentWidget(win.extract_tab)
+    win.extract_tab.set_archive(files[0])          # enables Verify only
     shot(win, out, f"{theme}-07-extract")
 
     win.tabs.setCurrentWidget(win.activity_page)
@@ -137,15 +138,26 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     win.banner.trigger("Keep it running")
     win.queue._active_id = None
 
+    # A passing verification - a results variant with no output folder.
+    from excmp.engine import VerifyResult
+    vjob = Job(kind=JobKind.VERIFY, inputs=[Path("C:/out/MyGame.excmp")],
+               out_path=Path("C:/out/MyGame.excmp"), state=JobState.DONE,
+               elapsed_s=34.0)
+    vjob.result = VerifyResult(archive=Path("C:/out/MyGame.excmp"), ok=True,
+                               files_restored=6, verified=6, elapsed_s=34.0)
+    win.results.show_job(vjob)
+    win.tabs.setCurrentWidget(win.activity_page)
+    shot(win, out, f"{theme}-13-activity-verified")
+
     fail = Job(kind=JobKind.COMPRESS, inputs=[Path("C:/in/Bad")],
                out_path=Path("C:/out/Bad.excmp"), state=JobState.FAILED,
                error="precomp exited with code 1 while recompressing assets0.pak")
     win.results.show_job(fail)
-    win.tabs.setCurrentWidget(win.activity_page)
+    win.tabs.setCurrentWidget(win.activity_page)  # noqa: E501 - already there, kept explicit
     shot(win, out, f"{theme}-12-activity-failed")
 
     win.queue.shutdown()
-    print(f"  {theme}: 12 surfaces")
+    print(f"  {theme}: 13 surfaces")
 
 
 def main() -> int:

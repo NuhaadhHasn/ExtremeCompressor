@@ -148,6 +148,8 @@ class ResultsPanel(QFrame):
         self._show_all = False
         if job.state is JobState.FAILED:
             self._show_failure(job)
+        elif job.kind is JobKind.VERIFY:
+            self._show_verify(job)
         elif job.kind is JobKind.EXTRACT:
             self._show_extract(job)
         else:
@@ -189,6 +191,7 @@ class ResultsPanel(QFrame):
         summary = job.summary if isinstance(job.summary, AnalysisSummary) else None
         self._fill_breakdown(summary)
         self._fill_reasons(summary)
+        self.again_button.setText(self.tr("Compress something else"))
         self.open_button.setVisible(True)
 
     def _show_extract(self, job: Job) -> None:
@@ -209,6 +212,32 @@ class ResultsPanel(QFrame):
         self._why_title.setVisible(False)
         self.more_button.setVisible(False)
         self.open_button.setVisible(True)
+
+    def _show_verify(self, job: Job) -> None:
+        """A verification that passed. The headline says how many files were
+        actually re-read, not "OK" - the number is the evidence, and a bare
+        "OK" is what every archiver already says without checking."""
+        verified = getattr(job.result, "verified", 0)
+        self.hero.setText(self.tr("Verified 1 file") if verified == 1
+                          else self.tr("Verified %d files") % verified)
+        self.hero.setProperty("tone", "ok")
+        repolish(self.hero)
+        self.subline.setText(self.tr(
+            "Every file was restored to a temporary folder and its SHA-256 "
+            "compared with the archive’s ledger · %s · nothing was written "
+            "to disk") % fmt_duration(job.elapsed_s))
+        self.hero.setAccessibleName(f"{self.hero.text()}. {self.subline.text()}")
+        self.bars.setVisible(False)
+        self._clear_breakdown()
+        self._clear_reasons()
+        self.breakdown_toggle.setVisible(False)
+        self._breakdown.setVisible(False)
+        self._why_title.setVisible(False)
+        self.more_button.setVisible(False)
+        # Nothing was produced, so there is no folder worth opening - and
+        # "Compress something else" is a non-sequitur after a verification.
+        self.open_button.setVisible(False)
+        self.again_button.setText(self.tr("Done"))
 
     def _show_failure(self, job: Job) -> None:
         self.hero.setText(self.tr("That job failed"))

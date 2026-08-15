@@ -102,6 +102,54 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Prove an archive still restores byte-for-byte.
+
+    The same full restore + ledger comparison that gates every publish - not a
+    container self-test. Produces nothing and touches nothing.
+    """
+    from . import engine
+    ctx = StageContext(temp_dir=Path(args.temp))
+    result = engine.verify_archive(Path(args.archive), ctx)
+    payload = {
+        "archive": str(result.archive),
+        "ok": result.ok,
+        "files_restored": result.files_restored,
+        "verified": result.verified,
+        "elapsed_s": round(result.elapsed_s, 1),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"OK: {result.files_restored} file(s) restored and "
+              f"{result.verified} SHA-256 hash(es) verified against the "
+              f"manifest in {payload['elapsed_s']}s")
+        print(f"     {result.archive}")
+    return 0
+
+
+def cmd_hash(args: argparse.Namespace) -> int:
+    """SHA-256 for arbitrary files, in ``sha256sum`` layout.
+
+    The engine hashes everything it touches; there was no way to ask it to
+    hash something it did not. Two spaces before the path is not a typo - it
+    is the format `sha256sum -c` reads, so the output pipes into the tools
+    people already have.
+    """
+    from .verify import hash_file
+    rows = []
+    for name in args.paths:
+        path = Path(name)
+        rows.append({"path": str(path), "sha256": hash_file(path),
+                     "size": path.stat().st_size})
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        for row in rows:
+            print(f"{row['sha256']}  {row['path']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="excmp",
                                 description="ExtremeCompressor engine CLI")
@@ -132,6 +180,18 @@ def build_parser() -> argparse.ArgumentParser:
     px.add_argument("--temp", default=default_tmp)
     px.add_argument("--json", action="store_true")
     px.set_defaults(func=cmd_extract)
+
+    pv = sub.add_parser("verify", help="prove an .excmp archive still restores "
+                                       "byte-for-byte (produces nothing)")
+    pv.add_argument("archive")
+    pv.add_argument("--temp", default=default_tmp)
+    pv.add_argument("--json", action="store_true")
+    pv.set_defaults(func=cmd_verify)
+
+    ph = sub.add_parser("hash", help="SHA-256 of files, in sha256sum layout")
+    ph.add_argument("paths", nargs="+")
+    ph.add_argument("--json", action="store_true")
+    ph.set_defaults(func=cmd_hash)
     return p
 
 

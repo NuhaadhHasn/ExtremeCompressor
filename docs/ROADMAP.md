@@ -10,10 +10,13 @@
 > **UI v3 wave 2 is complete** — 2a (Activity tab, compact results, queue
 > density, scan progress, the last modal gone) and 2b (the height compaction,
 > token sweep, Fluent SVG icons, dark title bar, pending-items list), both
-> **on one branch awaiting review**. **373 tests** (372 pass + 1 strict-xfail
+> **on one branch awaiting review**. **390 tests** (389 pass + 1 strict-xfail
 > height target that research/23 §2.4 and §3.3 make unreachable).
-> **Next up: UI wave 3 (expose the engine — research/23 §5), then J5-J7,
-> then G1-G2.**
+> **UI v3 wave 3a** (verification exposed: `engine.verify_archive`,
+> `excmp verify`, `excmp hash`, and a Verify-only button) is **done on a
+> branch**. **390 tests** (389 pass + 1 strict-xfail).
+> **Next up: wave 3b (G1 foreign archives, .excmp listing, .sha256 sidecar,
+> Settings tab), then J5-J7.**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -794,6 +797,8 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 | ~~UI-2b~~ | ~~UI v3 wave 2b (compaction, token sweep, Fluent SVG icons, dark title bar, pending-items list)~~ | ✅ done, on a branch | W2-4/5/6/10 + intake chip, analysis-card collapse, chooser diet. Populated page 748→415px; the empty page fits 150% for the first time. ≤300px is unreachable without dropping a profile row, the analysis card, or the 32px touch floor — recorded as a strict xfail, not silently dropped |
 | **3b** | **J5-J7 (per-type memory, long-job confirm, self-calibration)** | **1 session** | **finishes Phase J; J7 is what turns a cold-start prior into estimates that fit this machine** |
 | ~~4~~ | ~~B11 + D9 (drop SREP; make the self-test replay the chain)~~ | ✅ done | the chain is SREP-free and nothing publishes without a verified restore — four clean Extreme round-trips on real corpora |
+| ~~UI-3a~~ | ~~UI v3 wave 3a (verify verb + button, `excmp hash`)~~ | ✅ done, on a branch | The D9 gate became public: same code path, three callers. Catches a single flipped byte in a 721 MB archive and names the file |
+| **UI-3b** | **UI v3 wave 3b (G1 foreign archives, `.excmp` listing, `.sha256` sidecar, Settings tab)** | **1-2 sessions** | **research/23 §5's remaining inventory — all glue over engine capabilities that already exist** |
 | 5 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |
 | 6 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
 | 7 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |

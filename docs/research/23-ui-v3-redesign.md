@@ -586,6 +586,20 @@ The ≤300px target is **not** reached and cannot be — see correction 6.
 
 ### Wave 3 — expose the engine + Settings (the "looks cheap" payload, §5)
 
+**Wave 3b SHIPPED 2026-08-07**: G1 foreign-archive extract and the I2-lite
+listing. `ExtractResult.ledger_backed` exists so the UI can never render a
+foreign restore in the verified restore's words — the first thing it caught
+was the results panel saying "0 SHA-256 hashes verified — byte-identical to
+the originals" about a zip with no ledger. `is_excmp()` trusts the manifest,
+never the extension.
+
+The listing also corrected the manifest: it recorded only a merged
+per-*route* store reason, so the "why" column attributed *every* stored file's
+reason to *each* stored file ("7.99 bits/byte; 7.98 bits/byte" about a file
+that measured one). `Manifest.store_reasons` now carries the per-file sentence
+`planner.store_reason` was already producing — defaulted, so older archives
+still load and fall back to the route summary.
+
 **Wave 3a SHIPPED 2026-08-07**: the Verify button + `excmp verify` + `excmp
 hash`. The D9 publish gate was refactored into a public
 `engine.verify_archive` and now has three callers instead of one, with a test

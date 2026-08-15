@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-223%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-372%20passing-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 Most archivers run one algorithm over everything. ExtremeCompressor works like a
@@ -28,15 +28,19 @@ before ever claiming success.
 ## ✨ Features
 
 - **Desktop app** — drop anything (files *and* folders, as many as you like),
-  get an honest read on what can shrink before you commit, pick a preset from
-  four cards that state their real cost, and watch an always-visible queue with
-  live progress, per-job tool logs, pause and cancel.
+  get an honest read on what can shrink before you commit, then pick from four
+  profiles shown side by side with their *measured* size, saving and time for
+  the files you actually dropped. Jobs run on an Activity tab with live
+  progress, per-job tool logs, pause and cancel — and a status strip keeps the
+  queue visible from every tab. No modal dialogs anywhere.
 - **Smart routing** — magic-byte type detection + Shannon-entropy sampling
   decides per file: pipeline it, or store it and *tell you why* (no more hours
   wasted "compressing" a video for 0%).
-- **Repack-class pipeline** — `tar → Precomp (-intense) → SREP → 7-Zip LZMA2`:
-  expands weak zlib layers hidden inside game paks, dedupes repeated assets,
-  then compresses hard. **72% saved** on game-style data in first benchmarks.
+- **Repack-class pipeline** — `tar → Precomp (-intense) → 7-Zip LZMA2`:
+  expands weak zlib layers hidden inside game paks, then compresses hard.
+  **71% saved** on game-style data. (SREP was dropped in B11 after an
+  intermittent restore-corruption bug inside `srep64.exe`; correctness beats
+  the ~3.5 points it was worth.)
 - **4 profiles** — `fast` (zstd-19 long mode) · `normal` (7z max) · `extreme`
   (full chain) · `insane` (stronger final codec, WIP). Profiles degrade
   gracefully when a tool isn't installed.
@@ -66,7 +70,7 @@ before ever claiming success.
                                                            ▼
                     ┌──────────────────────────────────────────────────────┐
                     │  Stage chain (profile-dependent)                     │
-                    │  tar → precomp → srep → 7z   (extreme)               │
+                    │  tar → precomp → 7z          (extreme)               │
                     └──────────────────────────┬───────────────────────────┘
                                                ▼
                         ┌───────────────────────────────────────┐
@@ -80,7 +84,7 @@ before ever claiming success.
 |---|---|
 | `excmp/analyzer.py` | File type detection (magic bytes, zlib-stream sniffing) + entropy sampling |
 | `excmp/planner.py` | Profile → per-file route decisions with human-readable reasons |
-| `excmp/stages/` | One module per tool: 7-Zip, zstd, tar, Precomp, SREP |
+| `excmp/stages/` | One module per tool: 7-Zip, zstd, tar, Precomp (plus a retained SREP *reader* so pre-B11 archives still extract) |
 | `excmp/engine.py` | Runs the chain, packages, self-tests, atomic publish |
 | `excmp/manifest.py` | `.excmp` container: schema-versioned manifest + payload |
 | `excmp/verify.py` | SHA-256 ledger, restore verification |
@@ -96,9 +100,13 @@ before ever claiming success.
 | normal | 11.2 MB | 31.2% | 2.5s | 0.5s |
 | **extreme** | **4.5 MB** | **72.4%** | 8.5s | 1.6s |
 
-The extreme win comes from Precomp opening zlib-wrapped "game pak" data and
-SREP deduplicating shared assets **before** the final codec — order matters
-more than strength. Full methodology in [`docs/benchmarks/`](docs/benchmarks/).
+> ⚠️ These numbers were measured **with SREP in the chain**, before B11
+> removed it. The current SREP-free chain measures **71.3%** on the same
+> corpus; on a 721 MB real-installer corpus the difference was ~3.5 points.
+
+The extreme win comes from Precomp opening zlib-wrapped "game pak" data
+**before** the final codec — order matters more than strength. Full
+methodology in [`docs/benchmarks/`](docs/benchmarks/).
 
 ---
 
@@ -113,7 +121,7 @@ more than strength. Full methodology in [`docs/benchmarks/`](docs/benchmarks/).
 │   ├── manifest.py         # .excmp container
 │   ├── verify.py           # SHA-256 ledgers
 │   ├── cli.py              # command-line interface
-│   └── stages/             # sevenzip, zstd, tar, precomp, srep
+│   └── stages/             # sevenzip, zstd, tar, precomp (+ srep reader)
 ├── gui/                    # PySide6 desktop app (python -m gui)
 │   ├── theme.py            # design tokens → QSS (dark + light)
 │   ├── suggest.py          # analysis summary, honesty copy, preset advice
@@ -121,14 +129,16 @@ more than strength. Full methodology in [`docs/benchmarks/`](docs/benchmarks/).
 │   ├── queue_manager.py    # QueueManager + engine workers on a thread pool
 │   ├── winintegration.py   # taskbar progress, toasts, tray (all optional)
 │   ├── mainwindow.py       # the single-window flow
-│   └── widgets/            # dropzone, analysis card, presets, queue, results
-├── tests/                  # 90 pytest tests incl. real-tool roundtrips
+│   ├── icons.py            # theme-tinted Fluent SVGs (MIT, vendored)
+│   └── widgets/            # dropzone, analysis card, chooser, queue, results, banner
+├── tests/                  # 372 pytest tests incl. real-tool roundtrips
 ├── tools/
 │   ├── bench.py            # profile benchmark harness
-│   └── shots.py            # regenerates docs/images/ from the real app
+│   ├── shots.py            # regenerates docs/images/ from the real app
+│   └── qa_sweep.py         # renders every surface in both themes, for review
 ├── docs/
 │   ├── images/             # README screenshots + demo GIF
-│   ├── research/           # compression landscape research (7 docs)
+│   ├── research/           # landscape + source studies + UI design (23 docs)
 │   ├── superpowers/specs/  # approved design document
 │   ├── superpowers/plans/  # implementation plans
 │   └── benchmarks/         # measured results
@@ -158,7 +168,7 @@ Only `zstandard` is needed if you just want the CLI.
 |---|---|---|
 | [7-Zip](https://www.7-zip.org/) | `normal` / `extreme` | installer puts `7z.exe` in `C:\Program Files\7-Zip` |
 | [Precomp](https://github.com/schnaader/precomp-cpp) | `extreme` (optional) | detected at `C:\Program Files\precomp\` |
-| SREP | `extreme` (optional) | detected at `C:\Program Files\srep\` |
+| SREP | **nothing any more** — no chain uses it since B11. Detected only so archives created before 2026-08-02 still extract. | `C:\Program Files\srep\` |
 
 Missing tools are fine — profiles degrade automatically and tell you what was skipped.
 
@@ -207,26 +217,30 @@ python -m gui
   <img src="docs/images/demo.gif" width="820"
        alt="Animated demo: a folder is added, the analysis card reports its
             composition, Extreme is suggested and selected, the queue runs the
-            precomp/SREP/7-Zip chain with live progress, and the results screen
+            precomp/7-Zip chain with live progress, and the results screen
             reports 71% saved.">
 </p>
 
-One window, no modal dialogs, in this order:
+One window, no modal dialogs — ever. Three tabs, one per stage of the job:
+**Compress** is where you decide, **Activity** is where work in flight lives,
+**Extract** is its own thing. A one-line status strip along the bottom carries
+the queue onto every tab, so nothing is ever hidden behind the tab you are not
+looking at.
 
-| Step | What it does |
+| Surface | What it does |
 |---|---|
-| **Drop zone** | Files *and* folders, any number at once, appended to the queue. (HandBrake's two most-reported intake bugs, avoided by design.) |
-| **Analysis card** | Runs the analyzer on a worker thread and reports the composition plus the honest gain estimate — *"Nearly all of this (15.4 MB) is worth compressing"* or *"86% of this is already compressed and will be stored bit-exact"*. |
-| **Preset cards** | Fast / Normal / Extreme / Insane, each stating its real cost, with the suggested one pre-selected. Cards whose tools are missing say what will actually happen instead of degrading silently. |
-| **Queue** | Always on screen. Name, profile, size→size, live progress, time left, state — and a per-job expander showing the tool's own output. Pause finishes the current stage before holding; cancel kills the child process and leaves nothing behind. |
-| **Results** | The big number, a to-scale before/after bar, input bytes by type, and one plain-English sentence per file that couldn't shrink. |
+| **Drop zone** | Files *and* folders, any number at once. (HandBrake's two most-reported intake bugs, avoided by design.) Once something is pending it collapses to a one-line receipt — *"3 items · 1.9 GB"* — that expands into a removable list. |
+| **Analysis card** | Runs the analyzer on a worker thread, ticking through the files as it reads them, and reports the composition plus the honest gain estimate — *"Nearly all of this (15.4 MB) is worth compressing"* or *"86% of this is already compressed and will be stored bit-exact"*. |
+| **Profile chooser** | Fast / Normal / Extreme / Insane in one table, each with its measured size, saving and time **for the files you actually dropped** — as a range where the answer is genuinely a range. The suggested one is pre-selected and says why; a profile whose tools are missing says what will really happen instead of degrading silently. |
+| **Queue** (Activity tab) | Name, profile, size→size, live progress, time, state — and a per-job expander showing the tool's own output. Pause finishes the current stage before holding; cancel kills the child process and leaves nothing behind. |
+| **Results** (Activity tab) | The big number, a to-scale before/after bar, input bytes by type, and one plain-English sentence per file that couldn't shrink. |
 | **Extract tab** | Pick an `.excmp`, pick a destination, get the verified hash count back. |
 
 <p align="center">
   <img src="docs/images/01-drop-analysis.png" width="410"
-       alt="The drop zone and analysis card after adding a folder.">
+       alt="The Compress tab: intake receipt, analysis card, and the profile chooser with per-profile estimates.">
   <img src="docs/images/02-queue-running.png" width="410"
-       alt="The queue running an Extreme job with the per-job log expanded.">
+       alt="The Activity tab: an Extreme job running with its per-job log expanded.">
 </p>
 
 Also: taskbar progress, a completion toast with an "Open folder" button,
@@ -264,7 +278,8 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the detailed step-by-step plan.
   (lossy, quality-targeted) is the only way and will be strictly opt-in.
 - `extreme` trades time and temp disk space (Precomp can inflate data 2-5×
   mid-pipeline) for ratio — that's the repack deal.
-- SREP is closed freeware: used if installed, never bundled or redistributed.
+- SREP is closed freeware: never bundled or redistributed, and since B11 not
+  used to *create* anything — it is detected only to read older archives.
 
 ---
 

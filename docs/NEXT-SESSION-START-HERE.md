@@ -1,8 +1,9 @@
 # 🚦 START HERE — handoff for the next session (written 2026-08-07)
 
-> **Waves 2 and 3a are merged to `main`.** Previous session shipped
-> **wave 3b** (foreign archives + listing) on branch `ui-v3-wave3b`, unmerged.
-> Next: **wave 3c** — `.sha256` sidecar, Settings tab, level/dict knobs.
+> **UI v3 wave 3 is COMPLETE.** Wave 2 and 3a are on `main`; **3b and 3c sit
+> on branch `ui-v3-wave3c`, unmerged** (3c branched from 3b).
+> Next: **level/dict knobs + RAM column**, then G2 foreign listing, then
+> J5-J7.
 >
 > Historical, for context — wave 2 was:
 > 2a — Activity tab + status strip, compact results, queue density, scan
@@ -17,13 +18,20 @@
 | where | what |
 |---|---|
 | `main` | everything through **wave 3a**, merged 2026-08-07 |
-| **`ui-v3-wave3b`** | **wave 3b — unmerged, waiting for review** |
+| `ui-v3-wave3b` | wave 3b (foreign archives + listing) |
+| **`ui-v3-wave3c`** | **3b + 3c — merge this one, it contains both** |
 
 ```bash
-git checkout main && git merge --no-ff ui-v3-wave3b
+git checkout main && git merge --no-ff ui-v3-wave3c
 ```
 
-**415 tests: 414 pass + 1 strict-xfail.** Baseline four sessions ago was 324.
+**432 tests: 431 pass + 1 strict-xfail.** Baseline four sessions ago was 324.
+
+### What wave 3c shipped
+
+`.sha256` sidecar (**opt-in and remembered** — see §3), the **Settings tab**
+and the first preferences this app has ever persisted, Ark's autosubfolder
+heuristic for the extract destination, and I4's first-run notice.
 
 ### What wave 3b shipped
 
@@ -93,9 +101,29 @@ than quietly forgotten. That mechanism works; keep using it.
    (Precomp's gain is unknowable until it runs). Inlining the range needs
    ~210px in a 178px column. The extra height is where the honesty lives.
 
-## 4. The actual next job: UI wave 3c
+## 4. The actual next job
 
-research/23 §5's remaining inventory:
+**research/23 §5 is finished except for one item**, and that one is engine
+plumbing rather than glue:
+
+- **Level/dictionary knobs + RAM column + Parameters line** (M) —
+  `_stage_factory()` hard-codes `SevenZipStage(level=9, dict_size=None)` and
+  `ZstdStage(level=19, long_log=27)`, and `StageRecord.params` is always `{}`.
+  Both stages already accept the arguments; nothing carries a choice down to
+  them or records what was used. B9's RAM-capped bounds apply (never past
+  `-md=512m` on 16 GB / 2 cores, always `-mqs`), and the RAM column has an
+  exact estimator pinned from 7-Zip source in doc 19 §3 (~13×dict per block
+  thread at mx9). `threads` already proves the whole pattern end to end.
+- **G2 foreign listing** (M) — the pinned `7z l -slt` grammar plus the dummy
+  `-p` hang guard (doc 17 §4). This is what would let "What's inside" work on
+  a zip; wave 3b deliberately refuses rather than showing an empty list.
+- Then **J5-J7** (per-type memory, long-job confirm, self-calibration).
+
+Older §5 items, all now done: verify verb + button, `excmp hash`, G1, I2-lite
+listing, `excmp list`, G6 sidecar, I1 Settings, copy-as-command, autosubfolder,
+I4 notice.
+
+<details><summary>The wave-3c list, for reference</summary>
 
 - **`.sha256` sidecar (G6)** (S) — publish is a single atomic `replace`, so
   hashing the container there is ~10 lines. **Decide opt-in vs default at the
@@ -107,8 +135,24 @@ research/23 §5's remaining inventory:
 - **Level/dict knobs + RAM column + Parameters line** (M) — needs plumbing
   through `_stage_factory` and `StageRecord.params`, which is always `{}` today.
 
-The Settings tab is also the natural home for the tools inventory that the
-status strip elides at narrow widths.
+</details>
+
+## 3. The sidecar decision, so it is not re-litigated
+
+**`.sha256` is opt-in and remembered.** Default-on was the other candidate —
+it is the QuickSFV / fitgirl-bins convention and verification is the brand —
+but a second file appearing beside every archive is an output nobody asked
+for, and *"inputs are never modified; outputs are written to .tmp and
+atomically renamed"* has been the engine's promise since its first commit.
+
+Two more standing rules that came out of wave 3:
+
+- **Advanced is per-job; Settings is remembered.** Adding Settings produced two
+  "notify when a job finishes" checkboxes, and the one being read was not the
+  one being saved. Notifications and tray left Advanced. Where both exist,
+  Advanced wins for that job and does not rewrite the preference.
+- **The status strip may elide the tools line** because Settings now carries
+  the full inventory. That closes the wart the handoff has carried since 2a.
 
 ## 4b. Run the QA sweep before calling a UI phase done
 
@@ -121,8 +165,8 @@ the Advanced panel, About, and everything-disclosed-at-once.
 .venv\Scripts\python.exe tools\qa_sweep.py --out .qa
 ```
 
-It exists because wave 2 shipped four visual defects past a fully green suite
-(and wave 3b added a fifth),
+It exists because wave 2 shipped four visual defects past a fully green suite,
+and waves 3b and 3c each added another —
 and every single one was found by rendering a surface and looking at it:
 
 | defect | how it read on screen |
@@ -132,6 +176,7 @@ and every single one was found by rendering a surface and looking at it:
 | chooser cells hard-clipped | "zpaqfranz missing - runs as E:" - looks like a bug |
 | `fmt_percent` rounded 99.6 to 100 | **"100% or better"** - an archive of zero bytes |
 | the Extract card's standing blurb | promised a SHA-256 ledger directly above "this one has none" |
+| Settings' threads control | "auto (4 cores)" beside a line calling this a two-core laptop |
 
 That last one is the one to remember. It was the most over-promising sentence
 the app has ever rendered, in the one panel whose entire job is not to

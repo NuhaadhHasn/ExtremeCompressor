@@ -328,6 +328,23 @@ def recommend_with_estimates(summary: AnalysisSummary, estimates, cores: int | N
         f"{row.time_multiple:.1f}× as long.")
 
 
+def _saved_words(fraction: float, upper_bound: bool) -> str:
+    """How much a profile saves, in words that stay possible.
+
+    ``fmt_percent`` rounds, so a Precomp ceiling of 1.5 KB out of 371.5 KB
+    (99.6 %) printed "100 % or better" — an archive of zero bytes, or smaller.
+    The display is capped at 99 % whenever anything at all survives, which is
+    always: the container carries a manifest even if every stage returns
+    nothing. Only the *wording* is capped; the estimator's own number is
+    untouched, so nothing downstream is lied to.
+    """
+    percent = fraction * 100
+    if percent >= 99.5:
+        percent = 99
+    text = f"{percent:.0f}%"
+    return f"{text} or better" if upper_bound else text
+
+
 def _span(low: float, high: float, formatter) -> str:
     """'34s – 2 min', or '' when the ends round to the same thing.
 
@@ -424,10 +441,9 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
         # excmp.estimate._PRECOMP_OPTIMISTIC. The words have to say which.
         if est.size.upper_bound:
             size_text = f"≤ {fmt_size(est.size.expected)}"
-            saved_text = f"{fmt_percent(est.size.saved_fraction)} or better"
         else:
             size_text = f"about {fmt_size(est.size.expected)}"
-            saved_text = fmt_percent(est.size.saved_fraction)
+        saved_text = _saved_words(est.size.saved_fraction, est.size.upper_bound)
 
         rows.append(ComparisonRow(
             profile=est.profile,

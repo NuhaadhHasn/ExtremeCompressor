@@ -19,6 +19,40 @@ from typing import Callable
 
 APP_ID = "NuhaadhHasn.ExtremeCompressor"
 
+# DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE. Attribute 20 is the
+# documented value; Windows 10 builds 18985-19040 used 19 before it was
+# renumbered, and the target machine (19045) takes 20. Try 20, fall back to 19.
+_DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+_DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19
+
+
+def set_dark_titlebar(hwnd: int, dark: bool = True) -> bool:
+    """Paint the OS caption to match the app theme (W2-6).
+
+    Qt paints its own client area but never the title bar, so a dark app under
+    a light caption reads as a window someone forgot to finish. This is the
+    entire "modern feel" budget the repo allows itself - no Mica, no XAML
+    islands, no GPL widget pack (research/23 §8).
+
+    Returns True only if the DWM actually accepted the attribute. Every
+    failure path - wrong platform, missing dwmapi, an older build that knows
+    neither attribute number, a bogus hwnd - is a silent False.
+    """
+    if os.name != "nt" or not hwnd:
+        return False
+    try:                                   # pragma: no cover - platform glue
+        dwm = ctypes.windll.dwmapi
+        value = ctypes.c_int(1 if dark else 0)
+        for attribute in (_DWMWA_USE_IMMERSIVE_DARK_MODE,
+                          _DWMWA_USE_IMMERSIVE_DARK_MODE_OLD):
+            if dwm.DwmSetWindowAttribute(
+                    HWND(hwnd), ctypes.c_uint(attribute),
+                    ctypes.byref(value), ctypes.sizeof(value)) == 0:
+                return True
+    except Exception:
+        pass
+    return False
+
 # ITaskbarList3::SetProgressState flags
 TBPF_NOPROGRESS = 0x0
 TBPF_INDETERMINATE = 0x1

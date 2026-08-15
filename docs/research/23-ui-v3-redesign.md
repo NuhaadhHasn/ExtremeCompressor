@@ -505,18 +505,84 @@ claim was false by its own tables.**
 
 ### Wave 2 — structure + visual system (the rest of the height blocker)
 
+**Wave 2a SHIPPED 2026-08-06** (W2-1, W2-3, W2-7, W2-8, W2-9).
+**Wave 2b SHIPPED 2026-08-07** (W2-4, W2-5, W2-6, W2-10, plus the three
+compaction items no numbered item owned). Populated Compress page
+**869 → 748 → 415px**; the empty page fits 150 % scaling for the first time.
+The ≤300px target is **not** reached and cannot be — see correction 6.
+
 | # | What | Files | Effort | Verify |
 |---|---|---|---|---|
-| W2-1 | **Activity tab**: queue header + QueueTable + results move out of Compress; persistent status strip (promote the `_refresh_actions` text, mainwindow.py:479-488, + mini bar) on all tabs, click→Activity; queue cap becomes `min(_MAX, viewport*0.5)` and `_adjust_height` measures with `visualItemRect` instead of the 42/150 constants (queue_table.py:23, 131). **Pinned behaviours** (decided here, not ad hoc): clicking Compress does NOT auto-switch tabs — users queue several jobs; the tab title increments ("Activity (2)") and the strip updates. Strip elision priority at 910px: job status wins, the tools line elides with its full text available in Settings/About | gui/mainwindow.py, widgets/queue_table.py | L | populated Compress page ≤300px (§2.4); queue status visible on every tab; W1-11 gate extended to the populated state |
+| W2-1 ✅ | **Activity tab**: queue header + QueueTable + results move out of Compress; persistent status strip (promote the `_refresh_actions` text, mainwindow.py:479-488, + mini bar) on all tabs, click→Activity; queue cap becomes `min(_MAX, viewport*0.5)` and `_adjust_height` measures with `visualItemRect` instead of the 42/150 constants (queue_table.py:23, 131). **Pinned behaviours** (decided here, not ad hoc): clicking Compress does NOT auto-switch tabs — users queue several jobs; the tab title increments ("Activity (2)") and the strip updates. Strip elision priority at 910px: job status wins, the tools line elides with its full text available in Settings/About | gui/mainwindow.py, widgets/queue_table.py | L | populated Compress page ≤300px (§2.4); queue status visible on every tab; W1-11 gate extended to the populated state |
 | W2-2 | ~~Merge PresetSelector + CompareTable~~ **promoted into Wave 1 as W1-13** (adversarial review: it is the biggest single reclaim and Wave 1 without it delivers operability, not fit) | — | — | — |
-| W2-3 | Compact ResultsPanel: hero 21pt/600, explanations capped at 3 + "show all N" expander (results.py:30, 232-257), "Where the bytes went" collapsed by default, drop `tone="accent"` on the frame (results.py:41-42), grid-align Before/After labels (bars.py:148-149) | gui/widgets/results.py, bars.py, theme.py | M | panel ≤300px populated |
-| W2-4 | Token sweep: type ramp, 4px spacing constants, radii 8/4, control min-heights, constant 2px preset border, delete `shadow` + `pad` (§3) | gui/theme.py + one pass over layout calls | M | shots diff shows uniform padding/radii; no 1px selection jiggle |
-| W2-5 | Fluent SVG icons replace emoji, preset cards first; QtSvg tint-by-token; regular/filled pair for tab selection | gui/theme.py or new gui/icons.py + assets/ | M | icons recolor on theme toggle; Win10 == Win11 rendering |
-| W2-6 | Dark title bar (DWMWA_USE_IMMERSIVE_DARK_MODE) + follow-system scheme hook (§3.4) | gui/winintegration.py, app.py | S | dark titlebar on Win10 19045; toggling OS theme restyles live |
-| W2-7 | Queue table density: merge Profile+Size under Job, progress 150→110 (queue_table.py:72-73, 79); empty-state hint painted on the viewport (matching the placeholder idiom at :115) | gui/widgets/queue_table.py | M | full table visible at 860px of width; empty queue explains itself |
-| W2-8 | Analysis busy progress: indeterminate bar + per-file tick ("scanning 34/81") | gui/widgets/analysis_card.py:83-92, queue_manager.py | S | HDD corpus scan no longer reads as a hang |
-| W2-9 | I9: reusable InfoBar-style `Banner(QFrame)` (icon + text + verb-labeled actions, 48px, tone-tinted, text carries meaning) replaces the closeEvent modal; same widget later serves I4 and error surfaces | new gui/widgets/banner.py; mainwindow.py:506-513 | S | closing mid-job shows an inline banner; zero QMessageBox left in gui/ |
-| W2-10 | Pending-items list (review/remove before compressing) + Del key + context menu (§6); drop the dead Shrink-mode checkbox into the hint text (analysis_card.py:56-72) | new widget; mainwindow.py, analysis_card.py | M | removing one file re-summarizes without re-reading |
+| W2-3 ✅ | Compact ResultsPanel: hero 21pt/600, explanations capped at 3 + "show all N" expander (results.py:30, 232-257), "Where the bytes went" collapsed by default, drop `tone="accent"` on the frame (results.py:41-42), grid-align Before/After labels (bars.py:148-149) | gui/widgets/results.py, bars.py, theme.py | M | panel ≤300px populated |
+| W2-4 ✅ | Token sweep: type ramp, 4px spacing constants, radii 8/4, control min-heights, constant 2px preset border, delete `shadow` + `pad` (§3) | gui/theme.py + one pass over layout calls | M | shots diff shows uniform padding/radii; no 1px selection jiggle |
+| W2-5 ✅ | Fluent SVG icons replace emoji, preset cards first; QtSvg tint-by-token; regular/filled pair for tab selection | gui/theme.py or new gui/icons.py + assets/ | M | icons recolor on theme toggle; Win10 == Win11 rendering |
+| W2-6 ✅ | Dark title bar (DWMWA_USE_IMMERSIVE_DARK_MODE) + follow-system scheme hook (§3.4) | gui/winintegration.py, app.py | S | dark titlebar on Win10 19045; toggling OS theme restyles live |
+| W2-7 ✅ | Queue table density: merge Profile+Size under Job, progress 150→110 (queue_table.py:72-73, 79); empty-state hint painted on the viewport (matching the placeholder idiom at :115) | gui/widgets/queue_table.py | M | full table visible at 860px of width; empty queue explains itself |
+| W2-8 ✅ | Analysis busy progress: indeterminate bar + per-file tick ("scanning 34/81") | gui/widgets/analysis_card.py:83-92, queue_manager.py | S | HDD corpus scan no longer reads as a hang |
+| W2-9 ✅ | I9: reusable InfoBar-style `Banner(QFrame)` (icon + text + verb-labeled actions, 48px, tone-tinted, text carries meaning) replaces the closeEvent modal; same widget later serves I4 and error surfaces | new gui/widgets/banner.py; mainwindow.py:506-513 | S | closing mid-job shows an inline banner; zero QMessageBox left in gui/ |
+| W2-10 ✅ | Pending-items list (review/remove before compressing) + Del key + context menu (§6); drop the dead Shrink-mode checkbox into the hint text (analysis_card.py:56-72) | new widget; mainwindow.py, analysis_card.py | M | removing one file re-summarizes without re-reading |
+
+**What wave 2a corrected in this plan** (measured, not argued):
+
+1. **Every height number in §1 and §2.4 was measured against tofu.** Qt's
+   offscreen plugin ships no font database, and `tests/conftest.py` never set
+   `QT_QPA_FONTDIR` — only `tools/shots.py` did. The wave-1 fit gates were
+   therefore measuring boxes of the wrong width. With real fonts the populated
+   Compress page was **869px**, not the ~790 the tofu run reported. conftest
+   now sets the font directory; that one line is the most load-bearing change
+   in wave 2a, because it is what makes every later budget claim checkable.
+2. **W2-1 moves 121px, not 448.** Populated Compress page: **869 → 748px**
+   (real fonts, 910×512). §2.4's ≤300px needs three more things, and *none of
+   them had a W2 number*: the intake chip (drop zone 116 → ~36 once files are
+   in), the analysis card's collapsible detail (200 → ~96), and the chooser
+   diet (401 → ~172). They are wave 2b's real content; W2-4's "token sweep"
+   was the closest thing to an owner and it did not name them.
+3. **W1-13's ⓘ disclosure was specified but never built.** `compare_table.py`
+   shows the 68px footnote unconditionally whenever estimates exist
+   (`self._footnote.setVisible(self._estimated)`), rather than behind the
+   click-to-toggle disclosure §2.4's budget assumes. Worth ~40px; folded into
+   wave 2b's chooser diet.
+4. **The queue cap and `visualItemRect` measurement were deleted, not
+   implemented.** `min(_MAX, viewport*0.5)` and the row-by-row height
+   arithmetic existed only to stop an empty queue pushing the results panel
+   off the shared Compress column. Once the table owns a tab it simply fills
+   it and scrolls internally — ~30 lines of heuristic removed rather than
+   ported. The Activity page is deliberately not a `QScrollArea` for the same
+   reason: "fill the host" and "size to your hint" are contradictory.
+5. **The 150% empty state still overflows by 35px** — first observed here
+   because it was previously hidden by the tofu metrics. Recorded as a
+   strict-xfail gate in `tests/test_gui_fit.py`, so wave 2b cannot finish
+   without either fixing it or consciously re-baselining it.
+   **Resolved in wave 2b**: it fits with 0px of scroll, and the strict xfail
+   did its job — it *failed the suite by passing*, which is what forced the
+   gate to be promoted rather than forgotten.
+6. **§2.4's ≤300px budget contradicts §3.3's 32px control floor, and §3.3
+   wins.** Four profile rows at the Windows touch minimum are 128px on their
+   own; §2.4 budgeted the entire chooser — rows, title, column header, margins
+   and gaps — at 172px. With every item compacted the populated page floors at
+   **415px**, and the missing 115px only exists in things the product has
+   decided to keep: four comparable rows, an always-visible analysis card, and
+   the touch floor. The assertion stays as a `strict=True` xfail so re-opening
+   it is a deliberate act. The arithmetic is in
+   `benchmarks/2026-08-07-ui-wave2b.md`.
+7. **A row's height is not a free variable — it encodes uncertainty.** Fast and
+   Normal reach 34px because their estimate is one number. Extreme and Insane
+   are 51px because theirs is a *range* (Precomp's gain is unknowable until it
+   runs) and the range needs a second line: inlined it wants ~210px in a 178px
+   column. §2.4's flat 32px-per-row assumed away the estimator's honesty.
+8. **W1-13's caveat was never spoken once estimates existed.** `ProfileRow`
+   appended `row.caveat` to its accessible sentence only in placeholder mode,
+   so a screen-reader user stopped being told that Insane degrades to Extreme
+   the moment analysis finished. Found by the elision test, not by an audit.
+9. **The chooser advertised "100 % or better".** A Precomp ceiling that rounds
+   to 100 % promised an archive of zero bytes or smaller — the single most
+   over-promising sentence the app has ever rendered, in the one panel whose
+   job is not to over-promise. Capped at 99 % in the wording only. Found by a
+   12-surface × 2-theme screenshot sweep, not by 371 passing tests, which is
+   the durable lesson: **tests pin behaviour, rendering pins appearance, and a
+   UI wave needs both before it is done.**
 
 ### Wave 3 — expose the engine + Settings (the "looks cheap" payload, §5)
 

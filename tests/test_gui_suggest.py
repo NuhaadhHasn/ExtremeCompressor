@@ -372,3 +372,23 @@ def test_summary_floor_uses_the_reference_plan(tmp_path):
     assert summary.store_bytes > 0, "Normal should shelve these zlib paks"
     assert summary.floor_store_bytes < summary.store_bytes, \
         "Extreme reaches data Normal cannot, so the floor must be lower"
+
+
+def test_a_saving_is_never_advertised_as_100_percent():
+    """"100% or better" promises a zero-byte archive. A Precomp ceiling of
+    1.5 KB out of 371.5 KB is 99.6%, which fmt_percent rounds to 100 - and the
+    row then read "100% or better" on screen. An app whose whole identity is
+    refusing to overpromise cannot ship that sentence.
+
+    Found by looking at a light-mode screenshot, not by any assertion.
+    """
+    from gui.suggest import _saved_words
+
+    # A true 100% (impossible in practice) would still not claim "or better".
+    assert _saved_words(0.996, upper_bound=True) == "99% or better"
+    assert _saved_words(0.9999, upper_bound=True) == "99% or better"
+    assert _saved_words(1.0, upper_bound=True) == "99% or better"
+    # Ordinary values are untouched, and a point estimate never says "better".
+    assert _saved_words(0.63, upper_bound=True) == "63% or better"
+    assert _saved_words(0.63, upper_bound=False) == "63%"
+    assert _saved_words(0.0, upper_bound=False) == "0%"

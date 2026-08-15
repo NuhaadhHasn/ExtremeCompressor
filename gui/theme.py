@@ -58,12 +58,20 @@ LIGHT: dict[str, str] = {
 }
 # (the unused `shadow` token is gone - elevation comes from layout, not fakes)
 
-# Non-colour tokens are shared by both palettes.
+# Non-colour tokens are shared by both palettes. Radii are the Windows
+# geometry values (W2-4): OverlayCornerRadius 8 for containers,
+# ControlCornerRadius 4 for buttons, inputs, checkboxes and progress chunks.
+# learn.microsoft.com/windows/apps/design/signature-experiences/geometry
 METRICS: dict[str, str] = {
-    "radius": "10px",
-    "radius_sm": "6px",
+    "radius": "8px",
+    "radius_sm": "4px",
     "font": '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
 }
+
+# Touch floor from learn.microsoft.com/windows/apps/develop/input/touch-
+# interactions: "32 epx tall if the width is at least 120 epx". Controls used
+# to land on 32-34px by accident, depending on which padding rule won.
+CONTROL_HEIGHT = 32
 
 # Layout constants (px). Imported by widgets so setContentsMargins/setSpacing
 # calls stop inventing numbers - six different card paddings coexisted before
@@ -71,9 +79,14 @@ METRICS: dict[str, str] = {
 # vertical margins are VGAP (the 150%-scaling height budget in research/23
 # section 2.4 depends on that split).
 GUTTER = 20
-VGAP = 12
+# 8, not 12: page top/bottom margins are pure chrome and the 150% budget
+# counts every one of them. Horizontal breathing room (GUTTER) is unchanged.
+VGAP = 8
 GAP_BLOCK = 12
 GAP_INTRA = 8
+# 4px: the tightest step on the grid, for dense panels where the gaps
+# themselves became a measurable share of the height budget.
+GAP_TIGHT = 4
 CARD_MARGINS = (16, 12, 16, 12)
 
 _QSS = Template("""
@@ -117,6 +130,9 @@ QLabel#Hero {
 QLabel#HeroSub  { font-size: 12pt; color: $muted; }
 QLabel#Title    { font-size: 13pt; font-weight: 600; }
 QLabel#Subtitle { font-size: 10pt; color: $muted; }
+/* Chooser cell sub-lines (ranges, caveats). 9pt is the caption step and the
+   12px legibility floor - regular weight, never lighter. */
+QLabel#CellSub  { font-size: 9pt; color: $muted; }
 QLabel#Muted    { color: $muted; }
 QLabel#Mono {
     font-family: "Cascadia Mono", Consolas, monospace;
@@ -132,6 +148,7 @@ QLabel[tone="danger"] { color: $danger; }
    silently falls back to muted grey. Pinned by test_gui_theme.py. */
 QLabel#Hero[tone="ok"],     QLabel#Subtitle[tone="ok"]     { color: $ok; }
 QLabel#Hero[tone="warn"],   QLabel#Subtitle[tone="warn"]   { color: $warn; }
+QLabel#CellSub[tone="warn"] { color: $warn; }
 QLabel#Hero[tone="danger"], QLabel#Subtitle[tone="danger"] { color: $danger; }
 
 /* ---- drop zone ------------------------------------------------------- */
@@ -150,7 +167,8 @@ QPushButton {
     background: $surface2;
     border: 1px solid $border;
     border-radius: $radius_sm;
-    padding: 7px 14px;
+    padding: 5px 14px;
+    min-height: 20px;   /* + 2x5 padding + 2x1 border = the 32px control box */
     color: $text;
 }
 QPushButton:hover:enabled  { background: $surface3; border-color: $border_hi; }
@@ -173,6 +191,20 @@ QPushButton[variant="danger"]:hover:enabled { background: $danger; color: $on_ac
 /* The queue's cancel glyph: kill the 7px 14px padding that clipped the x
    into an empty pill inside its 28px fixed box. */
 QPushButton#CancelJob { padding: 2px; font-weight: 600; }
+
+/* Collapsible section headings (W2-3). A button that reads as a heading:
+   no chrome at rest, but it focuses and hovers like the control it is. */
+QPushButton#SectionToggle {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: $radius_sm;
+    padding: 2px 6px;
+    color: $text;
+    font-weight: 600;
+    text-align: left;
+}
+QPushButton#SectionToggle:hover:enabled { background: $surface2; }
+QPushButton#SectionToggle:focus { border: 2px solid $accent_hi; padding: 1px 5px; }
 
 QToolButton {
     background: transparent;
@@ -200,8 +232,19 @@ QMenu::separator { height: 1px; background: $border; margin: 4px 8px; }
 
 /* ---- the profile chooser's rows --------------------------------------- */
 /* Selection is carried by the radio glyph in the row's own text; the border
-   is the second signal. Recommended rows keep their accent tone. */
-QFrame#Card[selected="true"] { border: 2px solid $accent_hi; }
+   is the second signal. Recommended rows keep their accent tone.
+
+   W2-4: the border is 2px in EVERY state and only its colour changes. It used
+   to be 1px at rest and 2px when selected, so picking a profile shifted every
+   cell in that row by one pixel and nudged the three rows below it - a jiggle
+   you feel more than see. */
+QFrame#ProfileRow {
+    background: $surface;
+    border: 2px solid $border;
+    border-radius: $radius;
+}
+QFrame#ProfileRow[tone="accent"]    { border-color: $accent; background: $surface2; }
+QFrame#ProfileRow[selected="true"]  { border-color: $accent_hi; }
 
 /* ---- inputs ---------------------------------------------------------- */
 QLineEdit, QSpinBox, QComboBox {
@@ -279,6 +322,40 @@ QFrame#ActionBar {
     border: none;
     border-top: 1px solid $border;
 }
+
+/* ---- the inline banner (W2-9) — the widget that replaced the modals ----
+   A left accent stripe rather than a flooded background: the strip sits
+   above the whole window and a saturated 48px band reads as an error even
+   when it is only saying "note". Tone tints the stripe and the glyph; the
+   sentence always says it too. */
+QFrame#Banner {
+    background: $surface2;
+    border: none;
+    border-left: 4px solid $accent;
+    border-bottom: 1px solid $border;
+}
+QFrame#Banner[tone="warn"]   { border-left-color: $warn; }
+QFrame#Banner[tone="danger"] { border-left-color: $danger; }
+QFrame#Banner[tone="ok"]     { border-left-color: $ok; }
+QLabel#BannerGlyph { font-size: 13pt; color: $accent; }
+QFrame#Banner[tone="warn"]   QLabel#BannerGlyph { color: $warn; }
+QFrame#Banner[tone="danger"] QLabel#BannerGlyph { color: $danger; }
+QFrame#Banner[tone="ok"]     QLabel#BannerGlyph { color: $ok; }
+
+/* ---- the persistent status strip (W2-1) -------------------------------
+   The job line is a flat button, not a label: it navigates to Activity, so
+   it must be focusable and announce itself as the control it is. */
+QPushButton#StatusJob {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: $radius_sm;
+    padding: 2px 8px;
+    color: $text;
+    font-weight: 600;
+    text-align: left;
+}
+QPushButton#StatusJob:hover:enabled { background: $surface2; }
+QPushButton#StatusJob:focus { border: 2px solid $accent_hi; padding: 1px 7px; }
 
 /* ---- tabs ------------------------------------------------------------ */
 QTabWidget::pane { border: none; top: -1px; }

@@ -11,7 +11,8 @@ reads exactly the same information from the labels.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
+                               QSizePolicy, QVBoxLayout, QWidget)
 
 from excmp.analyzer import Category
 
@@ -87,6 +88,19 @@ class CategoryBreakdown(QWidget):
         self._legend_row.setContentsMargins(0, 0, 0, 0)
         self._legend_row.setSpacing(14)
         column.addWidget(self._legend)
+        self._column = column
+
+    def take_legend(self, new_parent: QWidget) -> QWidget:
+        """Hand the swatch legend to someone else's layout (W2-b).
+
+        The analysis card moves it into its Details expander to save ~26px.
+        Safe only because the card's headline states the same shares in words -
+        the bar is never left as a colour-only signal. Kept as an explicit
+        hand-off rather than a flag so that constraint stays visible here.
+        """
+        self._column.removeWidget(self._legend)
+        self._legend.setParent(new_parent)
+        return self._legend
 
     def set_data(self, ranked: list[tuple[Category, int]], total: int,
                  labels: dict[Category, str], limit: int = 4) -> None:
@@ -129,27 +143,36 @@ class CategoryBreakdown(QWidget):
 
 
 class BeforeAfterBar(QWidget):
-    """Two stacked rows: original size, then what the archive weighs."""
+    """Original size over archive size, label and bar on the SAME row.
+
+    They used to be four stacked rows, with the labels padded into alignment
+    by literal spaces ("After     ") - which only lines up in a monospace
+    font, which this app does not use for body text. A two-column grid aligns
+    them for real and halves the height (W2-3).
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Plain")
-        grid = QVBoxLayout(self)
+        grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(6)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
         self._before_label = QLabel(self)
         self._before_label.setObjectName("Muted")
         self._before = StackedBar(16, self)
         self._after_label = QLabel(self)
         self._after_label.setObjectName("Muted")
         self._after = StackedBar(16, self)
-        for widget in (self._before_label, self._before,
-                       self._after_label, self._after):
-            grid.addWidget(widget)
+        grid.addWidget(self._before_label, 0, 0)
+        grid.addWidget(self._before, 0, 1)
+        grid.addWidget(self._after_label, 1, 0)
+        grid.addWidget(self._after, 1, 1)
 
     def set_sizes(self, before: int, after: int, accent: str, muted: str) -> None:
-        self._before_label.setText(f"Before   {fmt_size(before)}")
-        self._after_label.setText(f"After     {fmt_size(after)}")
+        self._before_label.setText(f"Before  {fmt_size(before)}")
+        self._after_label.setText(f"After  {fmt_size(after)}")
         self._before.set_segments([("original size", float(before or 1), muted)])
         # The "after" bar is drawn to scale against "before" - a shrunken
         # archive should *look* shrunken, so the empty remainder is a real

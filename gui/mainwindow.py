@@ -1,8 +1,12 @@
 """The single window.
 
-One vertical flow, no modal sub-windows: drop → analysis → presets → queue →
-results, with Extract on its own tab. Everything the user needs to judge the
-job is on screen at the same time, which is the whole point.
+No modal sub-windows, and one tab per *lifecycle stage* rather than one long
+scrolling column (UI v3 wave 2). Compress is where you decide - drop →
+analysis → profile; Activity is where work in flight lives - queue, logs,
+results; Extract is its own thing. A one-line status strip at the bottom
+carries the queue's state onto every tab, so promoting the queue out of the
+Compress page never means hiding it: the strip says what is running, the tab
+title counts what is waiting, and one click goes there.
 """
 
 from __future__ import annotations
@@ -10,13 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QRect, QSettings, Qt, QThreadPool, Signal
-from PySide6.QtGui import (QAction, QCloseEvent, QIcon, QKeySequence, QPixmap,
-                           QShortcut)
+from PySide6.QtGui import (QAction, QCloseEvent, QFontMetrics, QIcon,
+                           QKeySequence, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QMainWindow, QMessageBox,
-                               QMenu, QPushButton, QScrollArea, QSizePolicy,
-                               QSystemTrayIcon, QTabWidget, QToolButton,
-                               QVBoxLayout, QWidget)
+                               QLineEdit, QListWidgetItem, QMainWindow, QMenu,
+                               QProgressBar, QPushButton, QScrollArea,
+                               QSizePolicy, QSystemTrayIcon, QTabWidget,
+                               QToolButton, QVBoxLayout, QWidget)
 
 from excmp import __version__
 from excmp.analyzer import FileInfo
@@ -32,6 +36,7 @@ from .suggest import (AnalysisSummary, profile_comparison, recommend_profile,
 from .theme import (CARD_MARGINS, GAP_BLOCK, GAP_INTRA, GUTTER, VGAP, qss,
                     repolish)
 from .widgets.analysis_card import AnalysisCard
+from .widgets.banner import Banner
 from .widgets.compare_table import CompareTable
 from .widgets.dropzone import DropZone
 from .widgets.extract_tab import ExtractTab
@@ -39,7 +44,7 @@ from .widgets.preset_cards import AdvancedPanel, AdvancedToggle
 from .widgets.queue_table import QueueTable
 from .widgets.results import ResultsPanel
 from .winintegration import (TBPF_ERROR, TBPF_PAUSED, Notifier, TaskbarProgress,
-                             open_in_explorer)
+                             open_in_explorer, set_dark_titlebar)
 
 DEFAULT_TEMP = Path.home() / ".excmp" / "tmp"
 
@@ -57,6 +62,18 @@ def initial_size(avail_w: int, avail_h: int) -> tuple[int, int]:
     width = min(1180, int(avail_w * 0.92))
     height = min(940, int(avail_h * 0.94))
     return max(width, 640), max(height, 480)
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    """True when ``path`` is ``root`` or lives inside it. Used to drop a
+    removed item's cached FileInfos without touching the disk."""
+    if path == root:
+        return True
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def unique_path(path: Path) -> Path:
@@ -96,6 +113,10 @@ class MainWindow(QMainWindow):
         self._analysis_signals = AnalysisSignals(self)
         self._analysis_signals.ready.connect(self._on_analysis_ready)
         self._analysis_signals.failed.connect(self._on_analysis_failed)
+        self._analysis_signals.progress.connect(self._on_analysis_progress)
+        # Set by the banner's "Close anyway": the second closeEvent must not
+        # ask the same question again.
+        self._force_close = False
 
         self._taskbar: TaskbarProgress | None = None
         self._notifier = Notifier()
@@ -139,6 +160,11 @@ class MainWindow(QMainWindow):
         self._about_card: QFrame | None = None
 
         self.drop_zone = DropZone(page)
+        # The pending list belongs to the chip that discloses it; the window
+        # owns the model (`_pending`) and every mutation, so it holds the alias.
+        self.pending_list = self.drop_zone.pending_list
+        self.pending_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         column.addWidget(self.drop_zone)
 
         self.analysis_card = AnalysisCard(page)
@@ -152,30 +178,6 @@ class MainWindow(QMainWindow):
         self.compare_table.set_tool_availability(self.tools)
         self.presets = self.compare_table
         column.addWidget(self.compare_table)
-
-        queue_header = QHBoxLayout()
-        queue_title = QLabel(self.tr("Queue"), page)
-        queue_title.setObjectName("Title")
-        self.queue_status = QLabel("", page)
-        self.queue_status.setObjectName("Muted")
-        self.pause_button = QPushButton(self.tr("Pause queue"), page)
-        self.pause_button.setToolTip(self.tr(
-            "The running job finishes its current stage before holding — "
-            "no work is thrown away."))
-        self.pause_button.setAccessibleDescription(self.pause_button.toolTip())
-        self.clear_done_button = QPushButton(self.tr("Clear finished"), page)
-        queue_header.addWidget(queue_title)
-        queue_header.addWidget(self.queue_status)
-        queue_header.addStretch(1)
-        queue_header.addWidget(self.clear_done_button)
-        queue_header.addWidget(self.pause_button)
-        column.addLayout(queue_header)
-
-        self.queue_table = QueueTable(page)
-        column.addWidget(self.queue_table)
-
-        self.results = ResultsPanel(self.theme_name, page)
-        column.addWidget(self.results)
         column.addStretch(1)
 
         self._scroll = QScrollArea(self)
@@ -185,6 +187,8 @@ class MainWindow(QMainWindow):
 
         self.extract_tab = ExtractTab(self)
         self.tabs.addTab(self.extract_tab, self.tr("Extract"))
+
+        self._build_activity_tab()
 
         # The window shell (W1-2): the action bar carrying the commit button
         # and the resolved destination NEVER scrolls - it sits between the tab
@@ -198,6 +202,10 @@ class MainWindow(QMainWindow):
         shell = QVBoxLayout(central)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
+        # W2-9: the banner sits above everything and costs zero height while
+        # hidden. It is the app's only way of asking a question now.
+        self.banner = Banner(central)
+        shell.addWidget(self.banner)
         shell.addWidget(self.tabs, 1)
         shell.addWidget(self.advanced_panel)
         shell.addWidget(self.action_bar)
@@ -207,6 +215,50 @@ class MainWindow(QMainWindow):
         self._build_status_bar()
         self._build_actions()
         self._set_tab_order()
+
+    def _build_activity_tab(self) -> None:
+        """Everything about work in flight, on one page (W2-1).
+
+        Deliberately NOT a QScrollArea: the queue table is the content, so it
+        takes the height that is left and scrolls internally. That is also why
+        its old 430px cap could go - the cap only ever existed to stop an
+        empty queue pushing the results panel off the Compress column.
+        """
+        self.activity_page = QWidget(self)
+        column = QVBoxLayout(self.activity_page)
+        column.setContentsMargins(GUTTER, VGAP, GUTTER, VGAP)
+        column.setSpacing(GAP_BLOCK)
+
+        header = QHBoxLayout()
+        header.setSpacing(GAP_INTRA)
+        title = QLabel(self.tr("Queue"), self.activity_page)
+        title.setObjectName("Title")
+        self.queue_status = QLabel("", self.activity_page)
+        self.queue_status.setObjectName("Muted")
+        self.pause_button = QPushButton(self.tr("Pause queue"), self.activity_page)
+        self.pause_button.setToolTip(self.tr(
+            "The running job finishes its current stage before holding — "
+            "no work is thrown away."))
+        self.pause_button.setAccessibleDescription(self.pause_button.toolTip())
+        self.clear_done_button = QPushButton(self.tr("Clear finished"),
+                                             self.activity_page)
+        header.addWidget(title)
+        header.addWidget(self.queue_status)
+        header.addStretch(1)
+        header.addWidget(self.clear_done_button)
+        header.addWidget(self.pause_button)
+        column.addLayout(header)
+
+        # The most recent result sits above the table until wave 3 folds it
+        # into the row expander the table already owns.
+        self.results = ResultsPanel(self.theme_name, self.activity_page)
+        column.addWidget(self.results)
+
+        self.queue_table = QueueTable(self.activity_page)
+        column.addWidget(self.queue_table, 1)
+
+        self._activity_index = self.tabs.addTab(self.activity_page,
+                                                self.tr("Activity"))
 
     def _build_actions(self) -> None:
         """The QAction registry (W1-9): one action per capability, shared by
@@ -360,22 +412,68 @@ class MainWindow(QMainWindow):
         return len(parts.parts) == 1
 
     def _build_status_bar(self) -> None:
+        """The persistent job strip (W2-1) plus the tool inventory.
+
+        Priority when the window is narrow: **what the queue is doing wins**.
+        The tool list is reference material and is repeated in full in About,
+        so it is the half that elides.
+        """
         bar = self.statusBar()
         found = [name for name, info in self.tools.items() if info is not None]
         missing = [name for name in ("7z", "precomp") if self.tools.get(name) is None]
         text = self.tr("Tools found: %s") % (", ".join(found) or self.tr("none"))
         if missing:
             text += self.tr("  ·  missing: %s") % ", ".join(missing)
+        self._tools_text = text
         self._tools_label = QLabel(text, self)
         self._tools_label.setObjectName("Muted")
-        bar.addWidget(self._tools_label)
+        self._tools_label.setToolTip(text)
+        # Ignored width: the strip must never be the reason the window has a
+        # minimum width. The elision is done by hand so it ends in an ellipsis
+        # rather than a hard clip.
+        self._tools_label.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                        QSizePolicy.Policy.Preferred)
+        bar.addWidget(self._tools_label, 1)
+
+        self.job_status = QPushButton("", self)
+        self.job_status.setObjectName("StatusJob")
+        self.job_status.setFlat(True)
+        self.job_status.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.job_status.setToolTip(self.tr("Show the queue"))
+        self.job_status.clicked.connect(self._show_activity)
+
+        self.status_progress = QProgressBar(self)
+        self.status_progress.setRange(0, 100)
+        self.status_progress.setTextVisible(False)
+        # Fixed BOTH ways: the status bar stretches a permanent widget to its
+        # own height, and QSS `height` does not stop it - the mini bar came
+        # out as a 40px slab.
+        self.status_progress.setFixedSize(90, 10)
+        self.status_progress.setAccessibleName(self.tr("Current job progress"))
+        self.status_progress.setVisible(False)
 
         self.theme_button = QPushButton(self.tr("Light mode"), self)
         self.theme_button.setFlat(True)
         self.theme_button.setAccessibleName(self.tr("Toggle light and dark theme"))
         self.theme_button.clicked.connect(self.toggle_theme)
-        bar.addPermanentWidget(QLabel(f"v{__version__}", self))
-        bar.addPermanentWidget(self.theme_button)
+        self._version_label = QLabel(f"v{__version__}", self)
+        for widget in (self.job_status, self.status_progress,
+                       self._version_label, self.theme_button):
+            bar.addPermanentWidget(widget)
+
+    def _show_activity(self) -> None:
+        self.tabs.setCurrentWidget(self.activity_page)
+
+    def _elide_tools(self) -> None:
+        reserved = 56 + sum(
+            widget.sizeHint().width() for widget in
+            (self.job_status, self._version_label, self.theme_button))
+        if self.status_progress.isVisibleTo(self):
+            reserved += self.status_progress.width()
+        available = max(48, self.statusBar().width() - reserved)
+        metrics = QFontMetrics(self._tools_label.font())
+        self._tools_label.setText(metrics.elidedText(
+            self._tools_text, Qt.TextElideMode.ElideRight, available))
 
     def _set_tab_order(self) -> None:
         """Explicit keyboard path through the flow, top to bottom."""
@@ -393,6 +491,13 @@ class MainWindow(QMainWindow):
 
     def _wire(self) -> None:
         self.drop_zone.pathsAdded.connect(self.add_paths)
+        self.drop_zone.clearRequested.connect(self.clear_pending)
+        self.pending_list.customContextMenuRequested.connect(self._pending_menu)
+        # Del removes the highlighted item, scoped to the list so it cannot
+        # fire while the archive-name field has focus.
+        delete = QShortcut(QKeySequence.StandardKey.Delete, self.pending_list)
+        delete.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete.activated.connect(self.remove_selected_pending)
         self.presets.profileChanged.connect(self._on_profile_changed)
         # The chooser's rows are destroyed and recreated on every analysis;
         # without this, the keyboard path through them dies the first time
@@ -427,6 +532,13 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(qss(self.theme_name))
         self.theme_button.setText(
             self.tr("Dark mode") if self.theme_name == "light" else self.tr("Light mode"))
+        # W2-5: the SVG glyphs are tinted with theme tokens, so they have to be
+        # repainted here. This is the thing emoji could not do.
+        self.compare_table.retint(self.theme_name)
+        # W2-6: Qt paints its client area but never the OS caption, so a dark
+        # app under a light title bar reads as half-finished. No-ops silently
+        # off Windows and on builds that do not know the DWM attribute.
+        set_dark_titlebar(int(self.winId()), self.theme_name == "dark")
 
     def toggle_theme(self) -> None:
         self.theme_name = "light" if self.theme_name == "dark" else "dark"
@@ -444,6 +556,7 @@ class MainWindow(QMainWindow):
             return
         self.results.hide_panel()
         self.analysis_card.set_busy(len(self._pending))
+        self._refresh_pending_view()
         self._refresh_actions()
         worker = AnalysisWorker(list(self._pending), self.presets.current_profile(),
                                 self.tools, self._analysis_signals)
@@ -456,7 +569,51 @@ class MainWindow(QMainWindow):
         self.analysis_card.clear()
         self.compare_table.clear()
         self.results.hide_panel()
+        self._refresh_pending_view()
         self._refresh_actions()
+
+    # -- W2-10: review and remove before committing --------------------------
+    def _refresh_pending_view(self) -> None:
+        """Keep the chip and the list in step with ``_pending``."""
+        self.pending_list.clear()
+        for path in self._pending:
+            item = QListWidgetItem(path.name or str(path), self.pending_list)
+            item.setToolTip(str(path))
+        total = self._summary.total_bytes if self._summary is not None else 0
+        self.drop_zone.set_pending(len(self._pending), total)
+        self.drop_zone.fit_pending_list()
+
+    def remove_selected_pending(self) -> None:
+        """Drop one item and re-plan from the FileInfo list already in memory.
+
+        The same trick as `_on_profile_changed`: entropy sampling is the
+        expensive part, and removing an item changes none of the samples that
+        survive. On the real HDD corpus this is the difference between instant
+        and another full scan.
+        """
+        row = self.pending_list.currentRow()
+        if not 0 <= row < len(self._pending):
+            return
+        removed = self._pending.pop(row)
+        if not self._pending:
+            self.clear_pending()
+            return
+        self._infos = [info for info in self._infos
+                       if not _is_under(Path(info.path), removed)]
+        self._refresh_pending_view()
+        self._resummarize()
+
+    def _pending_menu(self, pos) -> None:
+        item = self.pending_list.itemAt(pos)
+        if item is None:
+            return
+        self.pending_list.setCurrentItem(item)
+        path = self._pending[self.pending_list.currentRow()]
+        menu = QMenu(self.pending_list)
+        menu.addAction(self.tr("Remove"), self.remove_selected_pending)
+        menu.addAction(self.tr("Show in Explorer"),
+                       lambda: open_in_explorer(path))
+        menu.exec(self.pending_list.viewport().mapToGlobal(pos))
 
     def _reset_flow(self) -> None:
         self.results.hide_panel()
@@ -482,6 +639,9 @@ class MainWindow(QMainWindow):
         self._refresh_actions()
         self.analysisFinished.emit()
 
+    def _on_analysis_progress(self, done: int, total: int) -> None:
+        self.analysis_card.set_progress(done, total)
+
     def _on_analysis_failed(self, message: str) -> None:
         self.analysis_card.set_error(message)
         self._summary = None
@@ -494,11 +654,19 @@ class MainWindow(QMainWindow):
         expensive part and nothing about the input changed."""
         if not self._infos or not isinstance(profile, Profile):
             return
+        self._resummarize(profile)
+
+    def _resummarize(self, profile: Profile | None = None) -> None:
+        """Re-plan and repaint from the cached FileInfo list. No file is read."""
+        if not self._infos:
+            return
+        profile = profile or self.presets.current_profile()
         the_plan = make_plan(self._infos, profile, self.tools)
         reference = make_plan(self._infos, strongest_profile(self.tools), self.tools)
         self._summary = summarize(self._infos, the_plan, self.tools, reference)
         self.analysis_card.set_summary(self._summary)
         self._refresh_estimates()
+        self._refresh_pending_view()
         self._refresh_actions()
 
     def _refresh_estimates(self) -> list:
@@ -625,9 +793,11 @@ class MainWindow(QMainWindow):
             return
         self.queue_table.update_state(job)
         self.results.show_job(job)
-        # A finished job used to produce NO visible change: the results panel
-        # appeared 660-1090px below every viewport. Bring it into view.
-        self._scroll.ensureWidgetVisible(self.results, 0, VGAP)
+        # No tab switch: people queue several jobs, and yanking the window to
+        # Activity after each one turns the second job into a fight with the
+        # app (research/23 §7, W2-1's pinned behaviours). What makes the
+        # finish visible from anywhere is the status strip and the tab count,
+        # both refreshed below.
         if job.kind is JobKind.EXTRACT:
             self.extract_tab.set_finished(getattr(result, "files_restored", 0),
                                           getattr(result, "verified", 0))
@@ -717,22 +887,62 @@ class MainWindow(QMainWindow):
             self.name_edit.setPlaceholderText(self.tr("archive name"))
 
         pending = self.queue.pending_count()
-        active = next((j for j in self.queue.jobs if j.state is JobState.RUNNING), None)
+        status = self._job_status_text()
+        self.queue_status.setText(status)
+        self.job_status.setText(status)
+        self.job_status.setAccessibleName(
+            self.tr("Queue: %s. Opens the Activity tab.") % status)
+
+        active = self._active_job()
+        self.status_progress.setVisible(active is not None)
         if active is not None:
-            self.queue_status.setText(
-                self.tr("%s · estimating…") % active.display_name
-                if active.eta_s is None else
-                self.tr("%s · %s left") % (active.display_name, fmt_eta(active.eta_s)))
-        elif pending:
-            self.queue_status.setText(
-                self.tr("1 job waiting") if pending == 1
-                else self.tr("%d jobs waiting") % pending)
-        else:
-            self.queue_status.setText(self.tr("idle"))
+            self.status_progress.setValue(int(active.percent))
+            self.status_progress.setAccessibleDescription(
+                self.tr("%d percent") % int(active.percent))
+
+        # The tab title is the second half of "the queue is never hidden":
+        # promoting it off the Compress page only works if leaving that page
+        # still tells you how much is waiting.
+        self.tabs.setTabText(self._activity_index,
+                             self.tr("Activity") if not pending
+                             else self.tr("Activity (%d)") % pending)
+
         self.pause_button.setEnabled(pending > 0 or self.queue.is_paused)
         self.clear_done_button.setEnabled(
             any(j.state.is_terminal for j in self.queue.jobs))
         repolish(self.compress_button)
+        self._elide_tools()
+
+    def _active_job(self) -> Job | None:
+        return next((j for j in self.queue.jobs if j.state is JobState.RUNNING), None)
+
+    def _job_status_text(self) -> str:
+        """One line for the strip, the Activity header and the tab tooltip.
+
+        A finished job has to leave a trace here: with the results panel on
+        another tab, this sentence is the only thing that changes on screen
+        when a job completes while the user is elsewhere.
+        """
+        active = self._active_job()
+        if active is not None:
+            return (self.tr("%s · estimating…") % active.display_name
+                    if active.eta_s is None else
+                    self.tr("%s · %s left") % (active.display_name,
+                                               fmt_eta(active.eta_s)))
+        pending = self.queue.pending_count()
+        if pending:
+            return (self.tr("1 job waiting") if pending == 1
+                    else self.tr("%d jobs waiting") % pending)
+
+        last = next((j for j in reversed(self.queue.jobs) if j.state.is_terminal), None)
+        if last is None:
+            return self.tr("idle")
+        if last.state is JobState.DONE:
+            if last.kind is JobKind.COMPRESS and last.orig_bytes:
+                return self.tr("%s · done, saved %d%%") % (
+                    last.display_name, round(last.saved_fraction * 100))
+            return self.tr("%s · done") % last.display_name
+        return self.tr("%s · %s") % (last.display_name, last.state.label.lower())
 
     # -- lifecycle ---------------------------------------------------------
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
@@ -746,17 +956,31 @@ class MainWindow(QMainWindow):
                 self.hide()
         super().changeEvent(event)
 
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        if hasattr(self, "_tools_label"):
+            self._elide_tools()
+
+    def _confirm_close(self) -> None:
+        self._force_close = True
+        self.banner.hide_banner()
+        self.close()
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt naming
-        if self.queue.is_busy:
-            answer = QMessageBox.question(
-                self, self.tr("Stop the running job?"),
-                self.tr("A job is still running. Closing will cancel it — the "
+        # W2-9: this was the last QMessageBox in the package. A modal here is
+        # exactly backwards - it covers the queue that proves the job is
+        # still alive, at the one moment the user is asking about it.
+        if self.queue.is_busy and not self._force_close:
+            self.banner.show_message(
+                self.tr("A job is still running. Closing will cancel it — your "
                         "originals are untouched and no partial archive is left "
                         "behind."),
-                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Close)
-            if answer != QMessageBox.StandardButton.Close:
-                event.ignore()
-                return
+                tone="warn",
+                actions=[(self.tr("Close anyway"), self._confirm_close),
+                         (self.tr("Keep it running"), self.banner.hide_banner)],
+                closable=False)
+            event.ignore()
+            return
         QSettings().setValue("window/geometry", self.saveGeometry())
         self.queue.shutdown()
         if self._taskbar is not None:

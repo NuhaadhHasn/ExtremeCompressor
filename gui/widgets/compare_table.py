@@ -24,14 +24,15 @@ carried by text (a filled/empty radio glyph), never by colour alone.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
+                               QSizePolicy, QVBoxLayout, QWidget)
 
 from excmp.planner import Profile
 from excmp.tools import ToolInfo
 
+from ..icons import preset_icon
 from ..suggest import ComparisonRow, comparison_caption
-from ..theme import CARD_MARGINS, GAP_INTRA, repolish
+from ..theme import CARD_MARGINS, GAP_INTRA, GAP_TIGHT, repolish, tokens
 
 # (header, stretch). Shared by the header strip and every row, which is what
 # keeps the columns lined up without a grid.
@@ -47,6 +48,52 @@ _COLUMNS: tuple[tuple[str, int], ...] = (
 _RADIO_ON, _RADIO_OFF = "●", "○"
 
 
+def _glyph_color(recommended: bool, theme: str) -> str:
+    """Which theme token tints a row's icon.
+
+    The recommended row's glyph goes green with its name; everything else is
+    muted. Colour is never the only signal here - the word "(suggested)" is
+    already in the label and in the spoken sentence.
+    """
+    palette = tokens(theme)
+    # $text, not $muted, for the rest: a muted glyph on $surface is very nearly
+    # invisible in dark mode - the first render had three ghosts beside one
+    # green flame, which is worse than the emoji it replaced.
+    return palette["ok"] if recommended else palette["text"]
+
+
+class _ElidingLabel(QLabel):
+    """A label that ends in "…" instead of being sliced mid-word.
+
+    Cells cannot word-wrap (a wrapping QLabel reports a minimum height that
+    assumes wrapping at minimum width, and QScrollArea sizes the page by
+    MINIMUM hint - four rows of wrapped labels manufactured a scrollbar the
+    real layout never needed). The old answer was to let long text clip at the
+    column edge, which rendered "zpaqfranz missing — runs as E:" - a truncated
+    honesty note that looked like a bug rather than a truncation. Eliding
+    makes the cut visible, and the full sentence is still in the row's spoken
+    name and its tooltip.
+    """
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._full = text
+        self.setToolTip(text)
+
+    def setText(self, text: str) -> None:   # noqa: N802 - Qt naming
+        self._full = text
+        self.setToolTip(text)
+        super().setText(text)
+
+    def paintEvent(self, event) -> None:    # noqa: N802 - Qt naming
+        metrics = self.fontMetrics()
+        elided = metrics.elidedText(self._full, Qt.TextElideMode.ElideRight,
+                                    self.width())
+        if elided != super().text():
+            super().setText(elided)
+        super().paintEvent(event)
+
+
 def _cell(text: str, sub: str = "", parent: QWidget | None = None,
           bold: bool = False, tone: str = "") -> QWidget:
     """A two-line cell: the value, and underneath it the range or the caveat."""
@@ -57,12 +104,7 @@ def _cell(text: str, sub: str = "", parent: QWidget | None = None,
     box.setContentsMargins(0, 0, 0, 0)
     box.setSpacing(1)
 
-    # No wordWrap on cells: the values are short, and a wrapping QLabel
-    # reports a minimum height that assumes wrapping at minimum width -
-    # QScrollArea sizes the page by MINIMUM hint, so four rows of wrapped
-    # labels manufactured a scrollbar the real layout never needed. Long text
-    # clips at its column edge (the holder's Ignored width policy).
-    main = QLabel(text, holder)
+    main = _ElidingLabel(text, holder)
     if bold:
         main.setStyleSheet("font-weight: 600;")
     if tone:
@@ -71,8 +113,8 @@ def _cell(text: str, sub: str = "", parent: QWidget | None = None,
     box.addWidget(main)
 
     if sub:
-        note = QLabel(sub, holder)
-        note.setObjectName("Subtitle")
+        note = _ElidingLabel(sub, holder)
+        note.setObjectName("CellSub")
         box.addWidget(note)
     holder.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
     return holder
@@ -85,12 +127,20 @@ class ProfileRow(QFrame):
 
     clicked = Signal(object)   # Profile
 
-    def __init__(self, row: ComparisonRow, parent: QWidget | None = None) -> None:
+    def __init__(self, row: ComparisonRow, parent: QWidget | None = None,
+                 theme: str = "dark") -> None:
         super().__init__(parent)
         self.profile = row.profile
+        self._recommended = row.recommended
         self._title_text = row.title
         self._selected = False
-        self.setObjectName("Card")
+        self._note_label: QLabel | None = None
+        # A row is taller than the 32px floor for exactly one honest reason:
+        # its estimate is a range, so its cells carry a second line.
+        self._has_range = bool(row.size_range or row.time_range)
+        # Its own objectName, not #Card: the row needs a 2px border in every
+        # state so selection recolours instead of reflowing (W2-4).
+        self.setObjectName("ProfileRow")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         if row.recommended:
@@ -98,8 +148,10 @@ class ProfileRow(QFrame):
             repolish(self)
 
         stack = QVBoxLayout(self)
-        stack.setContentsMargins(12, 8, 12, 8)
-        stack.setSpacing(4)
+        # 6px vertical, not 8: with the 2px border and a ~19px content line
+        # that lands the plain rows on 31px, against the 32px control floor.
+        stack.setContentsMargins(12, 6, 12, 6)
+        stack.setSpacing(2)
 
         values = QWidget(self)
         values.setObjectName("Plain")
@@ -116,10 +168,20 @@ class ProfileRow(QFrame):
             repolish(self._name)
         name_holder = QWidget(values)
         name_holder.setObjectName("Plain")
-        nbox = QVBoxLayout(name_holder)
+        nbox = QHBoxLayout(name_holder)
         nbox.setContentsMargins(0, 0, 0, 0)
+        nbox.setSpacing(6)
+        # W2-5: a tinted Fluent SVG where an emoji used to be. It sits BESIDE
+        # the name, never instead of it - the icon is decoration, the word is
+        # the label, which is also why it carries no accessible name of its own.
+        self.glyph = QLabel(name_holder)
+        self.glyph.setObjectName("Plain")
+        self.glyph.setFixedSize(18, 18)
+        self.glyph.setAccessibleName("")
+        nbox.addWidget(self.glyph)
         nbox.addWidget(self._name)
         name_holder.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
+        self.retint(theme)
 
         if row.size_text:
             cells = (
@@ -153,6 +215,7 @@ class ProfileRow(QFrame):
             prose.setProperty("tone", "warn")
             repolish(prose)
             stack.addWidget(prose)
+            self._note_label = prose
 
         # One accessible sentence per row - a screen reader should not have to
         # stitch five cells together to learn what the row says.
@@ -161,8 +224,13 @@ class ProfileRow(QFrame):
                 row.title, row.chain, row.size_text, row.saved_text, row.time_text)
         else:
             spoken = f"{row.title}: {row.chain}"
-            if row.caveat:
-                spoken += " " + row.caveat
+        # The caveat is the missing-tool sentence ("zpaqfranz missing - runs as
+        # Extreme"). It used to be spoken ONLY in placeholder mode, so the
+        # moment estimates arrived a screen-reader user stopped being told that
+        # a profile silently degrades - and that is the one thing the caveat
+        # exists to say. Found by the elision test, not by an audit.
+        if row.caveat:
+            spoken += " " + row.caveat
         if row.note:
             spoken += " " + row.note
         if row.recommended and row.reason:
@@ -171,6 +239,23 @@ class ProfileRow(QFrame):
         self.setAccessibleName(spoken)
         self.setAccessibleDescription(spoken)
         self.setToolTip(row.reason or row.note or row.caveat)
+
+    def retint(self, theme: str) -> None:
+        """Re-colour the glyph for a palette. An emoji could never do this -
+        it is a colour bitmap and stayed orange in both themes."""
+        color = _glyph_color(self._recommended, theme)
+        self.glyph.setPixmap(
+            preset_icon(self.profile.value, color, 18).pixmap(18, 18))
+
+    def shows_range(self) -> bool:
+        """True when the estimate is a span rather than a single number - the
+        rows that legitimately need a second text line."""
+        return self._has_range
+
+    def has_note(self) -> bool:
+        """True when this row carries a full-width warning line - the rows
+        that are legitimately taller than the 32px floor."""
+        return self._note_label is not None
 
     # -- selection -----------------------------------------------------------
     def set_selected(self, selected: bool) -> None:
@@ -216,14 +301,28 @@ class CompareTable(QFrame):
         self._current = Profile.NORMAL
         self._tools: dict[str, ToolInfo | None] = {}
         self._estimated = False
+        self._theme = "dark"
 
         self._column = QVBoxLayout(self)
         self._column.setContentsMargins(*CARD_MARGINS)
-        self._column.setSpacing(GAP_INTRA)
+        # 4, not GAP_INTRA: this column holds seven children in a panel that
+        # has to fit a 321px viewport, so the gaps alone were 48px of it. The
+        # rows carry their own 2px borders, which reads as separation already.
+        self._column.setSpacing(GAP_TIGHT)
 
-        title = QLabel(self.tr("Pick a profile"), self)
-        title.setObjectName("Title")
-        self._column.addWidget(title)
+        # No "Pick a profile" title, and no row of its own for the disclosure:
+        # the column header immediately below reads "Profile | What runs |
+        # Estimated size | Saved | Estimated time", which says everything a
+        # heading would, and the (i) toggle rides on that same strip. Two rows
+        # that each restated the table cost 56px this page cannot spare.
+        #
+        # W1-13 specified the disclosure as "click-to-toggle, not a tooltip -
+        # keyboard users and screenshots lose tooltips". It shipped as a
+        # permanently visible 68px paragraph instead; this is the missing half.
+        self.info_toggle = QPushButton(self.tr("ⓘ  How these are measured"), self)
+        self.info_toggle.setObjectName("SectionToggle")
+        self.info_toggle.setCheckable(True)
+        self.info_toggle.toggled.connect(self._set_info_open)
 
         self._caption = QLabel("", self)
         self._caption.setObjectName("Subtitle")
@@ -240,7 +339,15 @@ class CompareTable(QFrame):
             label.setObjectName("Muted")
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
             head_line.addWidget(label, stretch)
-        self._column.addWidget(self._head)
+        # The header strip carries the column labels and the disclosure on one
+        # line; _head keeps its own column stretches so the labels stay aligned
+        # with the rows beneath.
+        header_strip = QHBoxLayout()
+        header_strip.setContentsMargins(0, 0, 0, 0)
+        header_strip.setSpacing(GAP_INTRA)
+        header_strip.addWidget(self._head, 1)
+        header_strip.addWidget(self.info_toggle)
+        self._column.addLayout(header_strip)
 
         self._rows: list[ProfileRow] = []
         self._footnote = QLabel(
@@ -249,10 +356,16 @@ class CompareTable(QFrame):
                     "known once the data has been through the codec."), self)
         self._footnote.setObjectName("Subtitle")
         self._footnote.setWordWrap(True)
+        self._footnote.setVisible(False)
         self._column.addWidget(self._footnote)
 
         self.select(Profile.NORMAL)
         self._show_placeholders()
+
+    def _set_info_open(self, open_: bool) -> None:
+        self.info_toggle.setText(self.tr("ⓘ  How these are measured") if not open_
+                                 else self.tr("ⓘ  Hide how these are measured"))
+        self._footnote.setVisible(open_ and self._estimated)
 
     # -- selection API (was PresetSelector) -----------------------------------
     def current_profile(self) -> Profile:
@@ -290,7 +403,13 @@ class CompareTable(QFrame):
             self._show_placeholders()
             return
         self._estimated = True
-        self._caption.setText(comparison_caption(rows))
+        # The caption earns its 34px only when it is pointing at a flagged row.
+        # Its generic form ("ranges, not promises") says exactly what the (i)
+        # disclosure says at greater length, so showing both is 34px spent
+        # repeating yourself on the page with the tightest height budget.
+        flagged = any(row.note for row in rows)
+        self._caption.setText(comparison_caption(rows) if flagged else "")
+        self._caption.setVisible(flagged)
         self._rebuild(rows)
 
     def rows(self) -> list[ProfileRow]:
@@ -307,6 +426,7 @@ class CompareTable(QFrame):
     def _show_placeholders(self) -> None:
         from .preset_cards import PRESETS   # deferred: avoids an import cycle
 
+        self._caption.setVisible(True)
         self._caption.setText(
             self.tr("Estimates for your files appear here after you add them."))
         placeholder_rows = []
@@ -314,7 +434,7 @@ class CompareTable(QFrame):
             missing = [n for n in needed if self._tools.get(n) is None]
             caveat = (self.tr("missing: %s") % ", ".join(missing)) if missing else ""
             placeholder_rows.append(ComparisonRow(
-                profile=profile, title=f"{glyph} {title}", chain=blurb,
+                profile=profile, title=title, chain=blurb,
                 size_text="", size_range="", saved_text="",
                 time_text="", time_range="", caveat=caveat,
             ))
@@ -329,11 +449,12 @@ class CompareTable(QFrame):
 
         footnote_at = self._column.indexOf(self._footnote)
         for offset, row in enumerate(rows):
-            widget = ProfileRow(row, self)
+            widget = ProfileRow(row, self, self._theme)
             widget.clicked.connect(self._on_row_clicked)
             self._column.insertWidget(footnote_at + offset, widget)
             self._rows.append(widget)
-        self._footnote.setVisible(self._estimated)
+        self._footnote.setVisible(self._estimated and self.info_toggle.isChecked())
+        self.info_toggle.setVisible(self._estimated)
         # Column headers describe the estimate columns; in placeholder mode
         # those show nothing, so the header row is pure height.
         self._head.setVisible(self._estimated)
@@ -343,6 +464,12 @@ class CompareTable(QFrame):
         # Every rebuild deletes the old row widgets, which severs any explicit
         # tab order routed through them - the window re-applies it on this.
         self.rowsRebuilt.emit()
+
+    def retint(self, theme: str) -> None:
+        """Called by the window on every theme toggle (W2-5)."""
+        self._theme = theme
+        for row in self._rows:
+            row.retint(theme)
 
     def _on_row_clicked(self, profile: object) -> None:
         if isinstance(profile, Profile):

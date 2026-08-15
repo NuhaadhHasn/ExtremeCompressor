@@ -586,6 +586,15 @@ The ≤300px target is **not** reached and cannot be — see correction 6.
 
 ### Wave 3 — expose the engine + Settings (the "looks cheap" payload, §5)
 
+**Wave 3a SHIPPED 2026-08-07**: the Verify button + `excmp verify` + `excmp
+hash`. The D9 publish gate was refactored into a public
+`engine.verify_archive` and now has three callers instead of one, with a test
+that fails if the gate and the button ever stop being the same code. Measured:
+catches a single 0xFF-flipped byte inside a `stored/` entry of a 721 MB
+archive — zip structure and CRC intact, so `7z t` would pass it — and names
+the file. A failing verify is *slower* than a passing one (49.8 s vs 34.4 s):
+it has to restore everything before it can prove the mismatch.
+
 I1 Settings tab with SettingsCard geometry (68px rows, 16px padding, 20px icon,
 wrap <476px — CommunityToolkit SettingsCard.xaml defaults) — M. Verify button +
 `excmp verify` — S. G1 foreign-archive extract — S. `.excmp` flat listing

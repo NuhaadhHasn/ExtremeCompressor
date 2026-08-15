@@ -214,11 +214,18 @@ class ExtractWorker(_EngineWorker):
         self.signals.started.emit(self.job_id)
         self._note(f"restoring {self.archive.name} → {self.out_dir}")
         try:
-            result = engine.extract(self.archive, self.out_dir, self.ctx)
+            # extract_any, not extract: G1 lets this open zip/7z/rar/iso/... too.
+            # The result carries `ledger_backed` so the UI can tell the verified
+            # restore from the best-effort one instead of blurring them.
+            result = engine.extract_any(self.archive, self.out_dir, self.ctx)
         except BaseException as exc:  # noqa: BLE001
             self._fail(exc)
             return
-        self._note(f"verified {result.verified} SHA-256 hash(es)")
+        if result.ledger_backed:
+            self._note(f"verified {result.verified} SHA-256 hash(es)")
+        else:
+            self._note("no SHA-256 ledger in this archive - nothing to verify "
+                       "the restored files against")
         self._finish(result)
 
 

@@ -52,11 +52,18 @@ class Manifest:
     payload_name: str
     warnings: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
+    # relpath -> why THIS file was stored. The route-level reason is a joined
+    # summary of every distinct reason in the group, so attributing it to an
+    # individual file says "7.99 bits/byte; 7.98 bits/byte" about a file that
+    # measured one of them. Defaulted, so archives written before this field
+    # existed still load - `from_json` passes **data and the default fills in.
+    store_reasons: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def new(cls, profile: str, stages: list[StageRecord], inputs: dict[str, dict],
             payload_name: str, warnings: list[str] | None = None,
-            routes: list[dict] | None = None) -> "Manifest":
+            routes: list[dict] | None = None,
+            store_reasons: dict[str, str] | None = None) -> "Manifest":
         return cls(
             schema=SCHEMA_VERSION,
             created_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -66,6 +73,7 @@ class Manifest:
             payload_name=payload_name,
             warnings=warnings or [],
             routes=routes or [],
+            store_reasons=store_reasons or {},
         )
 
     def to_json(self) -> str:

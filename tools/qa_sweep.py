@@ -8,7 +8,7 @@ was sliced mid-word, or that the chooser was advertising "100% or better" - an
 archive of zero bytes or smaller. Every one of those shipped past a green
 suite during UI wave 2 and was caught by looking at a PNG.
 
-So: 13 surfaces x 2 themes, including the ones no test and no README
+So: 14 surfaces x 2 themes, including the ones no test and no README
 screenshot ever renders - the banner, the Extract tab, the expanded pending
 list, a failed-job results panel, everything-disclosed-at-once. Cheap to run,
 and the only thing that has ever caught this class of defect here.
@@ -65,6 +65,26 @@ def build_corpus() -> list[Path]:
     return files
 
 
+_ARCHIVES: dict[str, Path] = {}
+
+
+def build_archives(files: list[Path]) -> None:
+    """One of ours and one of theirs, so both labellings get reviewed."""
+    import zipfile
+
+    from excmp import engine
+    from excmp.stages.base import StageContext
+
+    work = Path(tempfile.mkdtemp(prefix="excmp-qa-arch-"))
+    ours = work / "ours.excmp"
+    engine.compress([files[0].parent], ours, Profile.FAST,
+                    StageContext(temp_dir=work / "t"))
+    theirs = work / "somebody-elses.zip"
+    with zipfile.ZipFile(theirs, "w") as zf:
+        zf.writestr("docs/guide.txt", "hello " * 400)
+    _ARCHIVES.update(ours=ours, theirs=theirs)
+
+
 def sweep(theme: str, files: list[Path], out: Path) -> None:
     win = MainWindow(theme=theme)
     win.resize(1180, 700)
@@ -104,9 +124,15 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     win.analysis_card.details_toggle.setChecked(False)
     win.compare_table.info_toggle.setChecked(False)
 
+    # G1/I2-lite: a real .excmp with the contents listing open, then a
+    # foreign archive so the honesty labelling gets looked at too.
     win.tabs.setCurrentWidget(win.extract_tab)
-    win.extract_tab.set_archive(files[0])          # enables Verify only
+    win.extract_tab.set_archive(_ARCHIVES["ours"])
+    win.extract_tab.contents_toggle.setChecked(True)
     shot(win, out, f"{theme}-07-extract")
+    win.extract_tab.contents_toggle.setChecked(False)
+    win.extract_tab.set_archive(_ARCHIVES["theirs"])
+    shot(win, out, f"{theme}-07b-extract-foreign")
 
     win.tabs.setCurrentWidget(win.activity_page)
     shot(win, out, f"{theme}-08-activity-empty")
@@ -157,7 +183,7 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     shot(win, out, f"{theme}-12-activity-failed")
 
     win.queue.shutdown()
-    print(f"  {theme}: 13 surfaces")
+    print(f"  {theme}: 14 surfaces")
 
 
 def main() -> int:
@@ -175,6 +201,7 @@ def main() -> int:
 
     QApplication([])
     corpus = build_corpus()
+    build_archives(corpus)
     for theme in ("dark", "light"):
         sweep(theme, corpus, out)
     print(f"\nwrote {len(list(out.glob('*.png')))} images to {out}")

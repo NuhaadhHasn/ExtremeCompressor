@@ -1,9 +1,8 @@
 # 🚦 START HERE — handoff for the next session (written 2026-08-07)
 
-> **Wave 2 is merged to `main`.** Previous session then shipped **wave 3a**
-> (verification exposed) on branch `ui-v3-wave3`, unmerged.
-> Next: **wave 3b** — G1 foreign archives, `.excmp` listing, `.sha256`
-> sidecar, Settings tab.
+> **Waves 2 and 3a are merged to `main`.** Previous session shipped
+> **wave 3b** (foreign archives + listing) on branch `ui-v3-wave3b`, unmerged.
+> Next: **wave 3c** — `.sha256` sidecar, Settings tab, level/dict knobs.
 >
 > Historical, for context — wave 2 was:
 > 2a — Activity tab + status strip, compact results, queue density, scan
@@ -17,14 +16,32 @@
 
 | where | what |
 |---|---|
-| `main` | everything through **UI v3 wave 2**, merged 2026-08-07 |
-| **`ui-v3-wave3`** | **wave 3a — unmerged, waiting for review** |
+| `main` | everything through **wave 3a**, merged 2026-08-07 |
+| **`ui-v3-wave3b`** | **wave 3b — unmerged, waiting for review** |
 
 ```bash
-git checkout main && git merge --no-ff ui-v3-wave3
+git checkout main && git merge --no-ff ui-v3-wave3b
 ```
 
-**390 tests: 389 pass + 1 strict-xfail.** Baseline three sessions ago was 324.
+**415 tests: 414 pass + 1 strict-xfail.** Baseline four sessions ago was 324.
+
+### What wave 3b shipped
+
+**G1** — the Extract tab opens zip/7z/rar/tar/iso/cab/msi/wim. **I2-lite** —
+"What's inside" lists the whole ledger (name, size, SHA-256, route, *why
+stored*) straight from the manifest, no extraction.
+
+**The honesty boundary is the feature.** `ExtractResult.ledger_backed` exists
+because `verified == 0` is ambiguous — "nothing to check against" vs "checked,
+found zero good" — and the flag's first catch was the results panel rendering
+*"0 SHA-256 hashes verified — byte-identical to the originals"* about a
+foreign zip. `extract()` stays .excmp-only; `extract_any()` is the dispatcher.
+`is_excmp()` trusts the manifest, never the extension.
+
+**The listing corrected the manifest.** It recorded only a merged per-*route*
+store reason, so the "why" column claimed each stored file measured *every*
+stored file's entropy. `Manifest.store_reasons` is per-file now — defaulted,
+so older archives load and fall back.
 
 ### What wave 3a shipped
 
@@ -76,21 +93,15 @@ than quietly forgotten. That mechanism works; keep using it.
    (Precomp's gain is unknowable until it runs). Inlining the range needs
    ~210px in a 178px column. The extra height is where the honesty lives.
 
-## 4. The actual next job: UI wave 3b
+## 4. The actual next job: UI wave 3c
 
-research/23 §5 is the inventory. Wave 3a took the top item; the rest, in value
-order:
+research/23 §5's remaining inventory:
 
-- **G1 foreign-archive extract** (S) — `extract()` already shells `7z x` on any
-  path; the Extract tab filter is `*.excmp` only. Widen it, and label it
-  honestly: no SHA-256 ledger, verification limited to `7z t`.
-- **`.excmp` flat listing** (M, I2-lite) — `read_container`/`_read_manifest` is
-  a free zip+JSON read; the ledger already carries relpath → size, SHA-256,
-  route, and *why stored*. Richer columns than 7-Zip can render.
 - **`.sha256` sidecar (G6)** (S) — publish is a single atomic `replace`, so
-  hashing the container there is ~10 lines. Decide opt-in vs default: it is
-  the QuickSFV/fitgirl transport habit, but it does put a second file beside
-  the archive. (`excmp hash` and Copy-as-command are already done.)
+  hashing the container there is ~10 lines. **Decide opt-in vs default at the
+  start of the session** — it is the QuickSFV/fitgirl transport habit, but it
+  does put a second file beside every archive. (`excmp hash`, `excmp list`
+  and Copy-as-command are already done.)
 - **I1 Settings tab** (M) — CommunityToolkit SettingsCard geometry: 68px rows,
   16px padding, 20px icon, wrap below 476px.
 - **Level/dict knobs + RAM column + Parameters line** (M) — needs plumbing
@@ -110,7 +121,8 @@ the Advanced panel, About, and everything-disclosed-at-once.
 .venv\Scripts\python.exe tools\qa_sweep.py --out .qa
 ```
 
-It exists because wave 2 shipped four visual defects past a fully green suite,
+It exists because wave 2 shipped four visual defects past a fully green suite
+(and wave 3b added a fifth),
 and every single one was found by rendering a surface and looking at it:
 
 | defect | how it read on screen |
@@ -119,6 +131,7 @@ and every single one was found by rendering a surface and looking at it:
 | tinted glyphs used `$muted` | three near-invisible ghosts beside one green flame |
 | chooser cells hard-clipped | "zpaqfranz missing - runs as E:" - looks like a bug |
 | `fmt_percent` rounded 99.6 to 100 | **"100% or better"** - an archive of zero bytes |
+| the Extract card's standing blurb | promised a SHA-256 ledger directly above "this one has none" |
 
 That last one is the one to remember. It was the most over-promising sentence
 the app has ever rendered, in the one panel whose entire job is not to
@@ -145,18 +158,25 @@ behaviour; rendering pins appearance. A UI phase needs both.**
    mode, so a screen-reader user was never told that Insane degrades to
    Extreme. Fixed. Found by a test written for something else entirely; worth
    remembering that the accessible strings need their own assertions.
-5. **A rounded percentage can become a lie.** `fmt_percent(0.996)` is "100%",
+5. **`verified == 0` needed a companion flag.** "Nothing to check against"
+   and "checked, found zero good" are different facts, and one boolean is
+   cheaper than discovering the difference in a bug report. Any time a count
+   of zero could mean two things, carry the reason beside it.
+6. **A route-level summary is not a per-file fact.** `planner.store_reason`
+   had said so in its own docstring for months; the listing was the first
+   surface to render the joined string per file and make it obviously wrong.
+7. **A rounded percentage can become a lie.** `fmt_percent(0.996)` is "100%",
    and "100% or better" promises a zero-byte archive. `gui.suggest._saved_words`
    caps the *wording* at 99% and leaves the estimator's number untouched.
    Anywhere a percentage is rendered near a superlative, check the rounding.
-6. **Tinted SVGs need `$text`, not `$muted`.** A muted glyph on `$surface` in
+8. **Tinted SVGs need `$text`, not `$muted`.** A muted glyph on `$surface` in
    dark mode is very nearly invisible — the first icon render was three ghosts
    beside one green flame, worse than the emoji it replaced.
-7. **"Fill the host" and "size to your hint" are contradictory**, which is why
+9. **"Fill the host" and "size to your hint" are contradictory**, which is why
    the Activity page is deliberately not a `QScrollArea`.
-8. **Grep is the wrong tool for "no modals left"** — the comments explaining
+10. **Grep is the wrong tool for "no modals left"** — the comments explaining
    why the modals went name `QMessageBox`. The test tokenises.
-9. Word-wrapping QLabels poison QScrollArea sizing; the chooser's
+11. Word-wrapping QLabels poison QScrollArea sizing; the chooser's
    `window.presets` / `window.compare_table` alias must not be "cleaned up".
 
 ## 6. Two warts spotted, still deliberately not fixed

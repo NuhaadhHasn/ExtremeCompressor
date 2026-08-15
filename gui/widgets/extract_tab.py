@@ -22,6 +22,7 @@ from .dropzone import paths_from_mime
 
 class ExtractTab(QWidget):
     extractRequested = Signal(object, object)   # archive: Path, dest: Path
+    verifyRequested = Signal(object)           # archive: Path
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -76,8 +77,20 @@ class ExtractTab(QWidget):
         self.start_button.setProperty("variant", "primary")
         self.start_button.setEnabled(False)
         self.start_button.clicked.connect(self._emit_request)
+        # Verification without extraction: the honest answer to "is this
+        # archive still good?" about a file that has been sitting on a drive
+        # for a year. It needs no destination, and writes nothing.
+        self.verify_button = QPushButton(self.tr("Verify only"), card)
+        self.verify_button.setEnabled(False)
+        self.verify_button.setToolTip(self.tr(
+            "Restore every file to a temporary folder, check it against the "
+            "archive’s SHA-256 ledger, then delete it again. Nothing is "
+            "written to your destination folder."))
+        self.verify_button.setAccessibleDescription(self.verify_button.toolTip())
+        self.verify_button.clicked.connect(self._emit_verify)
         buttons = QHBoxLayout()
         buttons.addWidget(self.start_button)
+        buttons.addWidget(self.verify_button)
         buttons.addStretch(1)
         grid.addLayout(buttons, 4, 0, 1, 3)
 
@@ -102,6 +115,12 @@ class ExtractTab(QWidget):
         self.setTabOrder(archive_browse, self.dest_edit)
         self.setTabOrder(self.dest_edit, dest_browse)
         self.setTabOrder(dest_browse, self.start_button)
+        self.setTabOrder(self.start_button, self.verify_button)
+
+    def _emit_verify(self) -> None:
+        archive = Path(self.archive_edit.text().strip('" '))
+        if archive.is_file():
+            self.verifyRequested.emit(archive)
 
     # -- validation --------------------------------------------------------
     def _revalidate(self) -> None:
@@ -109,6 +128,8 @@ class ExtractTab(QWidget):
         dest = self.dest_edit.text().strip('" ')
         ok = bool(dest) and archive.is_file()
         self.start_button.setEnabled(ok)
+        # Verify needs no destination - only something to verify.
+        self.verify_button.setEnabled(archive.is_file())
         if self.archive_edit.text() and not archive.is_file():
             self.status.setText(self.tr("That archive does not exist."))
         elif archive.is_file():

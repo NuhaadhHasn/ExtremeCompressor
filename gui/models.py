@@ -17,6 +17,9 @@ _ids = itertools.count(1)
 class JobKind(StrEnum):
     COMPRESS = "compress"
     EXTRACT = "extract"
+    # Restores the whole archive into temp, checks every ledger hash, and
+    # deletes it again. Produces nothing - which is the point.
+    VERIFY = "verify"
 
 
 class JobState(StrEnum):

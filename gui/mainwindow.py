@@ -522,6 +522,7 @@ class MainWindow(QMainWindow):
         self.results.openFolderRequested.connect(open_in_explorer)
         self.results.dismissed.connect(self._reset_flow)
         self.extract_tab.extractRequested.connect(self._start_extract)
+        self.extract_tab.verifyRequested.connect(self.start_verification)
 
         QShortcut(QKeySequence.StandardKey.Open, self, self.drop_zone._pick_files)
         QShortcut(QKeySequence("Ctrl+Return"), self, self.start_compression)
@@ -710,6 +711,11 @@ class MainWindow(QMainWindow):
 
     def _start_extract(self, archive: object, dest: object) -> None:
         self.queue.add_extract(Path(archive), Path(dest))
+
+    def start_verification(self, archive: object) -> None:
+        """Queue a verify. Deliberately ignores the destination field - the
+        whole promise of this verb is that nothing is produced."""
+        self.queue.add_verify(Path(archive))
 
     def _toggle_pause(self) -> None:
         self.queue.toggle_pause()

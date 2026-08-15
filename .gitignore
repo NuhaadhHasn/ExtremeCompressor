@@ -18,3 +18,4 @@ tools/bin/
 
 # Screenshot/GIF scratch space (tools/shots.py)
 .shots-work/
+.qa/                    # tools/qa_sweep.py output - review, never commit

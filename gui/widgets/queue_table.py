@@ -108,7 +108,12 @@ class QueueTable(QTreeWidget):
         Once a compress job finishes this is also where the before/after pair
         goes - it is the same fact, better told after the event.
         """
-        kind = "extract" if job.kind is JobKind.EXTRACT else job.profile.value
+        if job.kind is JobKind.EXTRACT:
+            kind = "extract"
+        elif job.kind is JobKind.VERIFY:
+            kind = "verify"
+        else:
+            kind = job.profile.value
         if job.state is JobState.DONE and job.kind is JobKind.COMPRESS and job.final_bytes:
             return (f"{kind}  ·  {fmt_size(job.orig_bytes)} → "
                     f"{fmt_size(job.final_bytes)}")

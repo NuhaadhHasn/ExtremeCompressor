@@ -222,6 +222,32 @@ class ExtractWorker(_EngineWorker):
         self._finish(result)
 
 
+class VerifyWorker(_EngineWorker):
+    """A verify is a full restore, so it is a job like any other - queued,
+    cancellable, logged - never a modal that locks the window for ten minutes
+    while it reads 700 MB."""
+
+    def __init__(self, job: Job, signals: WorkerSignals, temp_dir: Path,
+                 threads: int = 0) -> None:
+        super().__init__(job, signals, temp_dir, threads)
+        self.archive = job.inputs[0]
+
+    def run(self) -> None:
+        from excmp import engine
+
+        self._t0 = time.monotonic()
+        self.signals.started.emit(self.job_id)
+        self._note(f"verifying {self.archive.name}: restoring every file to "
+                   f"temp and checking it against the manifest’s SHA-256 ledger")
+        try:
+            result = engine.verify_archive(self.archive, self.ctx)
+        except BaseException as exc:  # noqa: BLE001
+            self._fail(exc)
+            return
+        self._note(f"OK: {result.verified} hash(es) matched")
+        self._finish(result)
+
+
 class QueueManager(QObject):
     """Owns the job list and runs them strictly one at a time."""
 
@@ -302,6 +328,15 @@ class QueueManager(QObject):
         job.orig_bytes = archive.stat().st_size if archive.exists() else 0
         return self.add_job(job)
 
+    def add_verify(self, archive: Path) -> Job:
+        """A verify has no destination. ``out_path`` is the archive itself so
+        the row's context menu can still reveal it in Explorer - it is never
+        written to."""
+        archive = Path(archive)
+        job = Job(inputs=[archive], out_path=archive, kind=JobKind.VERIFY)
+        job.orig_bytes = archive.stat().st_size if archive.exists() else 0
+        return self.add_job(job)
+
     # -- control -----------------------------------------------------------
     def pause(self) -> None:
         """Hold the queue. The running job finishes its current stage first."""
@@ -367,7 +402,9 @@ class QueueManager(QObject):
             self.queueIdle.emit()
             return
         worker: _EngineWorker
-        if nxt.kind is JobKind.EXTRACT:
+        if nxt.kind is JobKind.VERIFY:
+            worker = VerifyWorker(nxt, self._signals, self.temp_dir, self.threads)
+        elif nxt.kind is JobKind.EXTRACT:
             worker = ExtractWorker(nxt, self._signals, self.temp_dir, self.threads)
         else:
             worker = CompressWorker(nxt, self._signals, self.temp_dir,

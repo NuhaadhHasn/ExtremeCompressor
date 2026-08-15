@@ -204,6 +204,23 @@ class ExtractResult:
     elapsed_s: float
 
 
+@dataclass
+class VerifyResult:
+    """The answer to "is this archive still good?".
+
+    ``ok`` is True whenever this object exists at all - a failed verification
+    raises - but it is carried explicitly so the CLI's JSON and the GUI's
+    result panel can state the verdict without inferring it from an absence.
+    """
+
+    archive: Path
+    ok: bool
+    files_restored: int
+    verified: int
+    elapsed_s: float
+    problem: str = ""
+
+
 def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str]]:
     """Analyze all inputs; map absolute path -> archive-relative path."""
     infos: list[FileInfo] = []
@@ -308,7 +325,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         write_container(tmp_out, manifest, payload_path, stored_map)
 
         # --- verify then atomically publish ---------------------------------
-        _verify_before_publish(tmp_out, ctx, job_dir)
+        _verify_before_publish(tmp_out, ctx)
         if out_path.exists():
             out_path.unlink()
         tmp_out.replace(out_path)
@@ -330,30 +347,58 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     )
 
 
-def _verify_before_publish(archive: Path, ctx: StageContext, job_dir: Path) -> int:
-    """The acceptance gate (D9): fully restore the archive and verify every
-    ledger hash BEFORE the atomic rename makes it the user's output.
+def verify_archive(archive: Path, ctx: StageContext) -> VerifyResult:
+    """Prove an archive still restores byte-for-byte. Read-only, produces
+    nothing, raises :class:`~excmp.verify.VerifyError` if it does not.
 
-    This replaced a cheaper test that only exercised the *last* stage's
-    container layer (``7z t``), which let a broken stage underneath sail
-    through: srep64.exe once failed its own decompression checksum at extract
-    time on an archive compress() had already reported as a success
+    This is the D9 acceptance gate as a public verb. It always was the honest
+    definition of "verified" - a **full restore of every byte, compared against
+    the ledger** - and the only reason it lived behind a private name was that
+    it had one caller. It has three now: compress (before publishing), the CLI
+    (``excmp verify``), and the Verify button.
+
+    What it deliberately is *not* is a container self-test. ``7z t`` checks
+    only the last stage's own framing, which let a broken stage underneath sail
+    through: srep64.exe once failed its decompression checksum at extract time
+    on an archive compress() had already called a success
     (benchmarks/2026-08-01-estimator-backtest.md). Tool exit codes cannot be
-    trusted, so the gate is the same ``extract()`` + ``verify_restore()`` path
-    users run - not a lookalike. The cost is one extra restore per job; the
-    product's tagline is "verifies a byte-identical restore before claiming
-    success", and this is what makes that sentence true rather than aspirational.
+    trusted. If this function is ever "optimised" into a cheaper check, the
+    product's first sentence stops being true.
+
+    The restore goes to a private temp directory and is deleted whether it
+    passes or fails - verifying a 700 GB archive must not fill the drive, and
+    nobody asked for the files.
+    """
+    t0 = time.monotonic()
+    archive = Path(archive)
+    ctx.temp_dir.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="excmp-verify-", dir=ctx.temp_dir))
+    try:
+        result = extract(archive, work / "restore", ctx)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return VerifyResult(
+        archive=archive,
+        ok=True,
+        files_restored=result.files_restored,
+        verified=result.verified,
+        elapsed_s=time.monotonic() - t0,
+    )
+
+
+def _verify_before_publish(archive: Path, ctx: StageContext) -> int:
+    """The publish gate: verify BEFORE the atomic rename makes this the user's
+    output. Deliberately implemented in terms of the public verb, so the button
+    and the gate can never drift into meaning different things.
 
     Progress is muted (the job's bar sits in the 95% band that
     ``gui.progress`` reserves for exactly this); cancel/pause/logs pass through.
     """
-    restore_dir = job_dir / "selftest"
     quiet = StageContext(temp_dir=ctx.temp_dir, threads=ctx.threads,
                          log_cb=ctx.log_cb, cancel=ctx.cancel, pause=ctx.pause)
     ctx.log_cb("verify", "restoring the whole archive to check every hash "
                          "before publishing…")
-    result = extract(archive, restore_dir, quiet)
-    shutil.rmtree(restore_dir, ignore_errors=True)
+    result = verify_archive(archive, quiet)
     ctx.log_cb("verify", f"self-test passed: {result.files_restored} file(s) "
                          f"restored, {result.verified} hash(es) verified in "
                          f"{result.elapsed_s:.1f}s")

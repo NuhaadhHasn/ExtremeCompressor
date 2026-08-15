@@ -1,6 +1,11 @@
 # 🚦 START HERE — handoff for the next session (written 2026-08-07)
 
-> Previous session: **UI v3 wave 2, both halves.**
+> **Wave 2 is merged to `main`.** Previous session then shipped **wave 3a**
+> (verification exposed) on branch `ui-v3-wave3`, unmerged.
+> Next: **wave 3b** — G1 foreign archives, `.excmp` listing, `.sha256`
+> sidecar, Settings tab.
+>
+> Historical, for context — wave 2 was:
 > 2a — Activity tab + status strip, compact results, queue density, scan
 > progress, the last modal gone.
 > 2b — the height compaction (intake chip, analysis-card disclosure, chooser
@@ -14,14 +19,33 @@
 
 | where | what |
 |---|---|
-| `main` | wave 1 and everything before it, pushed. Untouched by this work. |
-| **`ui-v3-wave2a`** | waves 2a **and** 2b, **unmerged, waiting for review** |
+| `main` | everything through **UI v3 wave 2**, merged 2026-08-07 |
+| **`ui-v3-wave3`** | **wave 3a — unmerged, waiting for review** |
 
 ```bash
-git checkout main && git merge --no-ff ui-v3-wave2a
+git checkout main && git merge --no-ff ui-v3-wave3
 ```
 
-**373 tests: 372 pass + 1 strict-xfail.** Baseline two sessions ago was 324.
+**390 tests: 389 pass + 1 strict-xfail.** Baseline three sessions ago was 324.
+
+### What wave 3a shipped
+
+`engine.verify_archive()` — the D9 publish gate, made public. `excmp verify`,
+`excmp hash`, and a **Verify only** button on the Extract tab. A verify is a
+queued job, not a modal, because at 721 MB it is a 34-second full restore.
+
+**The rule it ships with: verification is a real restore of every byte
+compared against the ledger — never a container self-test.** `7z t` checks
+only the last stage's framing, which is exactly how srep64.exe once passed an
+archive it had corrupted. `_verify_before_publish` now *calls* the public verb,
+and `test_the_publish_gate_and_the_verb_are_the_same_code` fails if they ever
+drift — because if the button and the gate mean different things, one is a lie.
+
+Measured: one byte XORed with 0xFF inside a `stored/` entry of a 721 MB
+archive (same length, zip CRC rewritten, so `7z t` passes it) → exit 1, names
+the file. **A failing verify is slower than a passing one** (49.8s vs 34.4s):
+it must restore everything before it can prove the mismatch. Do not let anyone
+"optimise" that away.
 
 `excmp/` is unchanged by wave 2b — the whole wave is `gui/`, `assets/` and
 tests, so the compression path provably did not move.
@@ -57,16 +81,11 @@ than quietly forgotten. That mechanism works; keep using it.
    (Precomp's gain is unknowable until it runs). Inlining the range needs
    ~210px in a 178px column. The extra height is where the honesty lives.
 
-## 4. The actual next job: UI wave 3 — expose the engine
+## 4. The actual next job: UI wave 3b
 
-research/23 §5 is the inventory, and it is the direct answer to "looks cheap":
-the engine already does all of this and the UI hides it. In rough value order:
+research/23 §5 is the inventory. Wave 3a took the top item; the rest, in value
+order:
 
-- **Verify button + `excmp verify`** (S) — `_verify_before_publish` already does
-  a full restore + per-file SHA-256 (`excmp/engine.py`, `excmp/verify.py`);
-  `SevenZipStage.test` exists and is never called from the GUI. Highest
-  credibility-per-line in the whole inventory: verification *is* the brand, yet
-  today it only ever happens implicitly.
 - **G1 foreign-archive extract** (S) — `extract()` already shells `7z x` on any
   path; the Extract tab filter is `*.excmp` only. Widen it, and label it
   honestly: no SHA-256 ledger, verification limited to `7z t`.
@@ -75,8 +94,10 @@ the engine already does all of this and the UI hides it. In rough value order:
   route, and *why stored*. Richer columns than 7-Zip can render.
 - **`.sha256` sidecar (G6)** (S) — publish is a single atomic `replace`;
   hashing the container there is ~10 lines.
-- **`excmp hash` (G8)**, **Copy-as-command** (both S) — `hash_file` exists; the
-  full CLI already exists.
+- **`.sha256` sidecar (G6)** (S) — publish is a single atomic `replace`, so
+  hashing the container there is ~10 lines. Decide opt-in vs default: it is
+  the QuickSFV/fitgirl transport habit, but it does put a second file beside
+  the archive. (`excmp hash` and Copy-as-command are already done.)
 - **I1 Settings tab** (M) — CommunityToolkit SettingsCard geometry: 68px rows,
   16px padding, 20px icon, wrap below 476px.
 - **Level/dict knobs + RAM column + Parameters line** (M) — needs plumbing

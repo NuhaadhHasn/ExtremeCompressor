@@ -508,7 +508,7 @@ claim was false by its own tables.**
 **Wave 2a SHIPPED 2026-08-06** (W2-1, W2-3, W2-7, W2-8, W2-9).
 **Wave 2b SHIPPED 2026-08-07** (W2-4, W2-5, W2-6, W2-10, plus the three
 compaction items no numbered item owned). Populated Compress page
-**869 → 748 → 446px**; the empty page fits 150 % scaling for the first time.
+**869 → 748 → 415px**; the empty page fits 150 % scaling for the first time.
 The ≤300px target is **not** reached and cannot be — see correction 6.
 
 | # | What | Files | Effort | Verify |
@@ -562,7 +562,7 @@ The ≤300px target is **not** reached and cannot be — see correction 6.
    wins.** Four profile rows at the Windows touch minimum are 128px on their
    own; §2.4 budgeted the entire chooser — rows, title, column header, margins
    and gaps — at 172px. With every item compacted the populated page floors at
-   **446px**, and the missing 146px only exists in things the product has
+   **415px**, and the missing 115px only exists in things the product has
    decided to keep: four comparable rows, an always-visible analysis card, and
    the touch floor. The assertion stays as a `strict=True` xfail so re-opening
    it is a deliberate act. The arithmetic is in
@@ -576,6 +576,13 @@ The ≤300px target is **not** reached and cannot be — see correction 6.
    appended `row.caveat` to its accessible sentence only in placeholder mode,
    so a screen-reader user stopped being told that Insane degrades to Extreme
    the moment analysis finished. Found by the elision test, not by an audit.
+9. **The chooser advertised "100 % or better".** A Precomp ceiling that rounds
+   to 100 % promised an archive of zero bytes or smaller — the single most
+   over-promising sentence the app has ever rendered, in the one panel whose
+   job is not to over-promise. Capped at 99 % in the wording only. Found by a
+   12-surface × 2-theme screenshot sweep, not by 371 passing tests, which is
+   the durable lesson: **tests pin behaviour, rendering pins appearance, and a
+   UI wave needs both before it is done.**
 
 ### Wave 3 — expose the engine + Settings (the "looks cheap" payload, §5)
 

@@ -21,7 +21,7 @@
 git checkout main && git merge --no-ff ui-v3-wave2a
 ```
 
-**372 tests: 371 pass + 1 strict-xfail.** Baseline two sessions ago was 324.
+**373 tests: 372 pass + 1 strict-xfail.** Baseline two sessions ago was 324.
 
 `excmp/` is unchanged by wave 2b — the whole wave is `gui/`, `assets/` and
 tests, so the compression path provably did not move.
@@ -34,7 +34,7 @@ Populated Compress page at 910×512 (1366×768 @ 150 %), real fonts:
 |---|---|
 | before wave 2a | **869** |
 | after 2a (queue + results moved to Activity) | **748** |
-| after 2b (compaction) | **446** |
+| after 2b (compaction + QA pass) | **415** |
 
 The **empty** Compress page now fits a 150 %-scaled display with zero scroll —
 the first time in the project's history. That gate was a strict xfail at the
@@ -47,7 +47,7 @@ than quietly forgotten. That mechanism works; keep using it.
 1. **research/23 §2.4's ≤300px budget is unreachable, and §3.3 wins.** Four
    profile rows at the Windows 32px touch floor are 128px on their own; §2.4
    budgeted the whole chooser at 172px. With everything compacted the page
-   floors at **446px**, and the missing 146px only exists in things the product
+   floors at **415px**, and the missing 115px only exists in things the product
    has decided to keep: four comparable rows, an always-visible analysis card,
    the touch floor. The ≤300 assertion stays in `test_gui_fit.py` as a
    `strict=True` xfail. **Do not "fix" it by shrinking controls below 32px.**
@@ -85,6 +85,32 @@ the engine already does all of this and the UI hides it. In rough value order:
 The Settings tab is also the natural home for the tools inventory that the
 status strip elides at narrow widths.
 
+## 4b. Run the QA sweep before calling a UI phase done
+
+`tools/qa_sweep.py` renders **12 surfaces x 2 themes** offscreen with real
+fonts - including the ones no test and no README screenshot ever touches: the
+banner, the Extract tab, the expanded pending list, a failed-job results panel,
+the Advanced panel, About, and everything-disclosed-at-once.
+
+```bash
+.venv\Scripts\python.exe tools\qa_sweep.py --out .qa
+```
+
+It exists because wave 2 shipped four visual defects past a fully green suite,
+and every single one was found by rendering a surface and looking at it:
+
+| defect | how it read on screen |
+|---|---|
+| progress bars filled their cell | a 55px slab of flat colour, not a bar |
+| tinted glyphs used `$muted` | three near-invisible ghosts beside one green flame |
+| chooser cells hard-clipped | "zpaqfranz missing - runs as E:" - looks like a bug |
+| `fmt_percent` rounded 99.6 to 100 | **"100% or better"** - an archive of zero bytes |
+
+That last one is the one to remember. It was the most over-promising sentence
+the app has ever rendered, in the one panel whose entire job is not to
+over-promise, and 371 passing tests had nothing to say about it. **Tests pin
+behaviour; rendering pins appearance. A UI phase needs both.**
+
 ## 5. Findings worth not rediscovering
 
 1. **`QT_QPA_FONTDIR` in `tests/conftest.py` is load-bearing.** Qt's offscreen
@@ -105,14 +131,18 @@ status strip elides at narrow widths.
    mode, so a screen-reader user was never told that Insane degrades to
    Extreme. Fixed. Found by a test written for something else entirely; worth
    remembering that the accessible strings need their own assertions.
-5. **Tinted SVGs need `$text`, not `$muted`.** A muted glyph on `$surface` in
+5. **A rounded percentage can become a lie.** `fmt_percent(0.996)` is "100%",
+   and "100% or better" promises a zero-byte archive. `gui.suggest._saved_words`
+   caps the *wording* at 99% and leaves the estimator's number untouched.
+   Anywhere a percentage is rendered near a superlative, check the rounding.
+6. **Tinted SVGs need `$text`, not `$muted`.** A muted glyph on `$surface` in
    dark mode is very nearly invisible — the first icon render was three ghosts
    beside one green flame, worse than the emoji it replaced.
-6. **"Fill the host" and "size to your hint" are contradictory**, which is why
+7. **"Fill the host" and "size to your hint" are contradictory**, which is why
    the Activity page is deliberately not a `QScrollArea`.
-7. **Grep is the wrong tool for "no modals left"** — the comments explaining
+8. **Grep is the wrong tool for "no modals left"** — the comments explaining
    why the modals went name `QMessageBox`. The test tokenises.
-8. Word-wrapping QLabels poison QScrollArea sizing; the chooser's
+9. Word-wrapping QLabels poison QScrollArea sizing; the chooser's
    `window.presets` / `window.compare_table` alias must not be "cleaned up".
 
 ## 6. Two warts spotted, still deliberately not fixed

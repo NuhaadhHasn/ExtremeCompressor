@@ -8,7 +8,7 @@ was sliced mid-word, or that the chooser was advertising "100% or better" - an
 archive of zero bytes or smaller. Every one of those shipped past a green
 suite during UI wave 2 and was caught by looking at a PNG.
 
-So: 14 surfaces x 2 themes, including the ones no test and no README
+So: 16 surfaces x 2 themes, including the ones no test and no README
 screenshot ever renders - the banner, the Extract tab, the expanded pending
 list, a failed-job results panel, everything-disclosed-at-once. Cheap to run,
 and the only thing that has ever caught this class of defect here.
@@ -91,6 +91,10 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     win.show()
     settle(250)
 
+    # I4's first-run notice is showing on a fresh profile.
+    shot(win, out, f"{theme}-00-first-run")
+    win.banner.hide_banner()
+
     shot(win, out, f"{theme}-01-compress-empty")
 
     win.drop_zone._set_active(True)
@@ -133,6 +137,9 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     win.extract_tab.contents_toggle.setChecked(False)
     win.extract_tab.set_archive(_ARCHIVES["theirs"])
     shot(win, out, f"{theme}-07b-extract-foreign")
+
+    win.tabs.setCurrentWidget(win.settings_tab)
+    shot(win, out, f"{theme}-07c-settings")
 
     win.tabs.setCurrentWidget(win.activity_page)
     shot(win, out, f"{theme}-08-activity-empty")
@@ -183,7 +190,7 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     shot(win, out, f"{theme}-12-activity-failed")
 
     win.queue.shutdown()
-    print(f"  {theme}: 14 surfaces")
+    print(f"  {theme}: 16 surfaces")
 
 
 def main() -> int:

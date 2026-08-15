@@ -59,7 +59,7 @@ class AdvancedPanel(QFrame):
         self.threads = QSpinBox(self)
         self.threads.setRange(0, max(2, cores * 4))
         self.threads.setValue(0)
-        self.threads.setSpecialValueText(self.tr("auto (%d cores)") % cores)
+        self.threads.setSpecialValueText(self.tr("auto (%d available)") % cores)
         self.threads.setAccessibleName(self.tr("Worker threads"))
         self.threads.setToolTip(self.tr(
             "0 lets each tool pick. Lower it to keep the machine usable "
@@ -81,9 +81,10 @@ class AdvancedPanel(QFrame):
         out_browse.setAccessibleDescription(self.tr("Choose the output folder"))
         out_browse.clicked.connect(self._pick_output)
 
-        self.tray_toggle = QCheckBox(self.tr("Minimize to the system tray while running"), self)
-        self.notify_toggle = QCheckBox(self.tr("Show a notification when a job finishes"), self)
-        self.notify_toggle.setChecked(True)
+        # Notifications and the tray moved to Settings in wave 3c. Advanced is
+        # for *per-job overrides* - threads, temp folder, where this archive
+        # goes. "Do you want a toast when jobs finish" is an app preference and
+        # was being asked in two places, only one of which was remembered.
 
         grid.addWidget(QLabel(self.tr("Threads"), self), 0, 0)
         grid.addWidget(self.threads, 0, 1, 1, 2)
@@ -93,8 +94,6 @@ class AdvancedPanel(QFrame):
         grid.addWidget(QLabel(self.tr("Output folder"), self), 2, 0)
         grid.addWidget(self.output_dir, 2, 1)
         grid.addWidget(out_browse, 2, 2)
-        grid.addWidget(self.tray_toggle, 3, 1, 1, 2)
-        grid.addWidget(self.notify_toggle, 4, 1, 1, 2)
         grid.setColumnStretch(1, 1)
 
     def _pick_temp(self) -> None:

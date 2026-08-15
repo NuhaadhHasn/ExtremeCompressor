@@ -271,7 +271,35 @@ class ExtractTab(QWidget):
         self.contents.clear()
         self.archive_edit.setText(str(path))
         if not self.dest_edit.text():
-            self.dest_edit.setText(str(Path(path).with_suffix("")))
+            self.dest_edit.setText(str(self._suggest_destination(Path(path))))
+
+    @staticmethod
+    def _suggest_destination(archive: Path) -> Path:
+        """Ark's autosubfolder rule, which our manifest can answer exactly.
+
+        If everything in the archive already lives under a single top-level
+        folder, extracting *beside* the archive is right - inventing another
+        folder produces `bundle/src/...`, a wrapper nobody asked for. If the
+        archive has several things at the top level, they would spray across
+        the destination, so they get a folder named after the archive.
+
+        Other archivers guess at this from a listing; here it is a set
+        comprehension over the ledger. A foreign archive has no ledger, so it
+        takes the safe branch.
+        """
+        from excmp.engine import list_archive
+
+        try:
+            listing = list_archive(archive)
+        except Exception:                                    # noqa: BLE001
+            return archive.with_suffix("")
+        tops = {name.split("/", 1)[0] for name in
+                (e.name.replace("\\", "/") for e in listing.entries)}
+        # One top-level name, and it is a folder (something lives under it).
+        nested = any("/" in e.name.replace("\\", "/") for e in listing.entries)
+        if len(tops) == 1 and nested:
+            return archive.parent
+        return archive.with_suffix("")
 
     # -- progress reporting ------------------------------------------------
     def set_running(self, percent: float, eta: float | None) -> None:

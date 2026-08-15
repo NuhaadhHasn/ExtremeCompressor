@@ -59,7 +59,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
     ctx.progress_cb = show
     out = Path(args.output)
     result = engine.compress([Path(p) for p in args.inputs], out,
-                             Profile(args.profile), ctx)
+                             Profile(args.profile), ctx, sidecar=args.sha256)
     if not args.json:
         print()
     payload = {
@@ -70,6 +70,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
         "saved_percent": round((1 - result.ratio) * 100, 2),
         "elapsed_s": round(result.elapsed_s, 1),
         "warnings": result.warnings,
+        "sidecar": str(result.sidecar) if result.sidecar else None,
     }
     if args.json:
         print(json.dumps(payload, indent=2))
@@ -79,6 +80,9 @@ def cmd_compress(args: argparse.Namespace) -> int:
         for r in result.routes:
             if r["action"] == "store":
                 print(f"note: {len(r['files'])} file(s) stored losslessly - {r['reason']}")
+        if result.sidecar is not None:
+            print(f"wrote {result.sidecar.name} - check it anywhere with "
+                  f"`sha256sum -c {result.sidecar.name}`")
         for w in result.warnings:
             print(f"warning: {w}")
     return 0
@@ -218,6 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=[pr.value for pr in Profile])
     pc.add_argument("--temp", default=default_tmp)
     pc.add_argument("--json", action="store_true")
+    pc.add_argument("--sha256", action="store_true",
+                    help="also write <archive>.sha256 so a recipient can check "
+                         "the transfer with sha256sum -c")
     pc.set_defaults(func=cmd_compress)
 
     px = sub.add_parser("extract", help="extract an .excmp (verified) or any "

@@ -192,6 +192,10 @@ class CompressResult:
     routes: list[dict]
     warnings: list[str]
     elapsed_s: float
+    # Path to the `.sha256` written beside the archive, or None. Opt-in: a
+    # second file nobody asked for beside every archive is exactly the kind of
+    # surprise output this engine has refused since its first commit.
+    sidecar: Path | None = None
 
     @property
     def ratio(self) -> float:
@@ -268,8 +272,24 @@ def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str]]:
     return infos, relmap
 
 
+def _write_sidecar(archive: Path) -> Path:
+    """`<archive>.sha256` in ``sha256sum`` layout (G6).
+
+    Hashed AFTER the atomic rename, so it describes the file that actually
+    shipped rather than the `.tmp` twin that existed a moment earlier. The
+    body names the archive by *file name*, not full path: `sha256sum -c`
+    resolves relative to the working directory, and an absolute path would
+    break the moment the pair is moved - which is the only situation a
+    transport sidecar exists for.
+    """
+    side = Path(str(archive) + ".sha256")
+    side.write_text(f"{hash_file(archive)}  {archive.name}\n", encoding="utf-8")
+    return side
+
+
 def compress(inputs: list[Path], out_path: Path, profile: Profile,
-             ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None) -> CompressResult:
+             ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None,
+             sidecar: bool = False) -> CompressResult:
     t0 = time.monotonic()
     tools = tools if tools is not None else find_tools(with_versions=True)
     out_path = Path(out_path)
@@ -370,9 +390,14 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         if tmp_out is not None and tmp_out.exists():
             tmp_out.unlink(missing_ok=True)
 
+    # Only now that the archive is published and verified - a sidecar for an
+    # archive that does not exist is worse than no sidecar.
+    side = _write_sidecar(out_path) if sidecar else None
+
     orig = sum(m["size"] for m in ledger.values())
     return CompressResult(
         archive=out_path,
+        sidecar=side,
         orig_bytes=orig,
         final_bytes=out_path.stat().st_size,
         routes=manifest.routes,

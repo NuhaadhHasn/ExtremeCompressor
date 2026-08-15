@@ -66,6 +66,11 @@ class Job:
     final_bytes: int = 0
     elapsed_s: float = 0.0
 
+    # G6: write <archive>.sha256 beside the output. Opt-in, carried on the
+    # job so the preference at commit time is what runs, even if the user
+    # changes it while the job waits in the queue.
+    sidecar: bool = False
+
     summary: AnalysisSummary | None = None
     result: object | None = None      # CompressResult | ExtractResult
     error: str = ""

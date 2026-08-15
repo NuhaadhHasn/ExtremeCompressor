@@ -43,6 +43,7 @@ from .widgets.extract_tab import ExtractTab
 from .widgets.preset_cards import AdvancedPanel, AdvancedToggle
 from .widgets.queue_table import QueueTable
 from .widgets.results import ResultsPanel
+from .widgets.settings_tab import SettingsTab
 from .winintegration import (TBPF_ERROR, TBPF_PAUSED, Notifier, TaskbarProgress,
                              open_in_explorer, set_dark_titlebar)
 
@@ -97,9 +98,13 @@ class MainWindow(QMainWindow):
 
     analysisFinished = Signal()   # for tests and the screenshot script
 
-    def __init__(self, theme: str = "dark") -> None:
+    def __init__(self, theme: str | None = None) -> None:
         super().__init__()
-        self.theme_name = theme
+        # Remembered across launches (I1). An explicit argument still wins, so
+        # tools/shots.py and the tests can pin a theme.
+        stored = QSettings().value("settings/theme")
+        self.theme_name = theme or (str(stored) if stored in ("dark", "light")
+                                    else "dark")
         self.setWindowTitle(self.tr("ExtremeCompressor"))
         self._restore_geometry()
 
@@ -126,6 +131,24 @@ class MainWindow(QMainWindow):
         self._wire()
         self._apply_theme()
         self._refresh_actions()
+        self._maybe_first_run()
+
+    def _maybe_first_run(self) -> None:
+        """I4, on W2-9's Banner: say what this app will and will not do to
+        your files, once. A notice repeated every launch is a notice nobody
+        reads, and this one is a promise rather than a tip."""
+        settings = QSettings()
+        if settings.value("settings/seen_first_run"):
+            return
+        settings.setValue("settings/seen_first_run", True)
+        self.banner.show_message(
+            self.tr("Your originals are never modified — archives are written "
+                    "to a temporary file and only renamed into place once a "
+                    "full restore has verified every SHA-256. Anything that "
+                    "cannot shrink is stored byte-for-byte, and the app tells "
+                    "you why."),
+            tone="info",
+            actions=[(self.tr("Got it"), self.banner.hide_banner)])
 
     # -- geometry (W1-1: the app's first persisted state) --------------------
     def _restore_geometry(self) -> None:
@@ -189,6 +212,12 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.extract_tab, self.tr("Extract"))
 
         self._build_activity_tab()
+
+        # I1: every persisted preference, plus the tool inventory the status
+        # strip has to elide at narrow widths.
+        self.settings_tab = SettingsTab(self.tools, DEFAULT_TEMP, self)
+        self.settings_tab.load()
+        self.tabs.addTab(self.settings_tab, self.tr("Settings"))
 
         # The window shell (W1-2): the action bar carrying the commit button
         # and the resolved destination NEVER scrolls - it sits between the tab
@@ -543,6 +572,7 @@ class MainWindow(QMainWindow):
 
     def toggle_theme(self) -> None:
         self.theme_name = "light" if self.theme_name == "dark" else "dark"
+        QSettings().setValue("settings/theme", self.theme_name)
         self._apply_theme()
 
     # -- intake ------------------------------------------------------------
@@ -696,12 +726,17 @@ class MainWindow(QMainWindow):
         if not self._pending:
             return
         inputs = list(self._pending)
+        # Advanced (per-job) wins over Settings (the remembered default), so a
+        # one-off override does not silently rewrite the preference.
         self.queue.temp_dir = Path(self.advanced_panel.temp_dir.text().strip('" ')
+                                   or self.settings_tab.temp_dir.text().strip('" ')
                                    or DEFAULT_TEMP)
-        self.queue.threads = self.advanced_panel.threads.value()
+        self.queue.threads = (self.advanced_panel.threads.value()
+                              or self.settings_tab.threads.value())
         self.results.hide_panel()
         self.queue.add_compress(inputs, self._output_path_for(inputs),
-                                self.presets.current_profile(), self._summary)
+                                self.presets.current_profile(), self._summary,
+                                sidecar=self.settings_tab.sidecar_toggle.isChecked())
         self._pending = []
         self.analysis_card.clear()
         self.compare_table.clear()
@@ -807,6 +842,10 @@ class MainWindow(QMainWindow):
         if job.kind is JobKind.EXTRACT:
             self.extract_tab.set_finished(getattr(result, "files_restored", 0),
                                           getattr(result, "verified", 0))
+            # Off by default (I1): opening Explorer unasked steals focus from
+            # whatever the user moved on to during a long restore.
+            if self.settings_tab.open_after_extract.isChecked():
+                open_in_explorer(job.out_path)
         else:
             self._notify_done(job)
         self._refresh_actions()
@@ -841,7 +880,7 @@ class MainWindow(QMainWindow):
             self._taskbar = TaskbarProgress(int(self.winId()))
 
     def _notify_done(self, job: Job) -> None:
-        if not self.advanced_panel.notify_toggle.isChecked():
+        if not self.settings_tab.notify_toggle.isChecked():
             return
         title = self.tr("Compression finished")
         body = self.tr("%s: saved %s (%d%%)") % (
@@ -953,7 +992,7 @@ class MainWindow(QMainWindow):
     # -- lifecycle ---------------------------------------------------------
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         # setWindowTitle() fires this from inside __init__, before _build_ui.
-        panel = getattr(self, "advanced_panel", None)
+        panel = getattr(self, "settings_tab", None)
         if (panel is not None and panel.tray_toggle.isChecked()
                 and event.type() == event.Type.WindowStateChange
                 and self.isMinimized() and self.queue.is_busy):
@@ -987,6 +1026,7 @@ class MainWindow(QMainWindow):
                 closable=False)
             event.ignore()
             return
+        self.settings_tab.save()
         QSettings().setValue("window/geometry", self.saveGeometry())
         self.queue.shutdown()
         if self._taskbar is not None:

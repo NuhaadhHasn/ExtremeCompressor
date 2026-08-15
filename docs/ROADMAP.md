@@ -1,16 +1,19 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-08-06**. Engine core, Phase A (GUI), Phase D0 (security
+> Status date: **2026-08-07**. Engine core, Phase A (GUI), Phase D0 (security
 > hotfix), **Phase J part 1** (estimates before compressing, scored on two real
 > corpora), **B11 + D9** (SREP-free chains; nothing publishes without a fully
 > verified restore), and **UI v3 wave 1** (all 13 items of
 > [research/23](research/23-ui-v3-redesign.md) §7 — screen fit, one merged
 > chooser, fixed action bar, action registry, WCAG fixes, the 1366×768
 > regression gate) are **DONE and merged to `main`**.
-> **UI v3 wave 2a** (Activity tab, compact results, queue density, scan
-> progress, the last modal gone) is **done on a branch**. **346 tests**
-> (344 pass + 2 strict-xfail height targets).
-> **Next up: UI wave 2b (research/23 §7), then J5-J7, then G1-G2.**
+> **UI v3 wave 2 is complete** — 2a (Activity tab, compact results, queue
+> density, scan progress, the last modal gone) and 2b (the height compaction,
+> token sweep, Fluent SVG icons, dark title bar, pending-items list), both
+> **on one branch awaiting review**. **372 tests** (371 pass + 1 strict-xfail
+> height target that research/23 §2.4 and §3.3 make unreachable).
+> **Next up: UI wave 3 (expose the engine — research/23 §5), then J5-J7,
+> then G1-G2.**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -788,7 +791,7 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 | ~~3a~~ | ~~J1-J4 + J8 (estimator + comparison table + preflight + backtest)~~ | ✅ done | estimates are live and scored against two real corpora |
 | ~~UI-1~~ | ~~UI v3 wave 1 (screen fit, merged chooser, action bar, registry, WCAG, fit gate)~~ | ✅ done, merged | all 13 items of research/23 §7; the 1366×768 gate pins the fix |
 | ~~UI-2a~~ | ~~UI v3 wave 2a (Activity tab + status strip, compact results, queue density, scan progress, Banner/I9)~~ | ✅ done, on a branch | W2-1/3/7/8/9. Populated Compress page 869→748px, last `QMessageBox` gone, scan silence 4.7s→0.3s on the real HDD tree. Also fixed the tests' missing `QT_QPA_FONTDIR` — every prior height gate had been measuring tofu |
-| **UI-2b** | **UI v3 wave 2b (the ≤300px compaction, token sweep, SVG icons, dark title bar, pending-items list)** | **1-2 sessions** | **W2-4/5/6/10 + the three compaction items no W2 number owned: intake chip, analysis-card collapse, chooser diet. Two strict-xfail gates in test_gui_fit.py fail the suite the moment this lands, so it cannot be forgotten** |
+| ~~UI-2b~~ | ~~UI v3 wave 2b (compaction, token sweep, Fluent SVG icons, dark title bar, pending-items list)~~ | ✅ done, on a branch | W2-4/5/6/10 + intake chip, analysis-card collapse, chooser diet. Populated page 748→446px; the empty page fits 150% for the first time. ≤300px is unreachable without dropping a profile row, the analysis card, or the 32px touch floor — recorded as a strict xfail, not silently dropped |
 | **3b** | **J5-J7 (per-type memory, long-job confirm, self-calibration)** | **1 session** | **finishes Phase J; J7 is what turns a cold-start prior into estimates that fit this machine** |
 | ~~4~~ | ~~B11 + D9 (drop SREP; make the self-test replay the chain)~~ | ✅ done | the chain is SREP-free and nothing publishes without a verified restore — four clean Extreme round-trips on real corpora |
 | 5 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |

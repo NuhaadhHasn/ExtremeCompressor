@@ -79,7 +79,9 @@ CONTROL_HEIGHT = 32
 # vertical margins are VGAP (the 150%-scaling height budget in research/23
 # section 2.4 depends on that split).
 GUTTER = 20
-VGAP = 12
+# 8, not 12: page top/bottom margins are pure chrome and the 150% budget
+# counts every one of them. Horizontal breathing room (GUTTER) is unchanged.
+VGAP = 8
 GAP_BLOCK = 12
 GAP_INTRA = 8
 # 4px: the tightest step on the grid, for dense panels where the gaps
@@ -128,6 +130,9 @@ QLabel#Hero {
 QLabel#HeroSub  { font-size: 12pt; color: $muted; }
 QLabel#Title    { font-size: 13pt; font-weight: 600; }
 QLabel#Subtitle { font-size: 10pt; color: $muted; }
+/* Chooser cell sub-lines (ranges, caveats). 9pt is the caption step and the
+   12px legibility floor - regular weight, never lighter. */
+QLabel#CellSub  { font-size: 9pt; color: $muted; }
 QLabel#Muted    { color: $muted; }
 QLabel#Mono {
     font-family: "Cascadia Mono", Consolas, monospace;
@@ -143,6 +148,7 @@ QLabel[tone="danger"] { color: $danger; }
    silently falls back to muted grey. Pinned by test_gui_theme.py. */
 QLabel#Hero[tone="ok"],     QLabel#Subtitle[tone="ok"]     { color: $ok; }
 QLabel#Hero[tone="warn"],   QLabel#Subtitle[tone="warn"]   { color: $warn; }
+QLabel#CellSub[tone="warn"] { color: $warn; }
 QLabel#Hero[tone="danger"], QLabel#Subtitle[tone="danger"] { color: $danger; }
 
 /* ---- drop zone ------------------------------------------------------- */

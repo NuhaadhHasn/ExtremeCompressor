@@ -581,6 +581,7 @@ class MainWindow(QMainWindow):
             item.setToolTip(str(path))
         total = self._summary.total_bytes if self._summary is not None else 0
         self.drop_zone.set_pending(len(self._pending), total)
+        self.drop_zone.fit_pending_list()
 
     def remove_selected_pending(self) -> None:
         """Drop one item and re-plan from the FileInfo list already in memory.

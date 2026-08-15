@@ -83,11 +83,13 @@ def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size):
 # really 748px.
 #
 # Wave 2a (Activity tab) took the populated page 869 -> 748px. Wave 2b's
-# compaction took it 748 -> 444px:
+# compaction took it 748 -> 415px:
 #
 #   drop zone  116 ->  40   intake chip once files are in
 #   analysis   200 ->  99   details behind a disclosure
-#   chooser    401 -> 257   (i) disclosure, 4px gaps, no duplicate caption
+#   chooser    401 -> 236   (i) disclosure merged onto the column-header strip,
+#                           no "Pick a profile" heading restating that strip,
+#                           4px gaps, no caption duplicating the disclosure
 #
 # The EMPTY page now fits 150% scaling, which it never has before - that gate
 # is parametrized above and is no longer an aspiration.
@@ -99,12 +101,12 @@ def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size):
 #     intake chip                 40   (32px touch floor + border + margins)
 #     analysis card               99   (headline + bar + gain note; the rest
 #                                       is already behind Details)
-#     chooser                    257   (4 rows = 168 of it)
-#     page margins + 2 gaps       48
+#     chooser                    236   (4 rows = 168 of it)
+#     page margins + 2 gaps       40
 #                              -----
-#                                444
+#                                415
 #
-# Reaching 300 means cutting 144px, and there are only three places to get
+# Reaching 300 means cutting 115px, and there are only three places to get
 # it: show two profile rows instead of four (-84, but comparing four IS the
 # chooser), collapse the analysis card entirely (-99, that card is why the
 # app exists), or take rows below the 32px touch floor W2-4 just adopted from
@@ -113,7 +115,7 @@ def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size):
 # so re-opening it is a deliberate act.
 # ---------------------------------------------------------------------------
 
-POPULATED_PAGE_MEASURED = 450     # 2026-08-07, real fonts, after wave 2b (444)
+POPULATED_PAGE_MEASURED = 420     # 2026-08-07, real fonts, after the QA pass (415)
 POPULATED_PAGE_TARGET = 300       # research/23 §2.4
 
 
@@ -137,11 +139,11 @@ def test_the_populated_compress_page_never_grows_again(window, qtbot, tmp_path):
     height = page.sizeHint().height()
     assert height <= POPULATED_PAGE_MEASURED, (
         f"populated Compress page grew to {height}px "
-        f"(was {POPULATED_PAGE_MEASURED}px after wave 2a)")
+        f"(ceiling {POPULATED_PAGE_MEASURED}px; it measured 415 on 2026-08-07)")
 
 
 @pytest.mark.xfail(strict=True, reason=(
-    "444px after wave 2b's compaction. The remaining 144px only exists in "
+    "415px after wave 2b's compaction. The remaining 115px only exists in "
     "places the product has decided to keep: four comparable profile rows, "
     "an always-visible analysis card, and the 32px touch floor. See the "
     "arithmetic above - §2.4 and §3.3 of research/23 contradict each other, "

@@ -114,7 +114,7 @@ def _cell(text: str, sub: str = "", parent: QWidget | None = None,
 
     if sub:
         note = _ElidingLabel(sub, holder)
-        note.setObjectName("Subtitle")
+        note.setObjectName("CellSub")
         box.addWidget(note)
     holder.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
     return holder
@@ -310,22 +310,19 @@ class CompareTable(QFrame):
         # rows carry their own 2px borders, which reads as separation already.
         self._column.setSpacing(GAP_TIGHT)
 
-        head_row = QHBoxLayout()
-        head_row.setSpacing(GAP_INTRA)
-        title = QLabel(self.tr("Pick a profile"), self)
-        title.setObjectName("Title")
-        head_row.addWidget(title)
-        head_row.addStretch(1)
-        # W1-13 specified this as a "click-to-toggle (i) disclosure, not a
-        # tooltip - keyboard users and screenshots lose tooltips". It shipped
-        # as a permanently visible 68px paragraph instead; this is the missing
-        # half. A real focusable button, so the keyboard path is identical.
+        # No "Pick a profile" title, and no row of its own for the disclosure:
+        # the column header immediately below reads "Profile | What runs |
+        # Estimated size | Saved | Estimated time", which says everything a
+        # heading would, and the (i) toggle rides on that same strip. Two rows
+        # that each restated the table cost 56px this page cannot spare.
+        #
+        # W1-13 specified the disclosure as "click-to-toggle, not a tooltip -
+        # keyboard users and screenshots lose tooltips". It shipped as a
+        # permanently visible 68px paragraph instead; this is the missing half.
         self.info_toggle = QPushButton(self.tr("ⓘ  How these are measured"), self)
         self.info_toggle.setObjectName("SectionToggle")
         self.info_toggle.setCheckable(True)
         self.info_toggle.toggled.connect(self._set_info_open)
-        head_row.addWidget(self.info_toggle)
-        self._column.addLayout(head_row)
 
         self._caption = QLabel("", self)
         self._caption.setObjectName("Subtitle")
@@ -342,7 +339,15 @@ class CompareTable(QFrame):
             label.setObjectName("Muted")
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
             head_line.addWidget(label, stretch)
-        self._column.addWidget(self._head)
+        # The header strip carries the column labels and the disclosure on one
+        # line; _head keeps its own column stretches so the labels stay aligned
+        # with the rows beneath.
+        header_strip = QHBoxLayout()
+        header_strip.setContentsMargins(0, 0, 0, 0)
+        header_strip.setSpacing(GAP_INTRA)
+        header_strip.addWidget(self._head, 1)
+        header_strip.addWidget(self.info_toggle)
+        self._column.addLayout(header_strip)
 
         self._rows: list[ProfileRow] = []
         self._footnote = QLabel(

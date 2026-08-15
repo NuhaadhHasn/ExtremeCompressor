@@ -152,7 +152,9 @@ class DropZone(QFrame):
         self.pending_list = QListWidget(self)
         self.pending_list.setObjectName("PendingList")
         self.pending_list.setAccessibleName(self.tr("Files waiting to be compressed"))
-        self.pending_list.setMaximumHeight(120)
+        # Sizes to its rows, capped at six. A fixed 120px box for three short
+        # filenames is most of a chip's worth of empty grey, and this list is
+        # disclosed *on demand* - it should cost what it contains.
         self.pending_list.setSizePolicy(QSizePolicy.Policy.Preferred,
                                         QSizePolicy.Policy.Maximum)
         self.pending_list.setVisible(False)
@@ -181,6 +183,21 @@ class DropZone(QFrame):
 
     def toggle_pending(self) -> None:
         self.pending_toggle.setChecked(not self.pending_toggle.isChecked())
+
+    _MAX_VISIBLE_ROWS = 6
+
+    def fit_pending_list(self) -> None:
+        """Height = rows on show, up to six, then it scrolls."""
+        rows = self.pending_list.count()
+        if not rows:
+            self.pending_list.setMaximumHeight(0)
+            return
+        row_height = self.pending_list.sizeHintForRow(0)
+        if row_height <= 0:
+            row_height = self.pending_list.fontMetrics().height() + 6
+        shown = min(rows, self._MAX_VISIBLE_ROWS)
+        frame = 2 * self.pending_list.frameWidth()
+        self.pending_list.setMaximumHeight(shown * row_height + frame + 4)
 
     def _on_pending_toggled(self, open_: bool) -> None:
         self.pending_list.setVisible(open_ and self._compact)

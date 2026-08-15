@@ -586,6 +586,24 @@ The ≤300px target is **not** reached and cannot be — see correction 6.
 
 ### Wave 3 — expose the engine + Settings (the "looks cheap" payload, §5)
 
+**Wave 3c SHIPPED 2026-08-07**, completing wave 3: the `.sha256` sidecar
+(**opt-in and remembered** — default-on would have been the QuickSFV
+convention, but a second file beside every archive is an output nobody asked
+for, and this engine has never written one), the I1 Settings tab with the
+first persisted preferences the app has ever had, Ark's autosubfolder
+heuristic answered exactly from the ledger rather than guessed, and I4's
+first-run notice on W2-9's Banner.
+
+Two things it corrected: Settings and Advanced both grew a "notify when a job
+finishes" checkbox, only one of which was read — so notifications and the tray
+left Advanced, which is now strictly *per-job overrides*. And the threads
+control read "auto (4 cores)" beside a description calling this a two-core
+laptop; `os.cpu_count()` reports logical processors.
+
+**Not done:** level/dictionary knobs + RAM column + Parameters line. That is
+engine plumbing (`_stage_factory` hard-codes defaults, `StageRecord.params` is
+always `{}`) rather than the glue the rest of §5 turned out to be.
+
 **Wave 3b SHIPPED 2026-08-07**: G1 foreign-archive extract and the I2-lite
 listing. `ExtractResult.ledger_backed` exists so the UI can never render a
 foreign restore in the verified restore's words — the first thing it caught

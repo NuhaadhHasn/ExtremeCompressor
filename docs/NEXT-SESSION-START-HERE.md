@@ -10,8 +10,6 @@
 > progress, the last modal gone.
 > 2b — the height compaction (intake chip, analysis-card disclosure, chooser
 > diet), token sweep, Fluent SVG icons, dark title bar, pending-items list.
-> All on one branch, **not merged**.
-> Next session: **UI wave 3 — expose the engine** (research/23 §5).
 
 ---
 
@@ -46,9 +44,6 @@ archive (same length, zip CRC rewritten, so `7z t` passes it) → exit 1, names
 the file. **A failing verify is slower than a passing one** (49.8s vs 34.4s):
 it must restore everything before it can prove the mismatch. Do not let anyone
 "optimise" that away.
-
-`excmp/` is unchanged by wave 2b — the whole wave is `gui/`, `assets/` and
-tests, so the compression path provably did not move.
 
 ## 2. The headline numbers
 
@@ -92,8 +87,6 @@ order:
 - **`.excmp` flat listing** (M, I2-lite) — `read_container`/`_read_manifest` is
   a free zip+JSON read; the ledger already carries relpath → size, SHA-256,
   route, and *why stored*. Richer columns than 7-Zip can render.
-- **`.sha256` sidecar (G6)** (S) — publish is a single atomic `replace`;
-  hashing the container there is ~10 lines.
 - **`.sha256` sidecar (G6)** (S) — publish is a single atomic `replace`, so
   hashing the container there is ~10 lines. Decide opt-in vs default: it is
   the QuickSFV/fitgirl transport habit, but it does put a second file beside
@@ -108,7 +101,7 @@ status strip elides at narrow widths.
 
 ## 4b. Run the QA sweep before calling a UI phase done
 
-`tools/qa_sweep.py` renders **12 surfaces x 2 themes** offscreen with real
+`tools/qa_sweep.py` renders **13 surfaces x 2 themes** offscreen with real
 fonts - including the ones no test and no README screenshot ever touches: the
 banner, the Extract tab, the expanded pending list, a failed-job results panel,
 the Advanced panel, About, and everything-disclosed-at-once.

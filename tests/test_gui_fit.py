@@ -61,8 +61,8 @@ def test_the_window_has_a_sane_minimum_so_scaling_cannot_trap_it(window):
 # W1-11: the fit regression gate. This class of bug shipped once already.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("size", [(1180, 721), (1092, 614)],
-                         ids=["1366x768@100%", "1366x768@125%"])
+@pytest.mark.parametrize("size", [(1180, 721), (1092, 614), (910, 512)],
+                         ids=["1366x768@100%", "1366x768@125%", "1366x768@150%"])
 def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size):
     """Before a single file is dropped there is nothing that can justify a
     scrollbar - yet at 125% the old layout overflowed even when empty."""
@@ -82,23 +82,38 @@ def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size):
 # wave 1 measuring tofu - the populated page reported 669px when it was
 # really 748px.
 #
-# Wave 2a (Activity tab) took the populated Compress page from 869px to
-# 748px by moving the queue and the results panel off it. research/23 §2.4's
-# real target is <=300px against a ~321px viewport at 150% scaling; the
-# remaining 448px needs three things that wave 2a does not own:
+# Wave 2a (Activity tab) took the populated page 869 -> 748px. Wave 2b's
+# compaction took it 748 -> 444px:
 #
-#   * the intake chip      - drop zone collapses to ~36px once files are in
-#   * the analysis card    - detail line folds into an expander (200 -> ~96)
-#   * the chooser diet     - 32px rows, footnote behind the (i) disclosure
-#                            W1-13 specified but never actually built (401 -> ~172)
+#   drop zone  116 ->  40   intake chip once files are in
+#   analysis   200 ->  99   details behind a disclosure
+#   chooser    401 -> 257   (i) disclosure, 4px gaps, no duplicate caption
 #
-# So there are two tests: a regression gate pinned at today's truth, which
-# can only ever go down, and a strict-xfail target that will FAIL the suite
-# the moment wave 2b makes it pass - which is the point. A target nobody is
-# forced to look at is a target that quietly expires.
+# The EMPTY page now fits 150% scaling, which it never has before - that gate
+# is parametrized above and is no longer an aspiration.
+#
+# The POPULATED page does not, and research/23 §2.4's <=300px target cannot be
+# reached without giving up something the product has decided to keep. The
+# arithmetic, with every item already at its compacted size:
+#
+#     intake chip                 40   (32px touch floor + border + margins)
+#     analysis card               99   (headline + bar + gain note; the rest
+#                                       is already behind Details)
+#     chooser                    257   (4 rows = 168 of it)
+#     page margins + 2 gaps       48
+#                              -----
+#                                444
+#
+# Reaching 300 means cutting 144px, and there are only three places to get
+# it: show two profile rows instead of four (-84, but comparing four IS the
+# chooser), collapse the analysis card entirely (-99, that card is why the
+# app exists), or take rows below the 32px touch floor W2-4 just adopted from
+# the Windows guidance. §2.4's budget and §3.3's control-height rule cannot
+# both hold. Recorded rather than fudged; the target stays as a strict xfail
+# so re-opening it is a deliberate act.
 # ---------------------------------------------------------------------------
 
-POPULATED_PAGE_MEASURED = 748     # 2026-08-06, real fonts, after wave 2a
+POPULATED_PAGE_MEASURED = 450     # 2026-08-07, real fonts, after wave 2b (444)
 POPULATED_PAGE_TARGET = 300       # research/23 §2.4
 
 
@@ -126,23 +141,15 @@ def test_the_populated_compress_page_never_grows_again(window, qtbot, tmp_path):
 
 
 @pytest.mark.xfail(strict=True, reason=(
-    "research/23 §2.4's <=300px budget needs wave 2b: the intake chip, the "
-    "analysis card's collapsible detail, and the chooser row diet. Delete "
-    "this xfail when they land - the assertion is already the real gate."))
+    "444px after wave 2b's compaction. The remaining 144px only exists in "
+    "places the product has decided to keep: four comparable profile rows, "
+    "an always-visible analysis card, and the 32px touch floor. See the "
+    "arithmetic above - §2.4 and §3.3 of research/23 contradict each other, "
+    "and this xfail is the record of that, not a to-do."))
 def test_the_populated_compress_page_meets_the_150_percent_budget(
         window, qtbot, tmp_path):
     page = _populate(window, qtbot, tmp_path)
     assert page.sizeHint().height() <= POPULATED_PAGE_TARGET
-
-
-@pytest.mark.xfail(strict=True, reason=(
-    "overflows by 35px at 150% with real fonts - the chooser's placeholder "
-    "rows and the drop zone are the whole of it (wave 2b)."))
-def test_the_empty_compress_page_needs_no_scrolling_at_150_percent(window, qtbot):
-    window.resize(910, 512)
-    window.show()
-    qtbot.waitExposed(window)
-    assert window._scroll.verticalScrollBar().maximum() == 0
 
 
 def test_the_page_fits_910_logical_pixels_of_width(window, qtbot):

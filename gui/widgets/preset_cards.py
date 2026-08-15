@@ -22,6 +22,12 @@ from ..theme import CARD_MARGINS
 
 
 # (profile, glyph, title, honest one-liner, tools it wants)
+#
+# W2-5: `glyph` is retained as the accessible-text fallback and for the CLI,
+# but the GUI no longer renders it - gui/icons.py paints a theme-tinted Fluent
+# SVG instead. Emoji rendered as Windows 10's 2016 flat set beside Windows
+# 11's Fluent set, could not follow the theme, and made a screen reader say
+# "high voltage Fast".
 PRESETS: list[tuple[Profile, str, str, str, tuple[str, ...]]] = [
     (Profile.FAST, "⚡", "Fast",
      "Zstandard, single pass. Seconds per gigabyte, modest ratio.", ()),

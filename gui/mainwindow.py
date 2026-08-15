@@ -17,10 +17,10 @@ from PySide6.QtCore import QRect, QSettings, Qt, QThreadPool, Signal
 from PySide6.QtGui import (QAction, QCloseEvent, QFontMetrics, QIcon,
                            QKeySequence, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QMainWindow, QMenu, QProgressBar,
-                               QPushButton, QScrollArea, QSizePolicy,
-                               QSystemTrayIcon, QTabWidget, QToolButton,
-                               QVBoxLayout, QWidget)
+                               QLineEdit, QListWidgetItem, QMainWindow, QMenu,
+                               QProgressBar, QPushButton, QScrollArea,
+                               QSizePolicy, QSystemTrayIcon, QTabWidget,
+                               QToolButton, QVBoxLayout, QWidget)
 
 from excmp import __version__
 from excmp.analyzer import FileInfo
@@ -44,7 +44,7 @@ from .widgets.preset_cards import AdvancedPanel, AdvancedToggle
 from .widgets.queue_table import QueueTable
 from .widgets.results import ResultsPanel
 from .winintegration import (TBPF_ERROR, TBPF_PAUSED, Notifier, TaskbarProgress,
-                             open_in_explorer)
+                             open_in_explorer, set_dark_titlebar)
 
 DEFAULT_TEMP = Path.home() / ".excmp" / "tmp"
 
@@ -62,6 +62,18 @@ def initial_size(avail_w: int, avail_h: int) -> tuple[int, int]:
     width = min(1180, int(avail_w * 0.92))
     height = min(940, int(avail_h * 0.94))
     return max(width, 640), max(height, 480)
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    """True when ``path`` is ``root`` or lives inside it. Used to drop a
+    removed item's cached FileInfos without touching the disk."""
+    if path == root:
+        return True
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def unique_path(path: Path) -> Path:
@@ -148,6 +160,11 @@ class MainWindow(QMainWindow):
         self._about_card: QFrame | None = None
 
         self.drop_zone = DropZone(page)
+        # The pending list belongs to the chip that discloses it; the window
+        # owns the model (`_pending`) and every mutation, so it holds the alias.
+        self.pending_list = self.drop_zone.pending_list
+        self.pending_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         column.addWidget(self.drop_zone)
 
         self.analysis_card = AnalysisCard(page)
@@ -474,6 +491,13 @@ class MainWindow(QMainWindow):
 
     def _wire(self) -> None:
         self.drop_zone.pathsAdded.connect(self.add_paths)
+        self.drop_zone.clearRequested.connect(self.clear_pending)
+        self.pending_list.customContextMenuRequested.connect(self._pending_menu)
+        # Del removes the highlighted item, scoped to the list so it cannot
+        # fire while the archive-name field has focus.
+        delete = QShortcut(QKeySequence.StandardKey.Delete, self.pending_list)
+        delete.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete.activated.connect(self.remove_selected_pending)
         self.presets.profileChanged.connect(self._on_profile_changed)
         # The chooser's rows are destroyed and recreated on every analysis;
         # without this, the keyboard path through them dies the first time
@@ -508,6 +532,13 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(qss(self.theme_name))
         self.theme_button.setText(
             self.tr("Dark mode") if self.theme_name == "light" else self.tr("Light mode"))
+        # W2-5: the SVG glyphs are tinted with theme tokens, so they have to be
+        # repainted here. This is the thing emoji could not do.
+        self.compare_table.retint(self.theme_name)
+        # W2-6: Qt paints its client area but never the OS caption, so a dark
+        # app under a light title bar reads as half-finished. No-ops silently
+        # off Windows and on builds that do not know the DWM attribute.
+        set_dark_titlebar(int(self.winId()), self.theme_name == "dark")
 
     def toggle_theme(self) -> None:
         self.theme_name = "light" if self.theme_name == "dark" else "dark"
@@ -525,6 +556,7 @@ class MainWindow(QMainWindow):
             return
         self.results.hide_panel()
         self.analysis_card.set_busy(len(self._pending))
+        self._refresh_pending_view()
         self._refresh_actions()
         worker = AnalysisWorker(list(self._pending), self.presets.current_profile(),
                                 self.tools, self._analysis_signals)
@@ -537,7 +569,50 @@ class MainWindow(QMainWindow):
         self.analysis_card.clear()
         self.compare_table.clear()
         self.results.hide_panel()
+        self._refresh_pending_view()
         self._refresh_actions()
+
+    # -- W2-10: review and remove before committing --------------------------
+    def _refresh_pending_view(self) -> None:
+        """Keep the chip and the list in step with ``_pending``."""
+        self.pending_list.clear()
+        for path in self._pending:
+            item = QListWidgetItem(path.name or str(path), self.pending_list)
+            item.setToolTip(str(path))
+        total = self._summary.total_bytes if self._summary is not None else 0
+        self.drop_zone.set_pending(len(self._pending), total)
+
+    def remove_selected_pending(self) -> None:
+        """Drop one item and re-plan from the FileInfo list already in memory.
+
+        The same trick as `_on_profile_changed`: entropy sampling is the
+        expensive part, and removing an item changes none of the samples that
+        survive. On the real HDD corpus this is the difference between instant
+        and another full scan.
+        """
+        row = self.pending_list.currentRow()
+        if not 0 <= row < len(self._pending):
+            return
+        removed = self._pending.pop(row)
+        if not self._pending:
+            self.clear_pending()
+            return
+        self._infos = [info for info in self._infos
+                       if not _is_under(Path(info.path), removed)]
+        self._refresh_pending_view()
+        self._resummarize()
+
+    def _pending_menu(self, pos) -> None:
+        item = self.pending_list.itemAt(pos)
+        if item is None:
+            return
+        self.pending_list.setCurrentItem(item)
+        path = self._pending[self.pending_list.currentRow()]
+        menu = QMenu(self.pending_list)
+        menu.addAction(self.tr("Remove"), self.remove_selected_pending)
+        menu.addAction(self.tr("Show in Explorer"),
+                       lambda: open_in_explorer(path))
+        menu.exec(self.pending_list.viewport().mapToGlobal(pos))
 
     def _reset_flow(self) -> None:
         self.results.hide_panel()
@@ -578,11 +653,19 @@ class MainWindow(QMainWindow):
         expensive part and nothing about the input changed."""
         if not self._infos or not isinstance(profile, Profile):
             return
+        self._resummarize(profile)
+
+    def _resummarize(self, profile: Profile | None = None) -> None:
+        """Re-plan and repaint from the cached FileInfo list. No file is read."""
+        if not self._infos:
+            return
+        profile = profile or self.presets.current_profile()
         the_plan = make_plan(self._infos, profile, self.tools)
         reference = make_plan(self._infos, strongest_profile(self.tools), self.tools)
         self._summary = summarize(self._infos, the_plan, self.tools, reference)
         self.analysis_card.set_summary(self._summary)
         self._refresh_estimates()
+        self._refresh_pending_view()
         self._refresh_actions()
 
     def _refresh_estimates(self) -> list:

@@ -58,12 +58,20 @@ LIGHT: dict[str, str] = {
 }
 # (the unused `shadow` token is gone - elevation comes from layout, not fakes)
 
-# Non-colour tokens are shared by both palettes.
+# Non-colour tokens are shared by both palettes. Radii are the Windows
+# geometry values (W2-4): OverlayCornerRadius 8 for containers,
+# ControlCornerRadius 4 for buttons, inputs, checkboxes and progress chunks.
+# learn.microsoft.com/windows/apps/design/signature-experiences/geometry
 METRICS: dict[str, str] = {
-    "radius": "10px",
-    "radius_sm": "6px",
+    "radius": "8px",
+    "radius_sm": "4px",
     "font": '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
 }
+
+# Touch floor from learn.microsoft.com/windows/apps/develop/input/touch-
+# interactions: "32 epx tall if the width is at least 120 epx". Controls used
+# to land on 32-34px by accident, depending on which padding rule won.
+CONTROL_HEIGHT = 32
 
 # Layout constants (px). Imported by widgets so setContentsMargins/setSpacing
 # calls stop inventing numbers - six different card paddings coexisted before
@@ -74,6 +82,9 @@ GUTTER = 20
 VGAP = 12
 GAP_BLOCK = 12
 GAP_INTRA = 8
+# 4px: the tightest step on the grid, for dense panels where the gaps
+# themselves became a measurable share of the height budget.
+GAP_TIGHT = 4
 CARD_MARGINS = (16, 12, 16, 12)
 
 _QSS = Template("""
@@ -150,7 +161,8 @@ QPushButton {
     background: $surface2;
     border: 1px solid $border;
     border-radius: $radius_sm;
-    padding: 7px 14px;
+    padding: 5px 14px;
+    min-height: 20px;   /* + 2x5 padding + 2x1 border = the 32px control box */
     color: $text;
 }
 QPushButton:hover:enabled  { background: $surface3; border-color: $border_hi; }
@@ -214,8 +226,19 @@ QMenu::separator { height: 1px; background: $border; margin: 4px 8px; }
 
 /* ---- the profile chooser's rows --------------------------------------- */
 /* Selection is carried by the radio glyph in the row's own text; the border
-   is the second signal. Recommended rows keep their accent tone. */
-QFrame#Card[selected="true"] { border: 2px solid $accent_hi; }
+   is the second signal. Recommended rows keep their accent tone.
+
+   W2-4: the border is 2px in EVERY state and only its colour changes. It used
+   to be 1px at rest and 2px when selected, so picking a profile shifted every
+   cell in that row by one pixel and nudged the three rows below it - a jiggle
+   you feel more than see. */
+QFrame#ProfileRow {
+    background: $surface;
+    border: 2px solid $border;
+    border-radius: $radius;
+}
+QFrame#ProfileRow[tone="accent"]    { border-color: $accent; background: $surface2; }
+QFrame#ProfileRow[selected="true"]  { border-color: $accent_hi; }
 
 /* ---- inputs ---------------------------------------------------------- */
 QLineEdit, QSpinBox, QComboBox {

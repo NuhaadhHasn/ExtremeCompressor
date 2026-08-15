@@ -88,6 +88,19 @@ class CategoryBreakdown(QWidget):
         self._legend_row.setContentsMargins(0, 0, 0, 0)
         self._legend_row.setSpacing(14)
         column.addWidget(self._legend)
+        self._column = column
+
+    def take_legend(self, new_parent: QWidget) -> QWidget:
+        """Hand the swatch legend to someone else's layout (W2-b).
+
+        The analysis card moves it into its Details expander to save ~26px.
+        Safe only because the card's headline states the same shares in words -
+        the bar is never left as a colour-only signal. Kept as an explicit
+        hand-off rather than a flag so that constraint stays visible here.
+        """
+        self._column.removeWidget(self._legend)
+        self._legend.setParent(new_parent)
+        return self._legend
 
     def set_data(self, ranked: list[tuple[Category, int]], total: int,
                  labels: dict[Category, str], limit: int = 4) -> None:

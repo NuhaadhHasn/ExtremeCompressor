@@ -10,14 +10,15 @@
 > **UI v3 wave 2 is complete** — 2a (Activity tab, compact results, queue
 > density, scan progress, the last modal gone) and 2b (the height compaction,
 > token sweep, Fluent SVG icons, dark title bar, pending-items list), both
-> **on one branch awaiting review**. **432 tests** (431 pass + 1 strict-xfail
+> **on one branch awaiting review**. **469 tests** (468 pass + 1 strict-xfail
 > height target that research/23 §2.4 and §3.3 make unreachable).
 > **UI v3 wave 3 is complete** — 3a (verify verb + button), 3b (foreign
 > archives + listing), 3c (`.sha256` sidecar, Settings + persistence, the
 > autosubfolder heuristic, the first-run notice). 3a merged; **3b and 3c on
-> branches awaiting review**. **432 tests** (431 pass + 1 strict-xfail).
-> **Next up: level/dict knobs + RAM column (needs `StageRecord.params`
-> plumbing), G2 foreign listing, then J5-J7.**
+> branches awaiting review**. **469 tests** (468 pass + 1 strict-xfail).
+> **research/23 §5 is COMPLETE** — the level/dictionary knobs, the RAM column
+> and the Parameters line landed 2026-08-07. **469 tests** (468 pass + 1
+> strict-xfail). **Next up: G2 foreign listing, then J5-J7.**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -801,7 +802,8 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 | ~~UI-3a~~ | ~~UI v3 wave 3a (verify verb + button, `excmp hash`)~~ | ✅ done, on a branch | The D9 gate became public: same code path, three callers. Catches a single flipped byte in a 721 MB archive and names the file |
 | ~~UI-3b~~ | ~~UI v3 wave 3b (G1 foreign archives, I2-lite listing)~~ | ✅ done, on a branch | Opens zip/7z/rar/iso/…, and shows the ledger — size, SHA-256, route and *why stored* — without extracting. `ledger_backed` keeps the verified restore distinguishable from the best-effort one |
 | ~~UI-3c~~ | ~~UI v3 wave 3c (`.sha256` sidecar, Settings + persistence, autosubfolder, first-run notice)~~ | ✅ done, on a branch | Sidecar is **opt-in and remembered** (decided 2026-08-07). The app persists preferences for the first time — it kept only window geometry before. Settings also hosts the tool inventory the status strip elides |
-| **UI-4** | **Level/dict knobs + RAM column + Parameters line; G2 foreign listing** | **1-2 sessions** | **the only §5 item left, and it is engine plumbing: `_stage_factory` hard-codes stage defaults and `StageRecord.params` is always `{}`** |
+| ~~UI-4~~ | ~~Level/dict knobs + RAM column + Parameters line~~ | ✅ done | `excmp/ram.py` implements 7-Zip's own peak-RAM formula (doc 19 §3), clamped to the input the way `reduceSize` does. B9's cap drives the dictionary menu; the Parameters line is an allowlist |
+| **G2** | **Foreign archive listing (`7z l -slt`) + password-on-demand** | **1 session** | **what would make "What's inside" work on a zip; wave 3b deliberately refuses rather than showing an empty list** |
 | 5 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |
 | 6 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
 | 7 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |

@@ -14,14 +14,16 @@ from __future__ import annotations
 import shutil
 import tempfile
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from .analyzer import FileInfo, analyze_tree
 from .estimate import estimate_size
-from .manifest import (ContainerError, Manifest, StageRecord, declared_total,
-                       extract_stored, read_container, write_container)
-from .planner import Plan, Profile, plan as make_plan
+from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
+                       _read_manifest, declared_total, extract_stored,
+                       read_container, write_container)
+from .planner import Plan, Profile, plan as make_plan, store_reason
 from .stages.base import Stage, StageContext, StageError, StageSkip
 from .stages.sevenzip import SevenZipStage
 from .stages.tarstage import TarStage
@@ -166,11 +168,45 @@ def _wait_if_paused(ctx: StageContext) -> None:
         time.sleep(0.1)
 
 
-def _stage_factory() -> dict[str, Stage]:
+@dataclass(frozen=True)
+class StageOptions:
+    """What the user chose, if anything. All None means "the tool decides".
+
+    Carried explicitly rather than read from settings inside the engine: the
+    engine has no idea a GUI exists, and an archive has to be reproducible
+    from what the manifest records.
+    """
+
+    level: int | None = None
+    dict_size: str | None = None          # "256m", as -md= wants it
+    extra_args: tuple[str, ...] = ()
+
+    def as_params(self) -> dict:
+        """What goes in `StageRecord.params` - only what was actually set,
+        so an archive built with defaults does not claim otherwise."""
+        out: dict = {}
+        if self.level is not None:
+            out["level"] = self.level
+        if self.dict_size:
+            out["dict"] = self.dict_size
+        if self.extra_args:
+            out["extra"] = list(self.extra_args)
+        return out
+
+
+def _stage_factory(options: StageOptions | None = None) -> dict[str, Stage]:
+    opts = options or StageOptions()
+    seven = (SevenZipStage(level=opts.level if opts.level is not None else 9,
+                           dict_size=opts.dict_size,
+                           extra_args=list(opts.extra_args))
+             if (opts.level is not None or opts.dict_size or opts.extra_args)
+             else SevenZipStage())
+    zstd = (ZstdStage(level=opts.level) if opts.level is not None
+            else ZstdStage())
     registry: dict[str, Stage] = {
         "tar": TarStage(),
-        "zstd": ZstdStage(),
-        "sevenzip": SevenZipStage(),
+        "zstd": zstd,
+        "sevenzip": seven,
     }
     try:  # optional stages, present once task 9 lands / tools installed
         from .stages.precomp import PrecompStage
@@ -190,6 +226,10 @@ class CompressResult:
     routes: list[dict]
     warnings: list[str]
     elapsed_s: float
+    # Path to the `.sha256` written beside the archive, or None. Opt-in: a
+    # second file nobody asked for beside every archive is exactly the kind of
+    # surprise output this engine has refused since its first commit.
+    sidecar: Path | None = None
 
     @property
     def ratio(self) -> float:
@@ -202,6 +242,36 @@ class ExtractResult:
     files_restored: int
     verified: int
     elapsed_s: float
+    # False for archives we did not create. There is no SHA-256 ledger in a
+    # foreign zip, so `verified == 0` there means "nothing to check against",
+    # NOT "checked and found zero good". The UI must not render the two the
+    # same way - the verified restore is the one guarantee this project sells.
+    ledger_backed: bool = True
+
+
+@dataclass
+class ArchiveEntry:
+    """One file inside an archive, as the manifest recorded it."""
+
+    name: str
+    size: int
+    sha256: str
+    route: str      # "pipeline" | "store"
+    reason: str     # why it was stored; empty for pipelined files
+
+
+@dataclass
+class ArchiveListing:
+    archive: Path
+    kind: str                 # "excmp" (foreign listing is G2)
+    profile: str
+    created_utc: str
+    stages: list[str]
+    entries: list[ArchiveEntry]
+
+    @property
+    def total_bytes(self) -> int:
+        return sum(e.size for e in self.entries)
 
 
 @dataclass
@@ -236,8 +306,25 @@ def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str]]:
     return infos, relmap
 
 
+def _write_sidecar(archive: Path) -> Path:
+    """`<archive>.sha256` in ``sha256sum`` layout (G6).
+
+    Hashed AFTER the atomic rename, so it describes the file that actually
+    shipped rather than the `.tmp` twin that existed a moment earlier. The
+    body names the archive by *file name*, not full path: `sha256sum -c`
+    resolves relative to the working directory, and an absolute path would
+    break the moment the pair is moved - which is the only situation a
+    transport sidecar exists for.
+    """
+    side = Path(str(archive) + ".sha256")
+    side.write_text(f"{hash_file(archive)}  {archive.name}\n", encoding="utf-8")
+    return side
+
+
 def compress(inputs: list[Path], out_path: Path, profile: Profile,
-             ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None) -> CompressResult:
+             ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None,
+             sidecar: bool = False,
+             options: "StageOptions | None" = None) -> CompressResult:
     t0 = time.monotonic()
     tools = tools if tools is not None else find_tools(with_versions=True)
     out_path = Path(out_path)
@@ -250,7 +337,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     the_plan.warnings.extend(
         _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
 
-    registry = _stage_factory()
+    registry = _stage_factory(options)
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-", dir=ctx.temp_dir))
     tmp_out: Path | None = None
     try:
@@ -299,7 +386,12 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     stage=sid,
                     tool_name=tool.name if tool else "python",
                     tool_version=tool.version if tool else "",
-                    params={},
+                    # What actually ran, so the archive can be reproduced and
+                    # "copy as command" is not guessing. Empty when the user
+                    # chose nothing, rather than claiming the tool's defaults
+                    # as deliberate settings.
+                    params=(options.as_params() if options
+                            and sid in ("sevenzip", "zstd") else {}),
                 ))
             the_plan.warnings.extend(skip_notes)
             payload_path = current
@@ -313,6 +405,8 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             inputs=ledger,
             payload_name=payload_name,
             warnings=the_plan.warnings,
+            store_reasons={relmap[i.path]: reason for i in infos
+                           if (reason := store_reason(i))},
             routes=[{"action": r.action, "stages": r.stages, "reason": r.reason,
                      "files": [relmap[f] for f in r.files]} for r in the_plan.routes],
         )
@@ -336,14 +430,123 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         if tmp_out is not None and tmp_out.exists():
             tmp_out.unlink(missing_ok=True)
 
+    # Only now that the archive is published and verified - a sidecar for an
+    # archive that does not exist is worse than no sidecar.
+    side = _write_sidecar(out_path) if sidecar else None
+
     orig = sum(m["size"] for m in ledger.values())
     return CompressResult(
         archive=out_path,
+        sidecar=side,
         orig_bytes=orig,
         final_bytes=out_path.stat().st_size,
         routes=manifest.routes,
         warnings=the_plan.warnings,
         elapsed_s=time.monotonic() - t0,
+    )
+
+
+def is_excmp(path: Path) -> bool:
+    """True when this really is one of ours.
+
+    The manifest is the authority, never the extension: renaming a plain zip
+    to ``.excmp`` must not decide which guarantees apply to it.
+    """
+    path = Path(path)
+    try:
+        if not zipfile.is_zipfile(path):
+            return False
+        with zipfile.ZipFile(path) as zf:
+            return MANIFEST_NAME in zf.namelist()
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def list_archive(archive: Path) -> ArchiveListing:
+    """Everything the manifest knows, without extracting a byte.
+
+    A zip directory read plus one JSON parse - free even on a 700 GB archive,
+    because the ledger lives in the container, not the payload. The `reason`
+    on a stored entry is the thing no other archiver can show, since no other
+    archiver writes down *why* a file did not shrink.
+
+    Foreign archives raise: listing those needs the pinned ``7z l -slt``
+    grammar (G2), and an empty list would read as "this archive is empty".
+    """
+    archive = Path(archive)
+    if not is_excmp(archive):
+        raise ContainerError(
+            f"{archive} is not an .excmp container - listing other formats "
+            f"needs `7z l` support, which is not wired up yet")
+    with zipfile.ZipFile(archive) as zf:
+        manifest = _read_manifest(zf, archive)
+
+    reasons: dict[str, tuple[str, str]] = {}
+    for route in manifest.routes:
+        for name in route.get("files", []):
+            reasons[name] = (route.get("action", ""), route.get("reason", ""))
+
+    entries = [
+        ArchiveEntry(
+            name=name,
+            size=meta.get("size", 0),
+            sha256=meta.get("sha256", ""),
+            route=reasons.get(name, ("", ""))[0],
+            # Per-file first; fall back to the route's joined summary only for
+            # archives written before `store_reasons` existed. Only a stored
+            # file needs explaining - a pipelined one shrank.
+            reason=(manifest.store_reasons.get(name)
+                    or reasons.get(name, ("", ""))[1])
+            if reasons.get(name, ("", ""))[0] == "store" else "",
+        )
+        for name, meta in manifest.inputs.items()
+    ]
+    entries.sort(key=lambda e: e.size, reverse=True)
+    return ArchiveListing(
+        archive=archive,
+        kind="excmp",
+        profile=manifest.profile,
+        created_utc=manifest.created_utc,
+        stages=[st.stage for st in manifest.stages],
+        entries=entries,
+    )
+
+
+def extract_any(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
+    """Extract ours *or* somebody else's (G1).
+
+    Deliberately a separate entry point from :func:`extract`, which stays
+    .excmp-only. A caller that wants the ledger-verified path should not be
+    able to get a best-effort one by accident, and vice versa - the difference
+    is the entire value proposition.
+    """
+    archive = Path(archive)
+    if is_excmp(archive):
+        return extract(archive, out_dir, ctx)
+    return _extract_foreign(archive, out_dir, ctx)
+
+
+def _extract_foreign(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
+    """Hand it to 7-Zip, then count what landed.
+
+    No ledger exists, so there is nothing to verify and we say so. The count
+    comes from walking the output rather than parsing 7-Zip's chatter: the
+    number of files on disk is a fact, and its stdout format is not a contract.
+    """
+    t0 = time.monotonic()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ctx.log_cb("sevenzip", f"opening {archive.name} with 7-Zip - this archive "
+                           f"has no SHA-256 ledger, so its contents cannot be "
+                           f"checked against one")
+    SevenZipStage().extract(archive, out_dir, ctx)
+    restored = sum(1 for p in out_dir.rglob("*") if p.is_file())
+    return ExtractResult(
+        out_dir=out_dir,
+        files_restored=restored,
+        verified=0,
+        elapsed_s=time.monotonic() - t0,
+        ledger_backed=False,
     )
 
 

@@ -77,9 +77,12 @@ def test_the_queue_and_results_left_the_compress_page(window):
     assert _is_descendant(window.results, window.activity_page)
 
 
-def test_the_tabs_are_compress_extract_activity(window):
+def test_the_tabs_are_compress_extract_activity_settings(window):
+    """research/23 §2.3's wireframe, complete: Settings arrived with I1 in
+    wave 3c. Four destinations is exactly WinUI's ceiling for top navigation,
+    which is why the tab bar was chosen over a nav rail in the first place."""
     labels = [window.tabs.tabText(i).split(" (")[0] for i in range(window.tabs.count())]
-    assert labels == ["Compress", "Extract", "Activity"]
+    assert labels == ["Compress", "Extract", "Activity", "Settings"]
     assert window.tabs.widget(window._activity_index) is window.activity_page
 
 

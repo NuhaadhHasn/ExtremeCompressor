@@ -197,13 +197,26 @@ class ResultsPanel(QFrame):
     def _show_extract(self, job: Job) -> None:
         restored = getattr(job.result, "files_restored", 0)
         verified = getattr(job.result, "verified", 0)
+        # G1: a foreign archive has no ledger, so `verified == 0` means "there
+        # was nothing to check against" - NOT "checked and found zero good".
+        # Rendering both with the same sentence produced the genuinely false
+        # "0 SHA-256 hashes verified - byte-identical to the originals".
+        ledger_backed = getattr(job.result, "ledger_backed", True)
         self.hero.setText(self.tr("Restored 1 file") if restored == 1
                           else self.tr("Restored %d files") % restored)
         self.hero.setProperty("tone", "ok")
         repolish(self.hero)
-        self.subline.setText(
-            self.tr("%d SHA-256 hashes verified — byte-identical to the originals · %s")
-            % (verified, fmt_duration(job.elapsed_s)))
+        if ledger_backed:
+            self.subline.setText(
+                self.tr("%d SHA-256 hashes verified — byte-identical to the "
+                        "originals · %s")
+                % (verified, fmt_duration(job.elapsed_s)))
+        else:
+            self.subline.setText(
+                self.tr("This archive was not created by ExtremeCompressor, so "
+                        "it carries no SHA-256 ledger — the files came out, but "
+                        "nothing could be checked against one · %s")
+                % fmt_duration(job.elapsed_s))
         self.bars.setVisible(False)
         self._clear_breakdown()
         self._clear_reasons()

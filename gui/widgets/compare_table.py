@@ -42,6 +42,10 @@ _COLUMNS: tuple[tuple[str, int], ...] = (
     ("Estimated size", 3),
     ("Saved", 2),      # 1 clipped "51% or better" - the honesty wording
     ("Estimated time", 3),
+    # Nobody else shows this before the job starts except 7-Zip's own Add
+    # dialog, and on a 16 GB two-core target it is the number that decides
+    # whether a profile is usable at all (doc 19 section 3).
+    ("Peak RAM", 2),
 )
 
 # U+25CF / U+25CB - in every Windows UI font, so never tofu.
@@ -191,6 +195,7 @@ class ProfileRow(QFrame):
                 _cell(row.saved_text, "", values),
                 _cell(row.time_text, row.time_range, values,
                       tone="warn" if row.note else ""),
+                _cell(row.ram_text or "—", "", values),
             )
             for cell, (_header, stretch) in zip(cells, _COLUMNS):
                 line.addWidget(cell, stretch)
@@ -222,6 +227,8 @@ class ProfileRow(QFrame):
         if row.size_text:
             spoken = self.tr("%s: %s, %s, saves %s, takes %s") % (
                 row.title, row.chain, row.size_text, row.saved_text, row.time_text)
+            if row.ram_text:
+                spoken += self.tr(", needs about %s of memory") % row.ram_text
         else:
             spoken = f"{row.title}: {row.chain}"
         # The caveat is the missing-tool sentence ("zpaqfranz missing - runs as

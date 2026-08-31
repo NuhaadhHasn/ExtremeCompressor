@@ -1,4 +1,4 @@
-"""Command-line interface: python -m excmp {analyze|compress|extract}."""
+"""Command-line interface: python -m excmp {analyze|compress|extract|list|verify|hash}."""
 
 from __future__ import annotations
 
@@ -58,8 +58,17 @@ def cmd_compress(args: argparse.Namespace) -> int:
 
     ctx.progress_cb = show
     out = Path(args.output)
+    from .ram import parse_extra_args
+    options = engine.StageOptions(
+        level=args.level,
+        dict_size=args.dict_size,
+        # Raises ValueError with a reason; main() turns that into a clean
+        # one-line error rather than a traceback.
+        extra_args=tuple(parse_extra_args(args.params or "")),
+    )
     result = engine.compress([Path(p) for p in args.inputs], out,
-                             Profile(args.profile), ctx)
+                             Profile(args.profile), ctx, sidecar=args.sha256,
+                             options=options)
     if not args.json:
         print()
     payload = {
@@ -70,6 +79,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
         "saved_percent": round((1 - result.ratio) * 100, 2),
         "elapsed_s": round(result.elapsed_s, 1),
         "warnings": result.warnings,
+        "sidecar": str(result.sidecar) if result.sidecar else None,
     }
     if args.json:
         print(json.dumps(payload, indent=2))
@@ -79,26 +89,75 @@ def cmd_compress(args: argparse.Namespace) -> int:
         for r in result.routes:
             if r["action"] == "store":
                 print(f"note: {len(r['files'])} file(s) stored losslessly - {r['reason']}")
+        if result.sidecar is not None:
+            print(f"wrote {result.sidecar.name} - check it anywhere with "
+                  f"`sha256sum -c {result.sidecar.name}`")
         for w in result.warnings:
             print(f"warning: {w}")
     return 0
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
+    """Extract ours or somebody else's (G1).
+
+    The two cases report differently on purpose. A foreign zip has no SHA-256
+    ledger, so "restored 2 files" is the whole truth about it - borrowing the
+    verified-restore wording would sell a guarantee that does not exist here.
+    """
     from . import engine
     ctx = StageContext(temp_dir=Path(args.temp))
-    result = engine.extract(Path(args.archive), Path(args.output), ctx)
+    result = engine.extract_any(Path(args.archive), Path(args.output), ctx)
     msg = {
         "out_dir": str(result.out_dir),
         "files_restored": result.files_restored,
         "verified": result.verified,
+        "ledger_backed": result.ledger_backed,
         "elapsed_s": round(result.elapsed_s, 1),
     }
     if args.json:
         print(json.dumps(msg, indent=2))
-    else:
+    elif result.ledger_backed:
         print(f"restored {result.files_restored} file(s), verified {result.verified} "
               f"hash(es) OK in {msg['elapsed_s']}s -> {result.out_dir}")
+    else:
+        print(f"restored {result.files_restored} file(s) in {msg['elapsed_s']}s "
+              f"-> {result.out_dir}")
+        print("note: this archive was not created by ExtremeCompressor, so it "
+              "carries no SHA-256 ledger - the contents could not be checked "
+              "against one")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    """What is inside, straight from the manifest - nothing is extracted.
+
+    The `why` column is the part no other archiver can print, because no other
+    archiver records why a file was stored rather than compressed.
+    """
+    from . import engine
+    listing = engine.list_archive(Path(args.archive))
+    if args.json:
+        print(json.dumps({
+            "archive": str(listing.archive),
+            "kind": listing.kind,
+            "profile": listing.profile,
+            "created_utc": listing.created_utc,
+            "stages": listing.stages,
+            "total_bytes": listing.total_bytes,
+            "entries": [{"name": e.name, "size": e.size, "sha256": e.sha256,
+                         "route": e.route, "reason": e.reason}
+                        for e in listing.entries],
+        }, indent=2))
+        return 0
+
+    print(f"{listing.archive}")
+    print(f"  profile {listing.profile} · chain {' → '.join(listing.stages) or 'none'} "
+          f"· created {listing.created_utc}")
+    print(f"  {len(listing.entries)} file(s), {_fmt_size(listing.total_bytes)}")
+    print()
+    print(f"{'file':<48} {'size':>10}  {'route':<9} why")
+    for e in listing.entries:
+        print(f"{e.name[-48:]:<48} {_fmt_size(e.size):>10}  {e.route:<9} {e.reason}")
     return 0
 
 
@@ -172,14 +231,38 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=[pr.value for pr in Profile])
     pc.add_argument("--temp", default=default_tmp)
     pc.add_argument("--json", action="store_true")
+    pc.add_argument("--level", type=int, choices=range(0, 10), default=None,
+                    metavar="0-9",
+                    help="compression level; omit to let the profile decide")
+    pc.add_argument("--dict", dest="dict_size", default=None, metavar="SIZE",
+                    help="LZMA2 dictionary, e.g. 64m or 256m. Bigger is "
+                         "slower and costs ~13x its size in RAM")
+    # Every value this takes starts with "-", which argparse reads as another
+    # option, so it must be spelled --params=-mqs. Saying so in the help is
+    # cheaper than the "expected one argument" people would otherwise hit on
+    # their first try.
+    pc.add_argument("--params", default=None, metavar="SWITCHES",
+                    help='extra 7-Zip method switches - use an equals sign, '
+                         'e.g. --params="-mqs -myx=9". Method switches only; '
+                         '-p/-o/-w/@ are refused')
+    pc.add_argument("--sha256", action="store_true",
+                    help="also write <archive>.sha256 so a recipient can check "
+                         "the transfer with sha256sum -c")
     pc.set_defaults(func=cmd_compress)
 
-    px = sub.add_parser("extract", help="extract and verify an .excmp archive")
+    px = sub.add_parser("extract", help="extract an .excmp (verified) or any "
+                                        "archive 7-Zip can open (unverified)")
     px.add_argument("archive")
     px.add_argument("-o", "--output", required=True)
     px.add_argument("--temp", default=default_tmp)
     px.add_argument("--json", action="store_true")
     px.set_defaults(func=cmd_extract)
+
+    pl = sub.add_parser("list", help="show what is inside an .excmp - size, "
+                                     "SHA-256, route and why, without extracting")
+    pl.add_argument("archive")
+    pl.add_argument("--json", action="store_true")
+    pl.set_defaults(func=cmd_list)
 
     pv = sub.add_parser("verify", help="prove an .excmp archive still restores "
                                        "byte-for-byte (produces nothing)")

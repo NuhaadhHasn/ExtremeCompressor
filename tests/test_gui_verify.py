@@ -29,6 +29,26 @@ def window(qtbot):
     win.queue.shutdown()
 
 
+@pytest.fixture
+def archive(tmp_path):
+    """A real .excmp.
+
+    Not a placeholder file: since G1 the Verify button correctly refuses
+    anything without a manifest, because there would be no ledger to check
+    against. A stub would now be testing the refusal, not the button.
+    """
+    from excmp import engine
+    from excmp.planner import Profile
+    from excmp.stages.base import StageContext
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("data " * 400, encoding="utf-8")
+    out = tmp_path / "thing.excmp"
+    engine.compress([src], out, Profile.FAST, StageContext(temp_dir=tmp_path / "t"))
+    return out
+
+
 def test_the_extract_tab_offers_to_verify(window):
     tab = window.extract_tab
     assert hasattr(tab, "verify_button")
@@ -36,18 +56,14 @@ def test_the_extract_tab_offers_to_verify(window):
     assert not tab.verify_button.isEnabled()
 
 
-def test_choosing_an_archive_enables_verify(window, tmp_path):
-    archive = tmp_path / "thing.excmp"
-    archive.write_bytes(b"placeholder")
+def test_choosing_an_archive_enables_verify(window, archive):
     window.extract_tab.set_archive(archive)
     assert window.extract_tab.verify_button.isEnabled()
 
 
-def test_verifying_queues_a_job_rather_than_blocking(window, qtbot, tmp_path):
+def test_verifying_queues_a_job_rather_than_blocking(window, qtbot, archive):
     """A 700 MB verify is a full restore. It belongs in the queue with a
     progress bar and a cancel button, exactly like the compress that made it."""
-    archive = tmp_path / "thing.excmp"
-    archive.write_bytes(b"placeholder")
     window.queue.pause()
     window.extract_tab.set_archive(archive)
     window.extract_tab.verify_button.click()
@@ -98,11 +114,10 @@ def test_a_failing_verify_is_never_dressed_up_as_a_warning(window, tmp_path):
     assert "hash mismatch" in window.results.subline.text()
 
 
-def test_verify_never_writes_into_the_destination_folder(window, qtbot, tmp_path):
+def test_verify_never_writes_into_the_destination_folder(window, qtbot, tmp_path,
+                                                         archive):
     """The Extract tab has a destination field. Verify must ignore it - the
     whole point is that nothing is produced."""
-    archive = tmp_path / "thing.excmp"
-    archive.write_bytes(b"placeholder")
     dest = tmp_path / "dest"
     dest.mkdir()
     window.queue.pause()

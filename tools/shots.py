@@ -234,7 +234,7 @@ def main() -> int:
     window.resize(*WINDOW_SIZE)
     window.show()
     window.advanced_panel.output_dir.setText(str(out_dir))
-    window.advanced_panel.notify_toggle.setChecked(False)
+    window.settings_tab.notify_toggle.setChecked(False)
     settle(app, 300)
 
     recorder = Recorder(window)

@@ -1,9 +1,8 @@
 # 🚦 START HERE — handoff for the next session (written 2026-08-07)
 
-> **Wave 2 is merged to `main`.** Previous session then shipped **wave 3a**
-> (verification exposed) on branch `ui-v3-wave3`, unmerged.
-> Next: **wave 3b** — G1 foreign archives, `.excmp` listing, `.sha256`
-> sidecar, Settings tab.
+> **UI v3 is COMPLETE and merged to `main`** — waves 1, 2, 3a, 3b, 3c, and
+> the level/dictionary knobs that finished research/23 §5.
+> Next: **G2 foreign listing**, then **J5-J7**.
 >
 > Historical, for context — wave 2 was:
 > 2a — Activity tab + status strip, compact results, queue density, scan
@@ -17,14 +16,35 @@
 
 | where | what |
 |---|---|
-| `main` | everything through **UI v3 wave 2**, merged 2026-08-07 |
-| **`ui-v3-wave3`** | **wave 3a — unmerged, waiting for review** |
+| `main` | **everything** — all of UI v3, merged 2026-08-07 |
 
-```bash
-git checkout main && git merge --no-ff ui-v3-wave3
-```
+Nothing is waiting for review.
 
-**390 tests: 389 pass + 1 strict-xfail.** Baseline three sessions ago was 324.
+**469 tests: 468 pass + 1 strict-xfail.** Baseline five sessions ago was 324.
+
+### What wave 3c shipped
+
+`.sha256` sidecar (**opt-in and remembered** — see §3), the **Settings tab**
+and the first preferences this app has ever persisted, Ark's autosubfolder
+heuristic for the extract destination, and I4's first-run notice.
+
+### What wave 3b shipped
+
+**G1** — the Extract tab opens zip/7z/rar/tar/iso/cab/msi/wim. **I2-lite** —
+"What's inside" lists the whole ledger (name, size, SHA-256, route, *why
+stored*) straight from the manifest, no extraction.
+
+**The honesty boundary is the feature.** `ExtractResult.ledger_backed` exists
+because `verified == 0` is ambiguous — "nothing to check against" vs "checked,
+found zero good" — and the flag's first catch was the results panel rendering
+*"0 SHA-256 hashes verified — byte-identical to the originals"* about a
+foreign zip. `extract()` stays .excmp-only; `extract_any()` is the dispatcher.
+`is_excmp()` trusts the manifest, never the extension.
+
+**The listing corrected the manifest.** It recorded only a merged per-*route*
+store reason, so the "why" column claimed each stored file measured *every*
+stored file's entropy. `Manifest.store_reasons` is per-file now — defaulted,
+so older archives load and fall back.
 
 ### What wave 3a shipped
 
@@ -76,28 +96,54 @@ than quietly forgotten. That mechanism works; keep using it.
    (Precomp's gain is unknowable until it runs). Inlining the range needs
    ~210px in a 178px column. The extra height is where the honesty lives.
 
-## 4. The actual next job: UI wave 3b
+## 4. The actual next job
 
-research/23 §5 is the inventory. Wave 3a took the top item; the rest, in value
-order:
+**research/23 §5 is finished.** What remains:
 
-- **G1 foreign-archive extract** (S) — `extract()` already shells `7z x` on any
-  path; the Extract tab filter is `*.excmp` only. Widen it, and label it
-  honestly: no SHA-256 ledger, verification limited to `7z t`.
-- **`.excmp` flat listing** (M, I2-lite) — `read_container`/`_read_manifest` is
-  a free zip+JSON read; the ledger already carries relpath → size, SHA-256,
-  route, and *why stored*. Richer columns than 7-Zip can render.
+- **G2 — foreign archive listing** (M). The pinned `7z l -slt` grammar plus
+  the dummy `-p` hang guard (doc 17 §4). This is what makes "What's inside"
+  work on a zip; wave 3b deliberately refuses rather than showing an empty
+  list that would read as "this archive is empty". The
+  password-on-demand banner pattern (File Roller's timing; distinguish
+  encrypted from corrupt via stderr) lands with it.
+- **J5-J7** — per-type memory, long-job confirm, self-calibration. J7 is what
+  turns a cold-start prior into estimates fitted to this machine.
+- Then the roadmap's own order: D1-D3/D7 (QA core + CI), B1-B3/B9-B10.
+
+**The level/dict knobs are done** (`excmp/ram.py`, `StageOptions`), so J7's
+self-calibration now has real settings to calibrate against, and B9's RAM
+cap is enforced in code rather than described in a comment.
+
+<details><summary>The wave-3c list, for reference</summary>
+
 - **`.sha256` sidecar (G6)** (S) — publish is a single atomic `replace`, so
-  hashing the container there is ~10 lines. Decide opt-in vs default: it is
-  the QuickSFV/fitgirl transport habit, but it does put a second file beside
-  the archive. (`excmp hash` and Copy-as-command are already done.)
+  hashing the container there is ~10 lines. **Decide opt-in vs default at the
+  start of the session** — it is the QuickSFV/fitgirl transport habit, but it
+  does put a second file beside every archive. (`excmp hash`, `excmp list`
+  and Copy-as-command are already done.)
 - **I1 Settings tab** (M) — CommunityToolkit SettingsCard geometry: 68px rows,
   16px padding, 20px icon, wrap below 476px.
 - **Level/dict knobs + RAM column + Parameters line** (M) — needs plumbing
   through `_stage_factory` and `StageRecord.params`, which is always `{}` today.
 
-The Settings tab is also the natural home for the tools inventory that the
-status strip elides at narrow widths.
+</details>
+
+## 3. The sidecar decision, so it is not re-litigated
+
+**`.sha256` is opt-in and remembered.** Default-on was the other candidate —
+it is the QuickSFV / fitgirl-bins convention and verification is the brand —
+but a second file appearing beside every archive is an output nobody asked
+for, and *"inputs are never modified; outputs are written to .tmp and
+atomically renamed"* has been the engine's promise since its first commit.
+
+Two more standing rules that came out of wave 3:
+
+- **Advanced is per-job; Settings is remembered.** Adding Settings produced two
+  "notify when a job finishes" checkboxes, and the one being read was not the
+  one being saved. Notifications and tray left Advanced. Where both exist,
+  Advanced wins for that job and does not rewrite the preference.
+- **The status strip may elide the tools line** because Settings now carries
+  the full inventory. That closes the wart the handoff has carried since 2a.
 
 ## 4b. Run the QA sweep before calling a UI phase done
 
@@ -111,6 +157,7 @@ the Advanced panel, About, and everything-disclosed-at-once.
 ```
 
 It exists because wave 2 shipped four visual defects past a fully green suite,
+and waves 3b, 3c and the knobs each added another —
 and every single one was found by rendering a surface and looking at it:
 
 | defect | how it read on screen |
@@ -119,6 +166,9 @@ and every single one was found by rendering a surface and looking at it:
 | tinted glyphs used `$muted` | three near-invisible ghosts beside one green flame |
 | chooser cells hard-clipped | "zpaqfranz missing - runs as E:" - looks like a bug |
 | `fmt_percent` rounded 99.6 to 100 | **"100% or better"** - an archive of zero bytes |
+| the Extract card's standing blurb | promised a SHA-256 ledger directly above "this one has none" |
+| Settings' threads control | "auto (4 cores)" beside a line calling this a two-core laptop |
+| the new Peak RAM column | **6.0 GB quoted for a 371 KB job** — it ignored LZMA2's `reduceSize` clamp |
 
 That last one is the one to remember. It was the most over-promising sentence
 the app has ever rendered, in the one panel whose entire job is not to
@@ -145,18 +195,30 @@ behaviour; rendering pins appearance. A UI phase needs both.**
    mode, so a screen-reader user was never told that Insane degrades to
    Extreme. Fixed. Found by a test written for something else entirely; worth
    remembering that the accessible strings need their own assertions.
-5. **A rounded percentage can become a lie.** `fmt_percent(0.996)` is "100%",
+5. **A number can be true and still be wrong.** The RAM column's 6.0 GB was
+   the correct output of the correct formula — for a dictionary LZMA2 would
+   never have allocated on that input. Any figure derived from a *setting*
+   has to be recomputed against the *data*, or it is arithmetic rather than
+   information.
+6. **`verified == 0` needed a companion flag.** "Nothing to check against"
+   and "checked, found zero good" are different facts, and one boolean is
+   cheaper than discovering the difference in a bug report. Any time a count
+   of zero could mean two things, carry the reason beside it.
+7. **A route-level summary is not a per-file fact.** `planner.store_reason`
+   had said so in its own docstring for months; the listing was the first
+   surface to render the joined string per file and make it obviously wrong.
+8. **A rounded percentage can become a lie.** `fmt_percent(0.996)` is "100%",
    and "100% or better" promises a zero-byte archive. `gui.suggest._saved_words`
    caps the *wording* at 99% and leaves the estimator's number untouched.
    Anywhere a percentage is rendered near a superlative, check the rounding.
-6. **Tinted SVGs need `$text`, not `$muted`.** A muted glyph on `$surface` in
+9. **Tinted SVGs need `$text`, not `$muted`.** A muted glyph on `$surface` in
    dark mode is very nearly invisible — the first icon render was three ghosts
    beside one green flame, worse than the emoji it replaced.
-7. **"Fill the host" and "size to your hint" are contradictory**, which is why
+10. **"Fill the host" and "size to your hint" are contradictory**, which is why
    the Activity page is deliberately not a `QScrollArea`.
-8. **Grep is the wrong tool for "no modals left"** — the comments explaining
+11. **Grep is the wrong tool for "no modals left"** — the comments explaining
    why the modals went name `QMessageBox`. The test tokenises.
-9. Word-wrapping QLabels poison QScrollArea sizing; the chooser's
+12. Word-wrapping QLabels poison QScrollArea sizing; the chooser's
    `window.presets` / `window.compare_table` alias must not be "cleaned up".
 
 ## 6. Two warts spotted, still deliberately not fixed

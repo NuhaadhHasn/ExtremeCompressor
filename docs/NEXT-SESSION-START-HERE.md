@@ -1,9 +1,8 @@
 # 🚦 START HERE — handoff for the next session (written 2026-08-07)
 
-> **UI v3 wave 3 is COMPLETE.** Wave 2 and 3a are on `main`; **3b and 3c sit
-> on branch `ui-v3-wave3c`, unmerged** (3c branched from 3b).
-> Next: **level/dict knobs + RAM column**, then G2 foreign listing, then
-> J5-J7.
+> **UI v3 is COMPLETE and merged to `main`** — waves 1, 2, 3a, 3b, 3c, and
+> the level/dictionary knobs that finished research/23 §5.
+> Next: **G2 foreign listing**, then **J5-J7**.
 >
 > Historical, for context — wave 2 was:
 > 2a — Activity tab + status strip, compact results, queue density, scan
@@ -17,15 +16,11 @@
 
 | where | what |
 |---|---|
-| `main` | everything through **wave 3a**, merged 2026-08-07 |
-| `ui-v3-wave3b` | wave 3b (foreign archives + listing) |
-| **`ui-v3-wave3c`** | **3b + 3c — merge this one, it contains both** |
+| `main` | **everything** — all of UI v3, merged 2026-08-07 |
 
-```bash
-git checkout main && git merge --no-ff ui-v3-wave3c
-```
+Nothing is waiting for review.
 
-**432 tests: 431 pass + 1 strict-xfail.** Baseline four sessions ago was 324.
+**469 tests: 468 pass + 1 strict-xfail.** Baseline five sessions ago was 324.
 
 ### What wave 3c shipped
 
@@ -103,25 +98,21 @@ than quietly forgotten. That mechanism works; keep using it.
 
 ## 4. The actual next job
 
-**research/23 §5 is finished except for one item**, and that one is engine
-plumbing rather than glue:
+**research/23 §5 is finished.** What remains:
 
-- **Level/dictionary knobs + RAM column + Parameters line** (M) —
-  `_stage_factory()` hard-codes `SevenZipStage(level=9, dict_size=None)` and
-  `ZstdStage(level=19, long_log=27)`, and `StageRecord.params` is always `{}`.
-  Both stages already accept the arguments; nothing carries a choice down to
-  them or records what was used. B9's RAM-capped bounds apply (never past
-  `-md=512m` on 16 GB / 2 cores, always `-mqs`), and the RAM column has an
-  exact estimator pinned from 7-Zip source in doc 19 §3 (~13×dict per block
-  thread at mx9). `threads` already proves the whole pattern end to end.
-- **G2 foreign listing** (M) — the pinned `7z l -slt` grammar plus the dummy
-  `-p` hang guard (doc 17 §4). This is what would let "What's inside" work on
-  a zip; wave 3b deliberately refuses rather than showing an empty list.
-- Then **J5-J7** (per-type memory, long-job confirm, self-calibration).
+- **G2 — foreign archive listing** (M). The pinned `7z l -slt` grammar plus
+  the dummy `-p` hang guard (doc 17 §4). This is what makes "What's inside"
+  work on a zip; wave 3b deliberately refuses rather than showing an empty
+  list that would read as "this archive is empty". The
+  password-on-demand banner pattern (File Roller's timing; distinguish
+  encrypted from corrupt via stderr) lands with it.
+- **J5-J7** — per-type memory, long-job confirm, self-calibration. J7 is what
+  turns a cold-start prior into estimates fitted to this machine.
+- Then the roadmap's own order: D1-D3/D7 (QA core + CI), B1-B3/B9-B10.
 
-Older §5 items, all now done: verify verb + button, `excmp hash`, G1, I2-lite
-listing, `excmp list`, G6 sidecar, I1 Settings, copy-as-command, autosubfolder,
-I4 notice.
+**The level/dict knobs are done** (`excmp/ram.py`, `StageOptions`), so J7's
+self-calibration now has real settings to calibrate against, and B9's RAM
+cap is enforced in code rather than described in a comment.
 
 <details><summary>The wave-3c list, for reference</summary>
 
@@ -166,7 +157,7 @@ the Advanced panel, About, and everything-disclosed-at-once.
 ```
 
 It exists because wave 2 shipped four visual defects past a fully green suite,
-and waves 3b and 3c each added another —
+and waves 3b, 3c and the knobs each added another —
 and every single one was found by rendering a surface and looking at it:
 
 | defect | how it read on screen |
@@ -177,6 +168,7 @@ and every single one was found by rendering a surface and looking at it:
 | `fmt_percent` rounded 99.6 to 100 | **"100% or better"** - an archive of zero bytes |
 | the Extract card's standing blurb | promised a SHA-256 ledger directly above "this one has none" |
 | Settings' threads control | "auto (4 cores)" beside a line calling this a two-core laptop |
+| the new Peak RAM column | **6.0 GB quoted for a 371 KB job** — it ignored LZMA2's `reduceSize` clamp |
 
 That last one is the one to remember. It was the most over-promising sentence
 the app has ever rendered, in the one panel whose entire job is not to
@@ -203,25 +195,30 @@ behaviour; rendering pins appearance. A UI phase needs both.**
    mode, so a screen-reader user was never told that Insane degrades to
    Extreme. Fixed. Found by a test written for something else entirely; worth
    remembering that the accessible strings need their own assertions.
-5. **`verified == 0` needed a companion flag.** "Nothing to check against"
+5. **A number can be true and still be wrong.** The RAM column's 6.0 GB was
+   the correct output of the correct formula — for a dictionary LZMA2 would
+   never have allocated on that input. Any figure derived from a *setting*
+   has to be recomputed against the *data*, or it is arithmetic rather than
+   information.
+6. **`verified == 0` needed a companion flag.** "Nothing to check against"
    and "checked, found zero good" are different facts, and one boolean is
    cheaper than discovering the difference in a bug report. Any time a count
    of zero could mean two things, carry the reason beside it.
-6. **A route-level summary is not a per-file fact.** `planner.store_reason`
+7. **A route-level summary is not a per-file fact.** `planner.store_reason`
    had said so in its own docstring for months; the listing was the first
    surface to render the joined string per file and make it obviously wrong.
-7. **A rounded percentage can become a lie.** `fmt_percent(0.996)` is "100%",
+8. **A rounded percentage can become a lie.** `fmt_percent(0.996)` is "100%",
    and "100% or better" promises a zero-byte archive. `gui.suggest._saved_words`
    caps the *wording* at 99% and leaves the estimator's number untouched.
    Anywhere a percentage is rendered near a superlative, check the rounding.
-8. **Tinted SVGs need `$text`, not `$muted`.** A muted glyph on `$surface` in
+9. **Tinted SVGs need `$text`, not `$muted`.** A muted glyph on `$surface` in
    dark mode is very nearly invisible — the first icon render was three ghosts
    beside one green flame, worse than the emoji it replaced.
-9. **"Fill the host" and "size to your hint" are contradictory**, which is why
+10. **"Fill the host" and "size to your hint" are contradictory**, which is why
    the Activity page is deliberately not a `QScrollArea`.
-10. **Grep is the wrong tool for "no modals left"** — the comments explaining
+11. **Grep is the wrong tool for "no modals left"** — the comments explaining
    why the modals went name `QMessageBox`. The test tokenises.
-11. Word-wrapping QLabels poison QScrollArea sizing; the chooser's
+12. Word-wrapping QLabels poison QScrollArea sizing; the chooser's
    `window.presets` / `window.compare_table` alias must not be "cleaned up".
 
 ## 6. Two warts spotted, still deliberately not fixed

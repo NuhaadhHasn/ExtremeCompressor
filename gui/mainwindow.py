@@ -733,10 +733,21 @@ class MainWindow(QMainWindow):
                                    or DEFAULT_TEMP)
         self.queue.threads = (self.advanced_panel.threads.value()
                               or self.settings_tab.threads.value())
+        # A bad Parameters line stops the job here, in the banner, rather than
+        # failing three minutes into a chain with 7-Zip's own error.
+        try:
+            options = self.advanced_panel.stage_options()
+        except ValueError as exc:
+            self.banner.show_message(
+                self.tr("That Parameters line was not accepted: %s") % exc,
+                tone="warn",
+                actions=[(self.tr("Edit it"), self._focus_params)])
+            return
         self.results.hide_panel()
         self.queue.add_compress(inputs, self._output_path_for(inputs),
                                 self.presets.current_profile(), self._summary,
-                                sidecar=self.settings_tab.sidecar_toggle.isChecked())
+                                sidecar=self.settings_tab.sidecar_toggle.isChecked(),
+                                options=options)
         self._pending = []
         self.analysis_card.clear()
         self.compare_table.clear()
@@ -746,6 +757,12 @@ class MainWindow(QMainWindow):
 
     def _start_extract(self, archive: object, dest: object) -> None:
         self.queue.add_extract(Path(archive), Path(dest))
+
+    def _focus_params(self) -> None:
+        self.banner.hide_banner()
+        self.advanced_panel.setVisible(True)
+        self.advanced_panel.params.setFocus()
+        self.advanced_panel.params.selectAll()
 
     def start_verification(self, archive: object) -> None:
         """Queue a verify. Deliberately ignores the destination field - the

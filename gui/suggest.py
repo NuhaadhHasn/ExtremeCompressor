@@ -345,6 +345,25 @@ def _saved_words(fraction: float, upper_bound: bool) -> str:
     return f"{text} or better" if upper_bound else text
 
 
+def _ram_words(profile: Profile, cores: int | None,
+               input_bytes: int = 0) -> str:
+    """Peak compression RAM for a profile on this machine.
+
+    Only the LZMA2 profiles have a meaningful figure - zstd's window is a
+    tenth of it and never the thing that runs a 16 GB laptop out of memory.
+    Rather than print a number nobody needs for Fast, say nothing.
+    """
+    from excmp.ram import effective_dict, lzma2_compress_ram, lzma2_default_dict
+
+    if profile is Profile.FAST:
+        return ""
+    threads = cores or (os.cpu_count() or 2)
+    # Clamped to the data: 7-Zip does the same before quoting its own figure,
+    # and without it a 371 KB job was advertised as needing 6 GB.
+    dict_bytes = effective_dict(lzma2_default_dict(9), input_bytes)
+    return fmt_size(lzma2_compress_ram(dict_bytes, threads))
+
+
 def _span(low: float, high: float, formatter) -> str:
     """'34s – 2 min', or '' when the ends round to the same thing.
 
@@ -392,6 +411,7 @@ class ComparisonRow:
     saved_text: str
     time_text: str
     time_range: str
+    ram_text: str = ""    # peak compression RAM - nobody else shows this
     recommended: bool = False
     reason: str = ""      # why it is recommended (from recommend_profile)
     note: str = ""        # the trade-off warning, when a cheaper profile wins
@@ -445,6 +465,11 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
             size_text = f"about {fmt_size(est.size.expected)}"
         saved_text = _saved_words(est.size.saved_fraction, est.size.upper_bound)
 
+        # Peak RAM for this profile on THIS machine. 7-Zip's Add dialog is the
+        # only other place you can see this before starting, and on a 16 GB
+        # two-core laptop it is the difference between a job and a swap storm.
+        ram_text = _ram_words(est.profile, cores, summary.total_bytes)
+
         rows.append(ComparisonRow(
             profile=est.profile,
             title=PROFILE_LABELS.get(est.profile, est.profile.value),
@@ -452,6 +477,7 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
             size_text=size_text,
             size_range=_span(est.size.low, est.size.high, fmt_size),
             saved_text=saved_text,
+            ram_text=ram_text,
             time_text=fmt_eta(est.time.expected),
             time_range=_span(est.time.low, est.time.high, fmt_eta),
             recommended=is_recommended,

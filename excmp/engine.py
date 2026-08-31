@@ -168,11 +168,45 @@ def _wait_if_paused(ctx: StageContext) -> None:
         time.sleep(0.1)
 
 
-def _stage_factory() -> dict[str, Stage]:
+@dataclass(frozen=True)
+class StageOptions:
+    """What the user chose, if anything. All None means "the tool decides".
+
+    Carried explicitly rather than read from settings inside the engine: the
+    engine has no idea a GUI exists, and an archive has to be reproducible
+    from what the manifest records.
+    """
+
+    level: int | None = None
+    dict_size: str | None = None          # "256m", as -md= wants it
+    extra_args: tuple[str, ...] = ()
+
+    def as_params(self) -> dict:
+        """What goes in `StageRecord.params` - only what was actually set,
+        so an archive built with defaults does not claim otherwise."""
+        out: dict = {}
+        if self.level is not None:
+            out["level"] = self.level
+        if self.dict_size:
+            out["dict"] = self.dict_size
+        if self.extra_args:
+            out["extra"] = list(self.extra_args)
+        return out
+
+
+def _stage_factory(options: StageOptions | None = None) -> dict[str, Stage]:
+    opts = options or StageOptions()
+    seven = (SevenZipStage(level=opts.level if opts.level is not None else 9,
+                           dict_size=opts.dict_size,
+                           extra_args=list(opts.extra_args))
+             if (opts.level is not None or opts.dict_size or opts.extra_args)
+             else SevenZipStage())
+    zstd = (ZstdStage(level=opts.level) if opts.level is not None
+            else ZstdStage())
     registry: dict[str, Stage] = {
         "tar": TarStage(),
-        "zstd": ZstdStage(),
-        "sevenzip": SevenZipStage(),
+        "zstd": zstd,
+        "sevenzip": seven,
     }
     try:  # optional stages, present once task 9 lands / tools installed
         from .stages.precomp import PrecompStage
@@ -289,7 +323,8 @@ def _write_sidecar(archive: Path) -> Path:
 
 def compress(inputs: list[Path], out_path: Path, profile: Profile,
              ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None,
-             sidecar: bool = False) -> CompressResult:
+             sidecar: bool = False,
+             options: "StageOptions | None" = None) -> CompressResult:
     t0 = time.monotonic()
     tools = tools if tools is not None else find_tools(with_versions=True)
     out_path = Path(out_path)
@@ -302,7 +337,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     the_plan.warnings.extend(
         _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
 
-    registry = _stage_factory()
+    registry = _stage_factory(options)
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-", dir=ctx.temp_dir))
     tmp_out: Path | None = None
     try:
@@ -351,7 +386,12 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     stage=sid,
                     tool_name=tool.name if tool else "python",
                     tool_version=tool.version if tool else "",
-                    params={},
+                    # What actually ran, so the archive can be reproduced and
+                    # "copy as command" is not guessing. Empty when the user
+                    # chose nothing, rather than claiming the tool's defaults
+                    # as deliberate settings.
+                    params=(options.as_params() if options
+                            and sid in ("sevenzip", "zstd") else {}),
                 ))
             the_plan.warnings.extend(skip_notes)
             payload_path = current

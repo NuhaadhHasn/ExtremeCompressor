@@ -182,6 +182,7 @@ class CompressWorker(_EngineWorker):
         self.profile = job.profile
         self.tools = tools
         self.sidecar = job.sidecar
+        self.options = job.options
 
     def run(self) -> None:
         from excmp import engine  # deferred: importing the engine is not free
@@ -192,7 +193,8 @@ class CompressWorker(_EngineWorker):
                    f"{' → '.join(self._chain.chain)}")
         try:
             result = engine.compress(self.inputs, self.out_path, self.profile,
-                                     self.ctx, self.tools, sidecar=self.sidecar)
+                                     self.ctx, self.tools, sidecar=self.sidecar,
+                                     options=self.options)
         except BaseException as exc:  # noqa: BLE001 - reported, never swallowed
             self._fail(exc)
             return
@@ -324,9 +326,10 @@ class QueueManager(QObject):
 
     def add_compress(self, inputs: list[Path], out_path: Path, profile: Profile,
                      summary: AnalysisSummary | None = None,
-                     sidecar: bool = False) -> Job:
+                     sidecar: bool = False, options: object | None = None) -> Job:
         job = Job(inputs=list(inputs), out_path=Path(out_path), profile=profile,
-                  kind=JobKind.COMPRESS, summary=summary, sidecar=sidecar)
+                  kind=JobKind.COMPRESS, summary=summary, sidecar=sidecar,
+                  options=options)
         if summary is not None:
             job.orig_bytes = summary.total_bytes
         return self.add_job(job)

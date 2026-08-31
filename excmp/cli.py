@@ -58,8 +58,17 @@ def cmd_compress(args: argparse.Namespace) -> int:
 
     ctx.progress_cb = show
     out = Path(args.output)
+    from .ram import parse_extra_args
+    options = engine.StageOptions(
+        level=args.level,
+        dict_size=args.dict_size,
+        # Raises ValueError with a reason; main() turns that into a clean
+        # one-line error rather than a traceback.
+        extra_args=tuple(parse_extra_args(args.params or "")),
+    )
     result = engine.compress([Path(p) for p in args.inputs], out,
-                             Profile(args.profile), ctx, sidecar=args.sha256)
+                             Profile(args.profile), ctx, sidecar=args.sha256,
+                             options=options)
     if not args.json:
         print()
     payload = {
@@ -222,6 +231,20 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=[pr.value for pr in Profile])
     pc.add_argument("--temp", default=default_tmp)
     pc.add_argument("--json", action="store_true")
+    pc.add_argument("--level", type=int, choices=range(0, 10), default=None,
+                    metavar="0-9",
+                    help="compression level; omit to let the profile decide")
+    pc.add_argument("--dict", dest="dict_size", default=None, metavar="SIZE",
+                    help="LZMA2 dictionary, e.g. 64m or 256m. Bigger is "
+                         "slower and costs ~13x its size in RAM")
+    # Every value this takes starts with "-", which argparse reads as another
+    # option, so it must be spelled --params=-mqs. Saying so in the help is
+    # cheaper than the "expected one argument" people would otherwise hit on
+    # their first try.
+    pc.add_argument("--params", default=None, metavar="SWITCHES",
+                    help='extra 7-Zip method switches - use an equals sign, '
+                         'e.g. --params="-mqs -myx=9". Method switches only; '
+                         '-p/-o/-w/@ are refused')
     pc.add_argument("--sha256", action="store_true",
                     help="also write <archive>.sha256 so a recipient can check "
                          "the transfer with sha256sum -c")

@@ -70,6 +70,9 @@ class Job:
     # job so the preference at commit time is what runs, even if the user
     # changes it while the job waits in the queue.
     sidecar: bool = False
+    # Level/dictionary/extra switches chosen in Advanced, resolved at commit
+    # time so a later change cannot rewrite a job already queued.
+    options: object | None = None
 
     summary: AnalysisSummary | None = None
     result: object | None = None      # CompressResult | ExtractResult

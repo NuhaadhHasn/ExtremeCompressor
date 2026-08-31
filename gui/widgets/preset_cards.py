@@ -12,13 +12,25 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtWidgets import (QCheckBox, QFileDialog, QFrame, QGridLayout,
-                               QLabel, QLineEdit, QPushButton, QSpinBox,
-                               QToolButton, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFrame,
+                               QGridLayout, QLabel, QLineEdit, QPushButton,
+                               QSpinBox, QToolButton, QWidget)
 
 from excmp.planner import Profile
 
+from excmp.ram import (MIB, dict_choices as _dict_choices, fmt_dict,
+                       lzma2_compress_ram, lzma2_decompress_ram)
+
+from ..format import fmt_size
 from ..theme import CARD_MARGINS
+
+
+def _parse_dict(text: str) -> int:
+    """"256m" -> bytes. The inverse of excmp.ram.fmt_dict."""
+    text = text.strip().lower()
+    unit = text[-1:]
+    number = int(text[:-1] or 0)
+    return number * (1 << 30) if unit == "g" else number * MIB
 
 
 # (profile, glyph, title, honest one-liner, tools it wants)
@@ -74,6 +86,43 @@ class AdvancedPanel(QFrame):
         temp_browse.setAccessibleDescription(self.tr("Choose the temporary directory"))
         temp_browse.clicked.connect(self._pick_temp)
 
+        # The level/dictionary knobs (research/23 section 5). Both default to
+        # "profile decides" so the common path is unchanged; the dictionary
+        # list is capped by B9's RAM rule, because a choice the machine cannot
+        # run is not a choice.
+        self.level = QSpinBox(self)
+        self.level.setRange(0, 9)
+        self.level.setValue(0)
+        self.level.setSpecialValueText(self.tr("profile default"))
+        self.level.setAccessibleName(self.tr("Compression level"))
+        self.level.setToolTip(self.tr(
+            "Higher is smaller and slower. The profile already picks a sane "
+            "one; this overrides it for this job only."))
+
+        self.dict_size = QComboBox(self)
+        self.dict_size.addItem(self.tr("profile default"), "")
+        for size in _dict_choices():
+            self.dict_size.addItem(fmt_dict(size), fmt_dict(size))
+        self.dict_size.setAccessibleName(self.tr("LZMA2 dictionary size"))
+        self.dict_size.setToolTip(self.tr(
+            "Bigger finds matches further apart, and costs roughly 13x its "
+            "own size in RAM while compressing. The list stops where this "
+            "machine would run out."))
+        self.dict_size.currentIndexChanged.connect(self._show_ram)
+
+        self.params = QLineEdit("", self)
+        self.params.setPlaceholderText(self.tr("extra 7-Zip switches, e.g. -mqs"))
+        self.params.setAccessibleName(self.tr("Extra parameters"))
+        self.params.setToolTip(self.tr(
+            "Method switches only. -p, -o, -w and @listfile are refused: they "
+            "would move the output or put a password in the log, and the "
+            "verified publish depends on knowing where the file went."))
+        self.params.textChanged.connect(self._show_ram)
+
+        self.ram_note = QLabel("", self)
+        self.ram_note.setObjectName("Subtitle")
+        self.ram_note.setWordWrap(True)
+
         self.output_dir = QLineEdit("", self)
         self.output_dir.setPlaceholderText(self.tr("next to the first input"))
         self.output_dir.setAccessibleName(self.tr("Output folder"))
@@ -94,7 +143,39 @@ class AdvancedPanel(QFrame):
         grid.addWidget(QLabel(self.tr("Output folder"), self), 2, 0)
         grid.addWidget(self.output_dir, 2, 1)
         grid.addWidget(out_browse, 2, 2)
+        grid.addWidget(QLabel(self.tr("Level"), self), 3, 0)
+        grid.addWidget(self.level, 3, 1, 1, 2)
+        grid.addWidget(QLabel(self.tr("Dictionary"), self), 4, 0)
+        grid.addWidget(self.dict_size, 4, 1, 1, 2)
+        grid.addWidget(QLabel(self.tr("Parameters"), self), 5, 0)
+        grid.addWidget(self.params, 5, 1, 1, 2)
+        grid.addWidget(self.ram_note, 6, 1, 1, 2)
         grid.setColumnStretch(1, 1)
+
+    def _show_ram(self) -> None:
+        """Say what the current dictionary will cost before the job starts."""
+        chosen = self.dict_size.currentData() or ""
+        if not chosen:
+            self.ram_note.setText("")
+            return
+        size = _parse_dict(chosen)
+        threads = self.threads.value() or (os.cpu_count() or 2)
+        self.ram_note.setText(self.tr(
+            "About %s of memory while compressing, %s to extract.")
+            % (fmt_size(lzma2_compress_ram(size, threads)),
+               fmt_size(lzma2_decompress_ram(size))))
+
+    def stage_options(self):
+        """The engine's StageOptions for this panel, or raise ValueError with
+        a reason the Parameters line can show."""
+        from excmp.engine import StageOptions
+        from excmp.ram import parse_extra_args
+
+        return StageOptions(
+            level=self.level.value() or None,
+            dict_size=self.dict_size.currentData() or None,
+            extra_args=tuple(parse_extra_args(self.params.text())),
+        )
 
     def _pick_temp(self) -> None:
         name = QFileDialog.getExistingDirectory(

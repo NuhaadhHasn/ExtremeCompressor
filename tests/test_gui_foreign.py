@@ -154,12 +154,19 @@ def test_the_listing_shows_why_a_file_was_stored(window, tmp_path, qtbot):
     assert item.text(tab.COL_WHY), "a stored file with no explanation on screen"
 
 
-def test_a_foreign_archive_says_it_cannot_be_listed_yet(window, foreign, qtbot):
+def test_a_foreign_archive_can_be_listed_since_g2(window, foreign, qtbot):
+    """Was `test_a_foreign_archive_says_it_cannot_be_listed_yet`.
+
+    Wave 3b deliberately refused here, because an empty list reads as "this
+    archive is empty" and that is worse than saying no. G2 wired up the
+    `7z l -slt` grammar, so the refusal is no longer the honest answer — the
+    listing is. The full replacement coverage lives in `test_gui_g2.py`,
+    which pins the part that still matters: it must not borrow our columns.
+    """
     tab = window.extract_tab
     tab.set_archive(foreign)
-    assert not tab.contents_toggle.isEnabled()
-    assert "7-zip" in tab.contents_toggle.toolTip().lower() or \
-           "not" in tab.contents_toggle.toolTip().lower()
+    assert tab.contents_toggle.isEnabled()
+    assert "not wired up" not in tab.contents_toggle.toolTip().lower()
 
 
 def test_the_cards_own_promise_changes_with_the_archive(window, foreign, tmp_path):

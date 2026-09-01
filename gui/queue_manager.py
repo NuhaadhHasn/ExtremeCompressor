@@ -121,6 +121,48 @@ class AnalysisWorker(QRunnable):
             self.signals.failed.emit(str(exc))
 
 
+class ListingSignals(QObject):
+    ready = Signal(object)          # ArchiveListing
+    failed = Signal(str, bool)      # message, needs_password
+
+
+class ListingWorker(QRunnable):
+    """Read a foreign archive's table of contents off the GUI thread (G2).
+
+    Only foreign archives come through here. Listing one of ours is a
+    zip-directory read plus a JSON parse and stays synchronous, because it
+    genuinely is instant and a worker would only add latency and a race to
+    something that has neither. This one shells out to `7z l -slt`, against a
+    file that may be an ISO on an external drive.
+
+    ``needs_password`` rides beside the message so the surface can offer a
+    prompt instead of an apology - the two failures look identical in a
+    string and lead to completely different next moves.
+    """
+
+    def __init__(self, archive: Path, password: str | None, temp_dir: Path,
+                 signals: ListingSignals) -> None:
+        super().__init__()
+        self.archive = archive
+        self.password = password
+        self.temp_dir = temp_dir
+        self.signals = signals
+
+    def run(self) -> None:  # pragma: no cover - exercised via the GUI tests
+        from excmp.engine import EncryptedArchiveError, list_any
+
+        try:
+            listing = list_any(self.archive,
+                               StageContext(temp_dir=self.temp_dir),
+                               self.password)
+        except EncryptedArchiveError as exc:
+            self.signals.failed.emit(str(exc), True)
+        except Exception as exc:                            # noqa: BLE001
+            self.signals.failed.emit(str(exc), False)
+        else:
+            self.signals.ready.emit(listing)
+
+
 class _EngineWorker(QRunnable):
     """Shared plumbing: a StageContext wired to throttled Qt signals."""
 
@@ -207,8 +249,14 @@ class ExtractWorker(_EngineWorker):
     def __init__(self, job: Job, signals: WorkerSignals, temp_dir: Path,
                  threads: int = 0) -> None:
         super().__init__(job, signals, temp_dir, threads)
+        # Read off the Job here, on the GUI thread, and keep only the values.
+        # The base class deliberately stores `job.id` rather than the Job so
+        # that a worker never shares a mutable object with the thread that
+        # owns it; reaching back through `self.job` would undo that.
         self.archive = job.inputs[0]
         self.out_dir = job.out_path
+        self.selected = list(job.selected)
+        self.password = job.password
 
     def run(self) -> None:
         from excmp import engine
@@ -220,7 +268,13 @@ class ExtractWorker(_EngineWorker):
             # extract_any, not extract: G1 lets this open zip/7z/rar/iso/... too.
             # The result carries `ledger_backed` so the UI can tell the verified
             # restore from the best-effort one instead of blurring them.
-            result = engine.extract_any(self.archive, self.out_dir, self.ctx)
+            if self.selected:
+                result = engine.extract_selected(
+                    self.archive, self.selected, self.out_dir, self.ctx,
+                    self.password)
+            else:
+                result = engine.extract_any(self.archive, self.out_dir,
+                                            self.ctx, self.password)
         except BaseException as exc:  # noqa: BLE001
             self._fail(exc)
             return
@@ -338,6 +392,18 @@ class QueueManager(QObject):
         archive = Path(archive)
         job = Job(inputs=[archive], out_path=Path(out_dir), kind=JobKind.EXTRACT)
         job.orig_bytes = archive.stat().st_size if archive.exists() else 0
+        return self.add_job(job)
+
+    def add_extract_selected(self, archive: Path, out_dir: Path,
+                             names: list, password: str | None = None) -> Job:
+        """Restore only ``names`` (G2). Same worker, same queue, same
+        progress - a selective restore is an extract with a shorter list, not
+        a second code path with its own bugs."""
+        archive = Path(archive)
+        job = Job(inputs=[archive], out_path=Path(out_dir), kind=JobKind.EXTRACT)
+        job.orig_bytes = archive.stat().st_size if archive.exists() else 0
+        job.selected = [str(n) for n in names]
+        job.password = password
         return self.add_job(job)
 
     def add_verify(self, archive: Path) -> Job:

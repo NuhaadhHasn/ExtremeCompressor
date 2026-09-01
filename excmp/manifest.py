@@ -209,13 +209,21 @@ def read_container(archive_path: Path, extract_dir: Path) -> tuple[Manifest, Pat
 
 
 def extract_stored(archive_path: Path, out_dir: Path,
-                   ledger: dict[str, dict]) -> list[Path]:
+                   ledger: dict[str, dict],
+                   only: set[str] | None = None) -> list[Path]:
     """Extract every ``stored/`` entry into ``out_dir`` (prefix removed).
 
     ``ledger`` is ``manifest.inputs`` and is **required**: it is what makes the
     bomb defense exact rather than heuristic. The manifest already declares
     every file's name and byte count, so each entry is capped at precisely the
     size it claims, and an entry nobody declared is refused outright.
+
+    ``only`` narrows what is **written** (G2's selective extract) and
+    deliberately does *not* narrow what is checked. Every entry in the
+    container is still validated against the full ledger on the way past, so
+    a selective restore cannot be used to walk an archive that a full one
+    would have refused - the bomb bound, the duplicate check and the
+    undeclared-entry check all still see everything.
     """
     out_dir = Path(out_dir)
     written: list[Path] = []
@@ -258,6 +266,10 @@ def extract_stored(archive_path: Path, out_dir: Path,
                 # Belt-and-braces: ledger membership plus the dedup above
                 # already bound this, but a future refactor might loosen one.
                 raise ContainerError("stored entries exceed the manifest ledger")
+            if only is not None and key not in only:
+                # Validated, counted against the bomb budget, and then not
+                # written. The checks above are the point of walking past it.
+                continue
             target = resolve_within(out_dir, key)
             target.parent.mkdir(parents=True, exist_ok=True)
             try:

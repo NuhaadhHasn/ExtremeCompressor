@@ -13,6 +13,7 @@ throwing away its work, so "pause" means "finish this stage, then wait".
 from __future__ import annotations
 
 import subprocess
+import time
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -74,6 +75,15 @@ def run_tool(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        # Nothing here is ever interactive, and a tool that decides to ask a
+        # question must get an immediate EOF rather than a handle it can wait
+        # on forever. Measured on 7-Zip 24.07: `7z x` on an encrypted archive
+        # with stdin held open was still running after 8 seconds, invisibly,
+        # because CREATE_NO_WINDOW means the prompt has nowhere to appear.
+        # (The 7-Zip-specific half of that fix is the dummy `-p` in
+        # sevenzip.py; this is the belt to its braces, and it covers every
+        # other tool we shell out to.)
+        stdin=subprocess.DEVNULL,
         text=True,
         errors="replace",
         bufsize=1,
@@ -105,3 +115,86 @@ def run_tool(
             f"{stage_id}: '{cmd[0]}' exited with code {code}\n" + "\n".join(tail[-15:])
         )
     ctx.progress_cb(stage_id, 100.0)
+
+
+@dataclass
+class Capture:
+    """What a tool said, plus whether we let it finish."""
+
+    code: int
+    lines: list[str]
+    #: We stopped reading at ``max_lines``. ``code`` is then meaningless -
+    #: the tool was killed mid-sentence - and any list built from ``lines``
+    #: is a prefix, which the surface above has to admit to.
+    truncated: bool = False
+    #: The tool outlived ``timeout_s``. Also meaningless ``code``.
+    timed_out: bool = False
+
+
+def run_capture(
+    cmd: list[str],
+    ctx: StageContext,
+    max_lines: int,
+    timeout_s: float,
+    encoding: str = "utf-8",
+) -> Capture:
+    """Run a tool and **return** what happened, rather than raising on it.
+
+    :func:`run_tool` is right for a stage, where a non-zero exit is simply a
+    failure. Listing is different: a non-zero exit is the *answer* about half
+    the time ("this archive is encrypted") and has to be classified, not
+    thrown. Hence a second entry point rather than a flag on the first.
+
+    Three bounds, because this one runs against arbitrary user files:
+    ``max_lines`` (a huge archive's listing is unbounded), ``timeout_s`` (a
+    tool that blocks anyway must not take the app with it), and the inherited
+    ``ctx.cancel``. ``encoding`` is explicit because 7-Zip's ``-scc`` switch
+    lets us *choose* the console charset, and the default locale codec would
+    mangle every non-ASCII filename.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        encoding=encoding,
+        errors="replace",
+        bufsize=1,
+        creationflags=CREATE_NO_WINDOW,
+    )
+    lines: list[str] = []
+    truncated = False
+    expired = threading.Event()
+
+    def _expire() -> None:
+        # The deadline cannot be enforced inside the read loop: a tool that
+        # blocks *without printing anything* - which is exactly what a
+        # password prompt does - never returns from `for line in stdout`, so
+        # a check at the top of the loop body is never reached. Killing from
+        # a timer closes the pipe, the read gets EOF, and the loop ends.
+        expired.set()
+        proc.kill()
+
+    watchdog = threading.Timer(timeout_s, _expire)
+    watchdog.daemon = True
+    watchdog.start()
+    assert proc.stdout is not None
+    try:
+        for line in proc.stdout:
+            lines.append(line.rstrip("\r\n"))
+            if len(lines) >= max_lines:
+                truncated = True
+                break
+            if ctx.cancel.is_set():
+                break
+    finally:
+        watchdog.cancel()
+        proc.stdout.close()
+
+    if truncated or expired.is_set() or ctx.cancel.is_set():
+        proc.kill()
+        proc.wait()
+        return Capture(code=-1, lines=lines, truncated=truncated,
+                       timed_out=expired.is_set())
+    return Capture(code=proc.wait(), lines=lines)

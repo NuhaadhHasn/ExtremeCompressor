@@ -223,6 +223,44 @@ display scaling — both need a human at the machine.
       game-fingerprint DBs in the plugins dir (recognize file by CRC ladder →
       known stream layout, zero scanning). Never ship srep (not OSI; plain
       `-dd` dedup is fine without it)
+      ⚠️ **AUDITED 2026-09-01 — B6 as written would still leave the AAA gap
+      open, and the reason is load-bearing.** B6(a) says "re-resolve the
+      oo2core DLL from the game folder at restore". **In the archival case
+      the game folder no longer exists** — and architecturally it cannot,
+      because `planner._CHAINS` is one linear whole-payload chain and a stage
+      is one path in, one path out, so the DLL is *inside the very blob xtool
+      decode has to produce*. Left as written, an xtool archive only restores
+      on the machine that made it, which breaks the lossless guarantee far
+      more seriously than the ratio gap B6 exists to close. **Fix before
+      implementing:** force the oo2core DLL(s) into the `stored/` bucket, copy
+      them in as a container resource when the user's selection did not
+      include them, materialize to the scratch cwd before decode, and make the
+      manifest field a **list** — one game can ship several oo2core/oo2ext
+      versions and different paks can come from different ones.
+      **Five sub-items the plan is missing:** (i) where the xtool stage sits
+      in the chain and how it arbitrates with Precomp (both handle zlib);
+      (ii) a version pin for the xtool binary, not just the DLL; (iii)
+      `excmp/ram.py` is LZMA2-only, so the shipped peak-RAM column will
+      silently under-report — xtool decode's `-dm` default is 75% of RAM,
+      which is the number that hurts on a 2-core/16 GB target; (iv)
+      `excmp/analyzer.py` has zero Oodle/pak awareness and
+      `gui/suggest.py`'s prose already promises "70%" on paks, so J8's
+      estimator backtest **regresses before it improves**; (v) a free-disk
+      preflight for precompression inflation, plus a decision on what an
+      xtool stage does to D9's chain-replay cost. **Also:** the self-test
+      cannot exercise the real failure mode (a *different* DLL at restore),
+      so it will look green while the actual risk is untested — the manifest
+      pin is the only defence. **Phase H conflict:** nothing currently stops
+      an installer being generated from an xtool+Oodle archive, which would
+      embed a proprietary DLL in a redistributable `setup.exe` and break the
+      100%-OSI requirement E4/SignPath depends on. **Effort is 3-4 sessions,
+      not 1-2**, and B6(f) (`.xtl` curation) should be split out as post-v1:
+      doc 09 §4 classifies it as the least transferable lever and it requires
+      owning and running each title. **The "needs E1 first" dependency is
+      soft** — `tools.py` already degrades gracefully and `_resolve_chain`
+      already warns, the same detected-only pattern B4 uses. What E1 really
+      buys is a pinned hash, which restore-side correctness wants anyway.
+
 - [ ] B7. Executables: force 7z BCJ2 explicitly with **`-mf=BCJ2`** (the cheapest
       correct trigger — [19 §4](research/19-source-study-7zip.md): 7z only
       auto-selects BCJ2 at mx≥8 *and* only with the MT mixer, else it falls back
@@ -850,9 +888,9 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 | 6 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
 | 7 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |
 | 8 | E1-E2 (downloader + notices) | 1 session | unblocks every remaining specialist (par2, xtool, FFmpeg) |
-| 9 | I1-I2 (settings/persistence + archive browser) | 1-2 sessions | the app forgetting everything is the loudest daily annoyance |
-| 10 | F1-F3 (encryption + recovery records) | 2-3 sessions | table-stakes "secure"; F3 is the WinRAR feature nobody OSS has |
-| 11 | B6 (xtool + Oodle) | 1-2 sessions | the real FitGirl gap on modern games — needs E1 first |
+| **9** | **B6 (xtool + Oodle) + B8 (re-benchmark)** | **3-4 sessions** | **the real FitGirl gap on modern AAA games — the single biggest competitive deficit.** Moved up from 11 on 2026-09-01: the "needs E1 first" dependency is soft (tools degrade gracefully already), and nothing justifies shipping encryption and settings polish ahead of the one thing we measurably lose at. **Read the audit note on B6 before starting — the DLL-bootstrap design flaw must be fixed first or the archives only restore on the machine that made them.** B8 is paired because nothing currently validates the 5-15% vs 50-70% claim; both figures are `(est.)` in doc 09 |
+| 10 | I1-I2 (settings/persistence + archive browser) | 1-2 sessions | I1 already shipped in wave 3c; this is the browser tab |
+| 11 | F1-F3 (encryption + recovery records) | 2-3 sessions | table-stakes "secure"; F3 is the WinRAR feature nobody OSS has |
 | 12 | C (video shrink) | 2-3 sessions | biggest user-visible win on media, but hours of CPU per job |
 | 13 | G3-G8, I3-I8, E3-E4 | as needed | parity + polish + release |
 | 14 | H (installer output) | 2-3 sessions | flagship differentiator, but needs E4 signing to be usable |

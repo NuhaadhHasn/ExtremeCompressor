@@ -223,6 +223,41 @@ def test_the_archive_block_is_kept_separately():
     assert doc.kind == "7z"
 
 
+def test_a_nested_layer_does_not_rewrite_what_format_this_is():
+    """A `.tar.gz` is a gzip holding a tar, and 7-Zip lists both layers.
+
+    The outer block is the format the user is actually holding; the inner one
+    describes something that only exists inside it. Letting the second block
+    write over the first reports a `.tar.gz` as `tar` — which then reaches
+    `ArchiveListing.kind` and the "kind" the Extract tab shows.
+
+    Caught by an audit, not by the test below it: that one only asserted the
+    nested layer contributed no *entries*, and said nothing about what it did
+    to the archive block.
+    """
+    doc = parse_slt("\n".join([
+        "--",
+        "Path = x.tar.gz",
+        "Type = gzip",
+        "Physical Size = 900",
+        "",
+        "----------",
+        "Path = x.tar",
+        "Size = 10240",
+        "",
+        "----",
+        "Path = x.tar",
+        "Type = tar",
+        "",
+        "----------",
+        "Path = inner.txt",
+        "Size = 42",
+        "",
+    ]).splitlines())
+    assert doc.kind == "gzip", "the inner layer overwrote the outer format"
+    assert doc.archive["Physical Size"] == "900"
+
+
 def test_a_nested_layer_separator_does_not_open_a_new_item():
     """`----` separates nested archive layers (a .tar inside a .gz); only
     `----------` opens the item section."""

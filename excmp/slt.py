@@ -241,7 +241,13 @@ def parse_slt(lines: Iterable[str], max_items: int = MAX_ITEMS) -> SltDocument:
         if in_items:
             props[key.strip()] = value
         else:
-            doc.archive[key.strip()] = value.strip()
+            # `setdefault`, not assignment. A `.tar.gz` lists as a gzip block
+            # and *then* a tar block, so plain assignment lets the inner layer
+            # rewrite `Type` and the archive reports itself as a tar. The
+            # first block wins because it describes the file the user is
+            # actually holding; everything after it describes something that
+            # only exists inside that file.
+            doc.archive.setdefault(key.strip(), value.strip())
 
     flush()
     return doc

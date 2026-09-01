@@ -170,15 +170,30 @@ guard, and they cost nothing to run (~0.4 s each).
 Timings on that drive are cache-noisy — identical extracts have measured 50.3 s
 and 8.2 s. Never quote throughput from a single run.
 
-## 8. Two warts still standing
+## 8. Both warts are closed (2026-09-01)
 
-1. **The status bar advertises `srep`.** B11 removed it from every chain; the
-   stage module survives only so pre-B11 archives still extract, and
-   `find_tools` still probes for it. Nothing bundles it, so the OSI rule is
-   intact — but the app names a tool it will never run.
-2. **The installed 7-Zip is 24.07, below E1's own security floor of ≥ 24.09**
-   (CVE-2025-0411, the Mark-of-the-Web bypass). Noticed while probing versions
-   for G2. It does not affect anything G2 does — we never rely on 7-Zip's
-   sanitizer, `excmp/safepath.py` validates every archive-supplied name
-   ourselves — but E1 plans a minimum-version floor and this machine would
-   fail it today.
+1. **The status bar no longer advertises `srep`.** It reads `srep (legacy)`,
+   and Settings spells out what that means: *only used to open archives made
+   before it was dropped; never used to compress*. Discovery deliberately
+   **stays** — `SrepStage.available()` goes through `find_tools()`, and there
+   is a test that builds a genuine pre-B11 archive and restores it. Hiding a
+   tool that can still run would leave someone debugging a legacy archive
+   unable to see it was found. `excmp/tools.py:LEGACY_ONLY` carries the label
+   and a test asserts no chain in `_CHAINS` can reach anything in it.
+2. **7-Zip is now 26.02**, above the 24.09 floor. Verified: the `-slt` parser,
+   the `solid` flag, encryption detection and *both* error strings in
+   `slt._SIGNATURES` are byte-identical between 24.07 and 26.02, so the
+   upgrade cost nothing. `excmp/tools.py` now has `parse_tool_version()` and
+   `below_floor()` (E1 groundwork), surfaced in all **three** inventory
+   surfaces — status strip, Settings, and the About card.
+
+**The one thing to watch:** `slt._SIGNATURES` is a table of *English* 7-Zip
+error strings, and `classify_failure()` returns `""` for anything it does not
+recognise — by design, because guessing "corrupt" from an unrecognised string
+would tell somebody their archive was broken on the strength of wording that
+changed between releases. The consequence is that if a future 7-Zip reworded
+"Cannot open encrypted archive" the password prompt would **silently stop
+appearing**, and every test would still pass. `test_failures_are_told_apart`
+pins the strings; re-run it after any 7-Zip upgrade. (`the system cannot find
+the file` in that same table is a Windows CRT message and tracks the OS
+locale, not the 7-Zip version — it is already wrong on a non-English Windows.)

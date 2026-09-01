@@ -175,14 +175,37 @@ class SettingsTab(QScrollArea):
 
     # -- tools ---------------------------------------------------------------
     def set_tools(self, tools: dict[str, ToolInfo | None]) -> None:
+        """The full inventory — and what we will actually do with each entry.
+
+        Two qualifiers earn their place here. A **legacy** tool is one we find
+        and can still run, but will never choose for a new archive (SREP: not
+        OSI-licensed, and it once failed its own restore checksum). Listing it
+        bare said the app would use a tool it never will; hiding it would
+        leave someone restoring a pre-B11 archive unable to see it was found.
+        A tool **below its security floor** gets the CVE named, because "it is
+        old" without a reason is not something a user can act on.
+        """
+        from excmp.tools import LEGACY_ONLY, below_floor, floor_reason
+
         self._tools = dict(tools)
+        stale = {name: (found, needed) for name, found, needed in below_floor(tools)}
         lines = []
         for name, info in sorted(self._tools.items()):
             if info is None:
                 lines.append(self.tr("%s — not installed") % name)
-            else:
-                version = getattr(info, "version", "") or self.tr("version unknown")
-                lines.append(f"{name} {version} — {getattr(info, 'path', '')}")
+                continue
+            version = getattr(info, "version", "") or self.tr("version unknown")
+            line = f"{name} {version} — {getattr(info, 'path', '')}"
+            if name in LEGACY_ONLY:
+                line += self.tr("  [legacy: only used to open archives made "
+                                "before it was dropped; never used to compress]")
+            if name in stale:
+                found, needed = stale[name]
+                line += self.tr("  [update it: %(found)s is below %(needed)s, "
+                                "which fixes %(why)s]") % {
+                    "found": found, "needed": needed,
+                    "why": floor_reason(name) or self.tr("a known issue")}
+            lines.append(line)
         self._tools_label.setText("\n".join(lines))
 
     def tools_text(self) -> str:

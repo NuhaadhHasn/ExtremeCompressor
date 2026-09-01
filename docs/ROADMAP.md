@@ -1,24 +1,24 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-08-07**. Engine core, Phase A (GUI), Phase D0 (security
-> hotfix), **Phase J part 1** (estimates before compressing, scored on two real
-> corpora), **B11 + D9** (SREP-free chains; nothing publishes without a fully
-> verified restore), and **UI v3 wave 1** (all 13 items of
-> [research/23](research/23-ui-v3-redesign.md) §7 — screen fit, one merged
-> chooser, fixed action bar, action registry, WCAG fixes, the 1366×768
-> regression gate) are **DONE and merged to `main`**.
-> **UI v3 wave 2 is complete** — 2a (Activity tab, compact results, queue
-> density, scan progress, the last modal gone) and 2b (the height compaction,
-> token sweep, Fluent SVG icons, dark title bar, pending-items list), both
-> **on one branch awaiting review**. **469 tests** (468 pass + 1 strict-xfail
-> height target that research/23 §2.4 and §3.3 make unreachable).
-> **UI v3 wave 3 is complete** — 3a (verify verb + button), 3b (foreign
-> archives + listing), 3c (`.sha256` sidecar, Settings + persistence, the
-> autosubfolder heuristic, the first-run notice). 3a merged; **3b and 3c on
-> branches awaiting review**. **469 tests** (468 pass + 1 strict-xfail).
-> **research/23 §5 is COMPLETE** — the level/dictionary knobs, the RAM column
-> and the Parameters line landed 2026-08-07. **469 tests** (468 pass + 1
-> strict-xfail). **Next up: G2 foreign listing, then J5-J7.**
+> Status date: **2026-08-07**. **469 tests** (468 pass + 1 strict-xfail).
+> Everything below is **merged to `main`**; nothing is awaiting review.
+>
+> **Done:** engine core · Phase A (GUI) · Phase D0 (security hotfix) ·
+> Phase J part 1 (estimates before compressing, scored on two real corpora) ·
+> B11 + D9 (SREP-free chains; nothing publishes without a fully verified
+> restore) · **all of UI v3** — [research/23](research/23-ui-v3-redesign.md)
+> §7's four waves and the whole of its §5 engine-exposure inventory:
+> screen fit and the merged chooser (w1), the Activity tab and the height
+> compaction (w2), and verify/list/hash, foreign archives, the `.sha256`
+> sidecar, Settings with persistence, and the level/dictionary knobs with a
+> peak-RAM column (w3).
+>
+> The one open exception: research/23 §2.4's ≤300px page budget is
+> **unreachable** and stays a `strict=True` xfail — §2.4 and §3.3 contradict
+> each other, and §3.3's 32px touch floor wins. See
+> [benchmarks/2026-08-07-ui-wave2b](benchmarks/2026-08-07-ui-wave2b.md).
+>
+> **Next up: G2 (foreign-archive listing), then J5-J7.**
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -795,13 +795,13 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 | ~~2~~ | ~~D0 (security hotfix)~~ | ✅ done | an exploitable reader bug outranked every feature |
 | ~~3a~~ | ~~J1-J4 + J8 (estimator + comparison table + preflight + backtest)~~ | ✅ done | estimates are live and scored against two real corpora |
 | ~~UI-1~~ | ~~UI v3 wave 1 (screen fit, merged chooser, action bar, registry, WCAG, fit gate)~~ | ✅ done, merged | all 13 items of research/23 §7; the 1366×768 gate pins the fix |
-| ~~UI-2a~~ | ~~UI v3 wave 2a (Activity tab + status strip, compact results, queue density, scan progress, Banner/I9)~~ | ✅ done, on a branch | W2-1/3/7/8/9. Populated Compress page 869→748px, last `QMessageBox` gone, scan silence 4.7s→0.3s on the real HDD tree. Also fixed the tests' missing `QT_QPA_FONTDIR` — every prior height gate had been measuring tofu |
-| ~~UI-2b~~ | ~~UI v3 wave 2b (compaction, token sweep, Fluent SVG icons, dark title bar, pending-items list)~~ | ✅ done, on a branch | W2-4/5/6/10 + intake chip, analysis-card collapse, chooser diet. Populated page 748→415px; the empty page fits 150% for the first time. ≤300px is unreachable without dropping a profile row, the analysis card, or the 32px touch floor — recorded as a strict xfail, not silently dropped |
+| ~~UI-2a~~ | ~~UI v3 wave 2a (Activity tab + status strip, compact results, queue density, scan progress, Banner/I9)~~ | ✅ done, merged | W2-1/3/7/8/9. Populated Compress page 869→748px, last `QMessageBox` gone, scan silence 4.7s→0.3s on the real HDD tree. Also fixed the tests' missing `QT_QPA_FONTDIR` — every prior height gate had been measuring tofu |
+| ~~UI-2b~~ | ~~UI v3 wave 2b (compaction, token sweep, Fluent SVG icons, dark title bar, pending-items list)~~ | ✅ done, merged | W2-4/5/6/10 + intake chip, analysis-card collapse, chooser diet. Populated page 748→415px; the empty page fits 150% for the first time. ≤300px is unreachable without dropping a profile row, the analysis card, or the 32px touch floor — recorded as a strict xfail, not silently dropped |
 | **3b** | **J5-J7 (per-type memory, long-job confirm, self-calibration)** | **1 session** | **finishes Phase J; J7 is what turns a cold-start prior into estimates that fit this machine** |
 | ~~4~~ | ~~B11 + D9 (drop SREP; make the self-test replay the chain)~~ | ✅ done | the chain is SREP-free and nothing publishes without a verified restore — four clean Extreme round-trips on real corpora |
-| ~~UI-3a~~ | ~~UI v3 wave 3a (verify verb + button, `excmp hash`)~~ | ✅ done, on a branch | The D9 gate became public: same code path, three callers. Catches a single flipped byte in a 721 MB archive and names the file |
-| ~~UI-3b~~ | ~~UI v3 wave 3b (G1 foreign archives, I2-lite listing)~~ | ✅ done, on a branch | Opens zip/7z/rar/iso/…, and shows the ledger — size, SHA-256, route and *why stored* — without extracting. `ledger_backed` keeps the verified restore distinguishable from the best-effort one |
-| ~~UI-3c~~ | ~~UI v3 wave 3c (`.sha256` sidecar, Settings + persistence, autosubfolder, first-run notice)~~ | ✅ done, on a branch | Sidecar is **opt-in and remembered** (decided 2026-08-07). The app persists preferences for the first time — it kept only window geometry before. Settings also hosts the tool inventory the status strip elides |
+| ~~UI-3a~~ | ~~UI v3 wave 3a (verify verb + button, `excmp hash`)~~ | ✅ done, merged | The D9 gate became public: same code path, three callers. Catches a single flipped byte in a 721 MB archive and names the file |
+| ~~UI-3b~~ | ~~UI v3 wave 3b (G1 foreign archives, I2-lite listing)~~ | ✅ done, merged | Opens zip/7z/rar/iso/…, and shows the ledger — size, SHA-256, route and *why stored* — without extracting. `ledger_backed` keeps the verified restore distinguishable from the best-effort one |
+| ~~UI-3c~~ | ~~UI v3 wave 3c (`.sha256` sidecar, Settings + persistence, autosubfolder, first-run notice)~~ | ✅ done, merged | Sidecar is **opt-in and remembered** (decided 2026-08-07). The app persists preferences for the first time — it kept only window geometry before. Settings also hosts the tool inventory the status strip elides |
 | ~~UI-4~~ | ~~Level/dict knobs + RAM column + Parameters line~~ | ✅ done | `excmp/ram.py` implements 7-Zip's own peak-RAM formula (doc 19 §3), clamped to the input the way `reduceSize` does. B9's cap drives the dictionary menu; the Parameters line is an allowlist |
 | **G2** | **Foreign archive listing (`7z l -slt`) + password-on-demand** | **1 session** | **what would make "What's inside" work on a zip; wave 3b deliberately refuses rather than showing an empty list** |
 | 5 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |

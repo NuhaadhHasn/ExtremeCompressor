@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-372%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-468%20passing-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 Most archivers run one algorithm over everything. ExtremeCompressor works like a
@@ -48,9 +48,22 @@ before ever claiming success.
   default; quality is never touched. (Opt-in AV1/Opus "Shrink" mode is on the
   roadmap for when you *want* them smaller.)
 - **Trust built in** — `.excmp` archives carry a manifest (exact stage chain,
-  tool versions, SHA-256 of every file). Extraction replays the chain in
-  reverse and fails loudly on any mismatch. Inputs are never modified; outputs
-  are written atomically.
+  tool versions, SHA-256 of every file, and the settings that produced it).
+  Extraction replays the chain in reverse and fails loudly on any mismatch.
+  Inputs are never modified; outputs are written atomically.
+- **Ask it to prove it** — `Verify only` (or `excmp verify`) fully restores an
+  archive to a temp folder, checks every hash, and deletes it again. Not a
+  container self-test: a real restore, the same one that gates every publish.
+  Catches a single flipped byte in a 721 MB archive and names the file.
+- **Opens other people's archives** — zip, 7z, rar, tar, iso, cab, msi, wim.
+  Those carry no SHA-256 ledger, and the app says so rather than borrowing the
+  verified-restore wording.
+- **Shows what is inside without extracting** — name, size, SHA-256, route,
+  and *why a file was stored*. That last column exists nowhere else, because
+  nothing else records the reason.
+- **Knobs with their cost attached** — level and dictionary, with the peak RAM
+  each would need shown before you start (7-Zip's own formula, clamped to your
+  actual data). The dictionary list stops where your machine would.
 - **Progress, cancel, clean errors** — every stage streams progress; Ctrl-C
   safe; failures surface the tool's real output, not a stack trace.
 
@@ -88,7 +101,8 @@ before ever claiming success.
 | `excmp/engine.py` | Runs the chain, packages, self-tests, atomic publish |
 | `excmp/manifest.py` | `.excmp` container: schema-versioned manifest + payload |
 | `excmp/verify.py` | SHA-256 ledger, restore verification |
-| `excmp/cli.py` | `analyze` / `compress` / `extract` commands |
+| `excmp/ram.py` | 7-Zip's own peak-RAM formula, the dictionary cap, and the Parameters allowlist |
+| `excmp/cli.py` | `analyze` / `compress` / `extract` / `list` / `verify` / `hash` |
 
 ---
 
@@ -131,7 +145,7 @@ methodology in [`docs/benchmarks/`](docs/benchmarks/).
 │   ├── mainwindow.py       # the single-window flow
 │   ├── icons.py            # theme-tinted Fluent SVGs (MIT, vendored)
 │   └── widgets/            # dropzone, analysis card, chooser, queue, results, banner
-├── tests/                  # 372 pytest tests incl. real-tool roundtrips
+├── tests/                  # 468 pytest tests incl. real-tool roundtrips
 ├── tools/
 │   ├── bench.py            # profile benchmark harness
 │   ├── shots.py            # regenerates docs/images/ from the real app
@@ -189,6 +203,30 @@ python -m excmp compress "D:\MyGame" -o game.excmp -p extreme
 
 # restore — verified byte-identical, or it fails loudly
 python -m excmp extract game.excmp -o "D:\restored"
+
+# is this archive still good? a full restore + ledger check; writes nothing
+python -m excmp verify game.excmp
+
+# what is inside, straight from the manifest - no extraction, any size
+python -m excmp list game.excmp
+
+# SHA-256 of anything, in sha256sum layout
+python -m excmp hash game.excmp
+```
+
+`extract` also opens archives made by other tools - zip, 7z, rar, tar, iso,
+cab, msi, wim - and says plainly when one carries no ledger to check against.
+
+Knobs, when you want them. The defaults are whatever the profile picks:
+
+```bash
+# level, dictionary, and a transport sidecar for whoever you send it to
+python -m excmp compress "D:\MyGame" -o game.excmp -p extreme --level 9 --dict 256m --sha256
+
+# extra 7-Zip method switches. Needs an "=" sign, because every value
+# starts with a dash. -p/-o/-w/@listfile are refused: they would leak a
+# password into the log or move the output away from the verified publish.
+python -m excmp compress "D:\MyGame" -o game.excmp --params="-mqs"
 ```
 
 Example output:

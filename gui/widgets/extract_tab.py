@@ -15,6 +15,7 @@ hollow out the single guarantee this project sells.
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -31,12 +32,30 @@ from .dropzone import paths_from_mime
 class ExtractTab(QWidget):
     extractRequested = Signal(object, object)   # archive: Path, dest: Path
     verifyRequested = Signal(object)           # archive: Path
+    # G2. The tab never owns the password field: it says it needs one and the
+    # window's Banner asks, so the secret lives in exactly one widget.
+    passwordRequired = Signal(object)              # archive: Path
+    extractSelectedRequested = Signal(object, object)  # archive, names
 
     COL_NAME, COL_SIZE, COL_ROUTE, COL_WHY = range(4)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self._listing = None
+        self._reading = False
+        self._password: str | None = None
+        self._temp_dir = Path(tempfile.gettempdir()) / "excmp"
+
+        # One at a time: listing is cheap, and two 7-Zip launches racing to
+        # fill the same tree would interleave rows from different archives.
+        from PySide6.QtCore import QThreadPool
+        from ..queue_manager import ListingSignals
+        self._listing_pool = QThreadPool(self)
+        self._listing_pool.setMaxThreadCount(1)
+        self._listing_signals = ListingSignals(self)
+        self._listing_signals.ready.connect(self._on_listing_ready)
+        self._listing_signals.failed.connect(self._on_listing_failed)
 
         column = QVBoxLayout(self)
         column.setContentsMargins(20, 18, 20, 18)
@@ -127,6 +146,16 @@ class ExtractTab(QWidget):
         self.contents_toggle.toggled.connect(self._set_contents_open)
         grid.addWidget(self.contents_toggle, 7, 0, 1, 3)
 
+        # G2: the caveat that only a foreign listing carries. Kept separate
+        # from the card's standing blurb so it appears with the listing and
+        # vanishes with it - a permanent disclaimer above a ledger-backed
+        # table would be the wave-3b blurb contradiction one widget down.
+        self.contents_caption = QLabel("", card)
+        self.contents_caption.setObjectName("Subtitle")
+        self.contents_caption.setWordWrap(True)
+        self.contents_caption.setVisible(False)
+        grid.addWidget(self.contents_caption, 8, 0, 1, 3)
+
         self.contents = QTreeWidget(card)
         self.contents.setColumnCount(4)
         self.contents.setHeaderLabels([self.tr("File"), self.tr("Size"),
@@ -139,7 +168,22 @@ class ExtractTab(QWidget):
         self.contents.header().setSectionResizeMode(
             self.COL_NAME, QHeaderView.ResizeMode.Stretch)
         self.contents.setVisible(False)
-        grid.addWidget(self.contents, 8, 0, 1, 3)
+        self.contents.itemChanged.connect(lambda *_: self._refresh_selection())
+        grid.addWidget(self.contents, 9, 0, 1, 3)
+
+        self.extract_selected_button = QPushButton(
+            self.tr("Extract selected"), card)
+        self.extract_selected_button.setEnabled(False)
+        self.extract_selected_button.setToolTip(self.tr(
+            "Restore only the ticked files. In a solid archive that still "
+            "replays the whole chain to reach them — you will be told how "
+            "much before it starts."))
+        self.extract_selected_button.setAccessibleDescription(
+            self.extract_selected_button.toolTip())
+        self.extract_selected_button.clicked.connect(self._emit_selected)
+        grid.addWidget(self.extract_selected_button, 10, 0, 1, 3)
+        self.extract_selected_button.setVisible(False)
+
         self._set_contents_open(False)
 
         column.addWidget(card)
@@ -194,11 +238,14 @@ class ExtractTab(QWidget):
             "no SHA-256 ledger to check against."))
         self.verify_button.setAccessibleDescription(self.verify_button.toolTip())
 
-        self.contents_toggle.setEnabled(ours)
-        self.contents_toggle.setToolTip("" if ours else self.tr(
-            "Listing other formats needs 7-Zip’s own listing support, which "
-            "is not wired up yet."))
-        if not ours:
+        # G2: anything 7-Zip can open can now be listed. Before this phase
+        # the toggle was disabled for foreign archives and said so, because
+        # an empty list reads as "this archive is empty" - the refusal was
+        # honest, and this is what makes it unnecessary.
+        self.contents_toggle.setEnabled(exists)
+        self.contents_toggle.setToolTip("" if exists else self.tr(
+            "Choose an archive first."))
+        if not exists:
             self.contents_toggle.setChecked(False)
         self._set_contents_open(self.contents_toggle.isChecked())
 
@@ -237,38 +284,204 @@ class ExtractTab(QWidget):
             else self.tr("Archive contents, collapsed"))
         if open_ and self.contents.topLevelItemCount() == 0:
             self._fill_contents()
-        self.contents.setVisible(open_ and self.contents.topLevelItemCount() > 0)
+        showing = open_ and self.contents.topLevelItemCount() > 0
+        self.contents.setVisible(showing)
+        self.contents_caption.setVisible(
+            showing and self._listing is not None
+            and not self._listing.ledger_backed)
+        self.extract_selected_button.setVisible(showing)
 
     def _fill_contents(self) -> None:
-        """Straight from the manifest - no extraction, no worker thread. A zip
-        directory read plus one JSON parse is fast even on a huge archive."""
-        from excmp.engine import list_archive
+        """Ours synchronously, anyone else's on a worker (G2).
+
+        The asymmetry is real rather than tidy: our listing is a zip-directory
+        read plus one JSON parse and is genuinely instant even on a 700 GB
+        archive, while a foreign one launches `7z l -slt` against a file that
+        might be an ISO on an external drive.
+        """
+        from excmp.engine import is_excmp, list_archive
 
         self.contents.clear()
         archive = Path(self.archive_edit.text().strip('" '))
-        try:
-            listing = list_archive(archive)
-        except Exception as exc:                      # noqa: BLE001
-            self.status.setText(self.tr("Could not read the contents: %s") % exc)
+        if not archive.is_file():
             return
+        if is_excmp(archive):
+            try:
+                self._apply_listing(list_archive(archive))
+            except Exception as exc:                      # noqa: BLE001
+                self.status.setText(
+                    self.tr("Could not read the contents: %s") % exc)
+            return
+        self._start_foreign_listing(archive)
+
+    # -- G2: the foreign path ----------------------------------------------
+    def _start_foreign_listing(self, archive: Path) -> None:
+        from ..queue_manager import ListingWorker
+
+        self._reading = True
+        self.status.setText(self.tr("Reading the archive’s contents…"))
+        self._listing_pool.start(ListingWorker(
+            archive, self._password, self._temp_dir, self._listing_signals))
+
+    def _on_listing_ready(self, listing: object) -> None:
+        self._apply_listing(listing)
+
+    def _on_listing_failed(self, message: str, needs_password: bool) -> None:
+        self._reading = False
+        if needs_password:
+            # File Roller's timing: ask when the operation needs the answer,
+            # not when the file was chosen. The Banner owns the field; this
+            # tab never sees the secret until it is handed one.
+            self.passwordRequired.emit(Path(self.archive_edit.text().strip('" ')))
+            return
+        self.status.setText(self.tr("Could not read the contents: %s") % message)
+
+    def unlock_with(self, password: str) -> None:
+        """Retry the listing with the password the Banner collected."""
+        self._password = password or None
+        archive = Path(self.archive_edit.text().strip('" '))
+        if archive.is_file():
+            self._start_foreign_listing(archive)
+
+    def current_password(self) -> str | None:
+        return self._password
+
+    # -- rendering ---------------------------------------------------------
+    def _apply_listing(self, listing) -> None:
+        """Fill the tree, with the columns each kind of archive can honestly
+        fill.
+
+        Ours knows the route it chose and *why* it stored a file, and carries
+        a SHA-256. A foreign archive knows none of those and carries a CRC-32
+        instead. Pointing our headings at its numbers would repeat the defect
+        the QA sweep already caught once, when a foreign extract borrowed the
+        verified-restore wording.
+        """
+        self._listing = listing
+        self.contents.clear()
+        ours = listing.ledger_backed
+
+        self.contents.setHeaderLabels(
+            [self.tr("File"), self.tr("Size"), self.tr("Route"),
+             self.tr("Why it was stored")] if ours else
+            [self.tr("File"), self.tr("Size"), self.tr("Packed"),
+             self.tr("Modified")])
+
+        self.contents_caption.setVisible(not ours)
+        if not ours:
+            # Deliberately NOT another "this was not created by
+            # ExtremeCompressor" - the status line five rows up already says
+            # that, and Phase J's own notes record printing one warning three
+            # times in a single panel as a defect. This caption earns its
+            # place by explaining the *columns*, which is the one thing the
+            # status line cannot.
+            note = self.tr(
+                "Sizes and checksums as the archive itself records them. The "
+                "CRC-32 on each row (hover a name) is an error check, not the "
+                "SHA-256 a verified restore compares against.")
+            if listing.encrypted:
+                note += self.tr(" Some entries are encrypted; extracting "
+                                "those will ask for the password.")
+            if listing.truncated:
+                note += self.tr(" Showing the first %d entries only — this "
+                                "archive holds more.") % len(listing.entries)
+            self.contents_caption.setText(note)
+
         for entry in listing.entries:
             item = QTreeWidgetItem(self.contents)
-            item.setText(self.COL_NAME, entry.name)
+            name = entry.name + ("/" if entry.is_dir else "")
+            item.setText(self.COL_NAME, name)
             item.setText(self.COL_SIZE, fmt_size(entry.size))
-            item.setText(self.COL_ROUTE, entry.route)
-            item.setText(self.COL_WHY, entry.reason)
-            # The SHA-256 is the evidence; it is too wide for a column but it
-            # belongs one hover away, not nowhere.
-            item.setToolTip(self.COL_NAME,
-                            f"{entry.name}\nSHA-256 {entry.sha256}")
-            # One spoken sentence per row, so a screen reader does not have to
-            # stitch four columns together to learn what the row says.
-            spoken = self.tr("%s, %s, %s") % (entry.name, fmt_size(entry.size),
-                                              entry.reason or entry.route)
+            if ours:
+                item.setText(self.COL_ROUTE, entry.route)
+                item.setText(self.COL_WHY, entry.reason)
+                # The SHA-256 is the evidence; too wide for a column, but it
+                # belongs one hover away rather than nowhere.
+                item.setToolTip(self.COL_NAME,
+                                f"{entry.name}\nSHA-256 {entry.sha256}")
+                spoken = self.tr("%s, %s, %s") % (
+                    entry.name, fmt_size(entry.size),
+                    entry.reason or entry.route)
+            else:
+                # Blank, not "0 B": 7-Zip leaves the packed size empty for
+                # every member of a solid block after the first, and a zero
+                # there would claim the file costs nothing to store.
+                item.setText(self.COL_ROUTE,
+                             fmt_size(entry.packed_size)
+                             if entry.packed_size is not None else "")
+                item.setText(self.COL_WHY, entry.modified[:19])
+                item.setToolTip(self.COL_NAME, self.tr(
+                    "%s\nCRC-32 %s (an error check, not a SHA-256)")
+                    % (entry.name, entry.crc or self.tr("not recorded")))
+                spoken = self.tr("%s, %s") % (name, fmt_size(entry.size))
+
             item.setData(self.COL_NAME, Qt.ItemDataRole.AccessibleTextRole, spoken)
+            item.setData(self.COL_NAME, Qt.ItemDataRole.UserRole, entry.name)
+            if entry.is_dir:
+                # A directory is archive bookkeeping. Offering it as a
+                # selectable file invites a request that returns nothing.
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+            else:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(self.COL_NAME, Qt.CheckState.Unchecked)
+
+        showing = (self.contents_toggle.isChecked()
+                   and self.contents.topLevelItemCount() > 0)
+        self.contents.setVisible(showing)
+        self.extract_selected_button.setVisible(showing)
+        # The foreign path sets a "Reading..." status before launching 7-Zip.
+        # Leaving it up beside a loaded table says the job is still running.
+        if self._reading:
+            self._reading = False
+            self._revalidate()
+        self._refresh_selection()
+
+    # -- selection ---------------------------------------------------------
+    def selected_names(self) -> list[Path]:
+        names = []
+        for i in range(self.contents.topLevelItemCount()):
+            item = self.contents.topLevelItem(i)
+            if item.flags() & Qt.ItemFlag.ItemIsUserCheckable and \
+                    item.checkState(self.COL_NAME) == Qt.CheckState.Checked:
+                names.append(item.data(self.COL_NAME, Qt.ItemDataRole.UserRole))
+        return names
+
+    def check_row(self, row: int) -> None:
+        self.contents.topLevelItem(row).setCheckState(
+            self.COL_NAME, Qt.CheckState.Checked)
+
+    def check_named(self, name: str) -> None:
+        for i in range(self.contents.topLevelItemCount()):
+            item = self.contents.topLevelItem(i)
+            if item.data(self.COL_NAME, Qt.ItemDataRole.UserRole) == name:
+                item.setCheckState(self.COL_NAME, Qt.CheckState.Checked)
+                return
+        raise KeyError(name)
+
+    def _refresh_selection(self) -> None:
+        count = len(self.selected_names())
+        self.extract_selected_button.setEnabled(count > 0)
+        self.extract_selected_button.setText(
+            self.tr("Extract %d selected") % count if count
+            else self.tr("Extract selected"))
+
+    def _emit_selected(self) -> None:
+        names = self.selected_names()
+        archive = Path(self.archive_edit.text().strip('" '))
+        if names and archive.is_file():
+            self.extractSelectedRequested.emit(archive, names)
+
+    def current_listing(self):
+        return self._listing
 
     def set_archive(self, path: Path) -> None:
         self.contents.clear()
+        self._listing = None
+        self._reading = False
+        # A password was given for one archive. Carrying it to the next
+        # silently tries a user's secret against a file they never offered
+        # it for.
+        self._password = None
         self.archive_edit.setText(str(path))
         if not self.dest_edit.text():
             self.dest_edit.setText(str(self._suggest_destination(Path(path))))

@@ -75,6 +75,12 @@ class Job:
     options: object | None = None
 
     summary: AnalysisSummary | None = None
+    # G2: a selective restore (empty = the whole archive), and the password
+    # for an encrypted one. `password` is deliberately NOT persisted with the
+    # rest of the job - it lives as long as the job does and no longer, and
+    # nothing writes a Job to QSettings.
+    selected: list = field(default_factory=list)
+    password: str | None = None
     result: object | None = None      # CompressResult | ExtractResult
     error: str = ""
     log: list[str] = field(default_factory=list)

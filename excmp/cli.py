@@ -106,7 +106,13 @@ def cmd_extract(args: argparse.Namespace) -> int:
     """
     from . import engine
     ctx = StageContext(temp_dir=Path(args.temp))
-    result = engine.extract_any(Path(args.archive), Path(args.output), ctx)
+    password = _ask_password(args)
+    if args.only:
+        result = engine.extract_selected(Path(args.archive), args.only,
+                                         Path(args.output), ctx, password)
+    else:
+        result = engine.extract_any(Path(args.archive), Path(args.output), ctx,
+                                    password)
     msg = {
         "out_dir": str(result.out_dir),
         "files_restored": result.files_restored,
@@ -128,14 +134,36 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_list(args: argparse.Namespace) -> int:
-    """What is inside, straight from the manifest - nothing is extracted.
+def _ask_password(args: argparse.Namespace) -> str | None:
+    """Prompt, never accept a value on the command line.
 
-    The `why` column is the part no other archiver can print, because no other
-    archiver records why a file was stored rather than compressed.
+    ``--password`` deliberately takes no argument. A password given as argv
+    is visible in the process table for the life of the command and lands in
+    the shell's history file for much longer than that - and this project
+    already refuses to echo one back in an error message
+    (``excmp.ram.parse_extra_args``).
+    """
+    if not getattr(args, "password", False):
+        return None
+    import getpass
+    return getpass.getpass("Archive password: ")
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    """What is inside. Ours comes from the manifest; anyone else's from
+    ``7z l -slt`` (G2). Nothing is extracted either way.
+
+    The two are rendered by different branches on purpose. Our `why` column
+    is the part no other archiver can print, because no other archiver
+    records why a file was stored rather than compressed - and a foreign
+    archive has no answer to it, no profile, no stage chain, and a CRC-32
+    where our SHA-256 goes. Printing our headings over its numbers would be
+    the "0 SHA-256 hashes verified" mistake in a second place.
     """
     from . import engine
-    listing = engine.list_archive(Path(args.archive))
+    archive = Path(args.archive)
+    listing = engine.list_any(archive, StageContext(temp_dir=Path(args.temp)),
+                              _ask_password(args))
     if args.json:
         print(json.dumps({
             "archive": str(listing.archive),
@@ -144,20 +172,56 @@ def cmd_list(args: argparse.Namespace) -> int:
             "created_utc": listing.created_utc,
             "stages": listing.stages,
             "total_bytes": listing.total_bytes,
+            "ledger_backed": listing.ledger_backed,
+            "truncated": listing.truncated,
+            "encrypted": listing.encrypted,
             "entries": [{"name": e.name, "size": e.size, "sha256": e.sha256,
-                         "route": e.route, "reason": e.reason}
+                         "route": e.route, "reason": e.reason, "crc": e.crc,
+                         "packed_size": e.packed_size, "modified": e.modified,
+                         "encrypted": e.encrypted, "is_dir": e.is_dir}
                         for e in listing.entries],
         }, indent=2))
         return 0
 
     print(f"{listing.archive}")
-    print(f"  profile {listing.profile} · chain {' → '.join(listing.stages) or 'none'} "
-          f"· created {listing.created_utc}")
-    print(f"  {len(listing.entries)} file(s), {_fmt_size(listing.total_bytes)}")
+    if listing.ledger_backed:
+        print(f"  profile {listing.profile} · chain "
+              f"{' → '.join(listing.stages) or 'none'} "
+              f"· created {listing.created_utc}")
+        print(f"  {len(listing.entries)} file(s), {_fmt_size(listing.total_bytes)}")
+        print()
+        print(f"{'file':<48} {'size':>10}  {'route':<9} why")
+        for e in listing.entries:
+            print(f"{e.name[-48:]:<48} {_fmt_size(e.size):>10}  "
+                  f"{e.route:<9} {e.reason}")
+        return 0
+
+    # Plain ASCII separators: this branch is new, and the middle dot the
+    # .excmp branch uses renders as a replacement character in the Windows
+    # console's default code page.
+    print(f"  {listing.kind}, {listing.file_count} file(s), "
+          f"{_fmt_size(listing.total_bytes)}")
+    print("  not an ExtremeCompressor archive: these are the archive's own "
+          "numbers, and its")
+    print("  CRC-32s are an error check, not the SHA-256 ledger a verified "
+          "restore needs")
+    if listing.encrypted:
+        print("  some entries are encrypted - extracting them will need the "
+              "password")
+    if listing.truncated:
+        print(f"  showing the first {len(listing.entries)} entries only - this "
+              f"archive has more")
     print()
-    print(f"{'file':<48} {'size':>10}  {'route':<9} why")
+    print(f"{'file':<48} {'size':>10}  {'packed':>10}  {'crc-32':<8} modified")
     for e in listing.entries:
-        print(f"{e.name[-48:]:<48} {_fmt_size(e.size):>10}  {e.route:<9} {e.reason}")
+        name = e.name + ("/" if e.is_dir else "")
+        # A blank, not "0 B". 7-Zip leaves `Packed Size` empty for every
+        # member of a solid block after the first, because the block is
+        # compressed as one unit - printing zero there would tell the reader
+        # these files take up no space.
+        packed = _fmt_size(e.packed_size) if e.packed_size is not None else ""
+        print(f"{name[-48:]:<48} {_fmt_size(e.size):>10}  "
+              f"{packed:>10}  {e.crc:<8} {e.modified[:19]}")
     return 0
 
 
@@ -256,12 +320,25 @@ def build_parser() -> argparse.ArgumentParser:
     px.add_argument("-o", "--output", required=True)
     px.add_argument("--temp", default=default_tmp)
     px.add_argument("--json", action="store_true")
+    px.add_argument("--only", action="append", metavar="NAME", default=[],
+                    help="extract just this member (repeatable). For one of "
+                         "ours the file is still checked against its SHA-256; "
+                         "a solid archive replays the whole chain to reach it")
+    px.add_argument("--password", action="store_true",
+                    help="prompt for the archive's password. Takes no value "
+                         "on purpose - a password in argv is visible in the "
+                         "process table and saved in shell history")
     px.set_defaults(func=cmd_extract)
 
-    pl = sub.add_parser("list", help="show what is inside an .excmp - size, "
-                                     "SHA-256, route and why, without extracting")
+    pl = sub.add_parser("list", help="show what is inside an .excmp (size, "
+                                     "SHA-256, route and why) or any archive "
+                                     "7-Zip can open, without extracting")
     pl.add_argument("archive")
     pl.add_argument("--json", action="store_true")
+    pl.add_argument("--temp", default=default_tmp)
+    pl.add_argument("--password", action="store_true",
+                    help="prompt for the password of an archive whose file "
+                         "names are encrypted")
     pl.set_defaults(func=cmd_list)
 
     pv = sub.add_parser("verify", help="prove an .excmp archive still restores "

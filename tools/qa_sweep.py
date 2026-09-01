@@ -80,8 +80,10 @@ def build_archives(files: list[Path]) -> None:
     engine.compress([files[0].parent], ours, Profile.FAST,
                     StageContext(temp_dir=work / "t"))
     theirs = work / "somebody-elses.zip"
-    with zipfile.ZipFile(theirs, "w") as zf:
+    with zipfile.ZipFile(theirs, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("docs/guide.txt", "hello " * 400)
+        zf.writestr("docs/data.csv", "a,b,c\n" * 300)
+        zf.writestr("bin/tool.exe", b"MZ" + bytes(2000))
     _ARCHIVES.update(ours=ours, theirs=theirs)
 
 
@@ -137,6 +139,31 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     win.extract_tab.contents_toggle.setChecked(False)
     win.extract_tab.set_archive(_ARCHIVES["theirs"])
     shot(win, out, f"{theme}-07b-extract-foreign")
+
+    # G2: the foreign listing itself. This is the surface where our four
+    # columns would silently be pointed at an archive that cannot fill three
+    # of them, and where the CRC-32/SHA-256 substitution would show up.
+    win.extract_tab.contents_toggle.setChecked(True)
+    for _ in range(200):
+        settle(40)
+        if win.extract_tab.contents.topLevelItemCount():
+            break
+    settle(150)
+    shot(win, out, f"{theme}-07d-extract-foreign-listing")
+
+    # ...and with rows ticked, so the selection affordance is reviewed too.
+    win.extract_tab.check_row(0)
+    settle(80)
+    shot(win, out, f"{theme}-07e-extract-selection")
+    win.extract_tab.contents_toggle.setChecked(False)
+
+    # G2: the password prompt, which is a Banner state nothing else renders.
+    win.banner.ask_secret(
+        "locked.7z keeps its file names encrypted. Enter its password to "
+        "see what is inside.", "Unlock", lambda _pw: None)
+    settle(120)
+    shot(win, out, f"{theme}-07f-password-prompt")
+    win.banner.hide_banner()
 
     win.tabs.setCurrentWidget(win.settings_tab)
     shot(win, out, f"{theme}-07c-settings")

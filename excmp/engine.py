@@ -24,6 +24,8 @@ from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
                        read_container, write_container)
 from .planner import Plan, Profile, plan as make_plan, store_reason
+from .safepath import resolve_within, safe_relpath
+from .slt import classify_failure
 from .stages.base import Stage, StageContext, StageError, StageSkip
 from .stages.sevenzip import SevenZipStage
 from .stages.tarstage import TarStage
@@ -249,29 +251,80 @@ class ExtractResult:
     ledger_backed: bool = True
 
 
+class EncryptedArchiveError(ContainerError):
+    """This archive needs a password we do not have (or were given a wrong one).
+
+    A **subclass** of ContainerError on purpose: every existing
+    ``except ContainerError`` keeps behaving exactly as it did, while the
+    surfaces that can actually do something about it - the Extract tab, the
+    CLI - catch the narrower type and ask. "Needs a password" and "this file
+    is damaged" send a user to completely different places, so collapsing
+    them into one error would make the prompt impossible to write.
+    """
+
+
 @dataclass
 class ArchiveEntry:
-    """One file inside an archive, as the manifest recorded it."""
+    """One file inside an archive.
+
+    Two dialects share this shape. Ours fills ``sha256``, ``route`` and
+    ``reason`` from the manifest. A foreign archive fills ``crc`` and leaves
+    ``sha256`` **empty**, because 7-Zip reports a CRC-32 and a 32-bit error
+    check is not this project's integrity guarantee. They are separate fields
+    all the way to the screen so that no surface can print one under the
+    other's name - the same mistake as the "0 SHA-256 hashes verified"
+    wording that shipped once already.
+    """
 
     name: str
     size: int
     sha256: str
-    route: str      # "pipeline" | "store"
-    reason: str     # why it was stored; empty for pipelined files
+    route: str      # "pipeline" | "store"; empty for foreign archives
+    reason: str     # why it was stored; empty for pipelined and foreign files
+    # --- foreign archives only ------------------------------------------
+    crc: str = ""             # CRC-32 as 7-Zip printed it. NOT a SHA-256.
+    # None = 7-Zip printed nothing (every solid-block member after the
+    # first). Not the same fact as zero bytes, so not the same value.
+    packed_size: int | None = None
+    modified: str = ""
+    encrypted: bool = False
+    is_dir: bool = False
 
 
 @dataclass
 class ArchiveListing:
     archive: Path
-    kind: str                 # "excmp" (foreign listing is G2)
+    kind: str                 # "excmp", or 7-Zip's own type: zip/7z/rar5/iso…
     profile: str
     created_utc: str
     stages: list[str]
     entries: list[ArchiveEntry]
+    # False for archives we did not create. There is no SHA-256 ledger in a
+    # foreign zip, so an empty `sha256` there means "there was never anything
+    # to compare against", NOT "we looked and found nothing". Same companion
+    # flag, same reason, as ExtractResult.ledger_backed.
+    ledger_backed: bool = True
+    # The row cap stopped us before the archive did, so `entries` is a
+    # prefix. A truncated listing renders exactly like a complete one, which
+    # is why this has to travel with it rather than be inferred.
+    truncated: bool = False
+    # Some or all of the data needs a password to extract, even though the
+    # names listed fine (an AES zip lists happily; only its payload is
+    # locked).
+    encrypted: bool = False
+    # The payload is one stream, so reaching any single member decodes
+    # everything before it. True for every .excmp with a pipeline route, and
+    # for a foreign archive whenever 7-Zip says `Solid = +`.
+    solid: bool = False
 
     @property
     def total_bytes(self) -> int:
         return sum(e.size for e in self.entries)
+
+    @property
+    def file_count(self) -> int:
+        """Directories are archive bookkeeping, not files anyone chose."""
+        return sum(1 for e in self.entries if not e.is_dir)
 
 
 @dataclass
@@ -509,10 +562,78 @@ def list_archive(archive: Path) -> ArchiveListing:
         created_utc=manifest.created_utc,
         stages=[st.stage for st in manifest.stages],
         entries=entries,
+        # Anything that went through the chain lives in one solid payload.
+        solid=any(e.route == "pipeline" for e in entries),
     )
 
 
-def extract_any(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
+def list_any(archive: Path, ctx: StageContext,
+             password: str | None = None) -> ArchiveListing:
+    """List ours *or* somebody else's (G2).
+
+    Deliberately a separate entry point from :func:`list_archive`, exactly as
+    :func:`extract_any` is from :func:`extract`. The split is not tidiness:
+    ``list_archive`` is a zip-directory read plus one JSON parse, with no
+    subprocess anywhere, and callers rely on that - ``ExtractTab``'s
+    destination suggestion runs it synchronously on the GUI thread for every
+    file dropped. Widening it in place would have put a ``7z.exe`` launch on
+    that path for every foreign drop.
+
+    Raises :class:`EncryptedArchiveError` when the archive's own file names
+    are encrypted and the password is missing or wrong; plain
+    :class:`ContainerError` when it simply cannot be read.
+    """
+    archive = Path(archive)
+    if is_excmp(archive):
+        return list_archive(archive)
+    if not archive.is_file():
+        raise ContainerError(f"{archive} does not exist")
+
+    doc, output = SevenZipStage().list_entries(archive, ctx, password)
+    verdict = classify_failure(output)
+    if verdict == "encrypted":
+        raise EncryptedArchiveError(
+            f"{archive.name} is encrypted: its file names cannot be read "
+            f"without the password"
+            + (" (the one supplied did not open it)" if password else ""))
+    if verdict or (not doc.entries and not doc.archive):
+        # No entries AND no archive block means 7-Zip never recognised the
+        # file. An archive that genuinely holds nothing still produces an
+        # archive block, so the two are distinguishable - and reporting an
+        # unreadable file as "empty" is the exact failure this listing
+        # refused to ship with in wave 3b.
+        raise ContainerError(
+            f"{archive.name} could not be read as an archive"
+            + (" (the file appears damaged or is not an archive)"
+               if verdict == "corrupt" else ""))
+
+    entries = [
+        ArchiveEntry(
+            name=e.name, size=e.size,
+            # Empty, and deliberately so. The checksum goes in `crc`.
+            sha256="", route="", reason="",
+            crc=e.crc, packed_size=e.packed_size, modified=e.modified,
+            encrypted=e.encrypted, is_dir=e.is_dir,
+        )
+        for e in doc.entries
+    ]
+    entries.sort(key=lambda e: e.size, reverse=True)
+    return ArchiveListing(
+        archive=archive,
+        kind=doc.kind or archive.suffix.lstrip(".").lower(),
+        # We do not know these and will not invent them. A foreign archive
+        # records no profile, no stage chain and no creation time of ours.
+        profile="", created_utc="", stages=[],
+        entries=entries,
+        ledger_backed=False,
+        truncated=doc.truncated,
+        encrypted=doc.encrypted,
+        solid=doc.solid,
+    )
+
+
+def extract_any(archive: Path, out_dir: Path, ctx: StageContext,
+                password: str | None = None) -> ExtractResult:
     """Extract ours *or* somebody else's (G1).
 
     Deliberately a separate entry point from :func:`extract`, which stays
@@ -523,10 +644,12 @@ def extract_any(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResul
     archive = Path(archive)
     if is_excmp(archive):
         return extract(archive, out_dir, ctx)
-    return _extract_foreign(archive, out_dir, ctx)
+    return _extract_foreign(archive, out_dir, ctx, password)
 
 
-def _extract_foreign(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
+def _extract_foreign(archive: Path, out_dir: Path, ctx: StageContext,
+                     password: str | None = None,
+                     include: list[str] | None = None) -> ExtractResult:
     """Hand it to 7-Zip, then count what landed.
 
     No ledger exists, so there is nothing to verify and we say so. The count
@@ -539,7 +662,19 @@ def _extract_foreign(archive: Path, out_dir: Path, ctx: StageContext) -> Extract
     ctx.log_cb("sevenzip", f"opening {archive.name} with 7-Zip - this archive "
                            f"has no SHA-256 ledger, so its contents cannot be "
                            f"checked against one")
-    SevenZipStage().extract(archive, out_dir, ctx)
+    try:
+        SevenZipStage().extract(archive, out_dir, ctx, password=password,
+                                include=include)
+    except StageError as exc:
+        # 7-Zip's exit code alone cannot tell "wrong password" from "broken
+        # file", but its output can, and the two need different offers from
+        # the surface above: a prompt, or an apology.
+        if classify_failure(str(exc)) == "encrypted":
+            raise EncryptedArchiveError(
+                f"{archive.name} is encrypted and cannot be opened"
+                + (" with the password supplied" if password
+                   else " without a password")) from exc
+        raise
     restored = sum(1 for p in out_dir.rglob("*") if p.is_file())
     return ExtractResult(
         out_dir=out_dir,
@@ -548,6 +683,135 @@ def _extract_foreign(archive: Path, out_dir: Path, ctx: StageContext) -> Extract
         elapsed_s=time.monotonic() - t0,
         ledger_backed=False,
     )
+
+
+@dataclass
+class SelectionCost:
+    """What pulling these particular files out is going to cost.
+
+    ``solid`` means the requested set cannot be read piecemeal: the payload is
+    one stream and reaching any byte of it replays the whole chain. That is
+    inherent to solid compression, not a defect - but a user who ticked one
+    3 KB file deserves to hear "this replays 4.2 GB" *before* pressing the
+    button, not after.
+    """
+
+    solid: bool
+    bytes_to_replay: int
+
+
+def selection_cost(archive: Path, names: list[str]) -> SelectionCost:
+    """Price a selection from the manifest alone - free, no extraction.
+
+    `.excmp` only: our ledger records each file's route, so the answer is a
+    set membership test. For a foreign archive 7-Zip decides internally how
+    much it must decode, and pricing that would need a listing this function
+    may not have - :attr:`ArchiveListing.solid` carries 7-Zip's own answer to
+    the surface that does.
+    """
+    listing = list_archive(Path(archive))
+    wanted = {str(safe_relpath(n)) for n in names}
+    piped = [e for e in listing.entries if e.route == "pipeline"]
+    if not any(e.name in wanted for e in piped):
+        return SelectionCost(solid=False, bytes_to_replay=0)
+    # Everything in the stream, not just what was asked for: that is the work
+    # the chain actually does.
+    return SelectionCost(solid=True, bytes_to_replay=sum(e.size for e in piped))
+
+
+def extract_selected(archive: Path, names: list[str], out_dir: Path,
+                     ctx: StageContext,
+                     password: str | None = None) -> ExtractResult:
+    """Restore only ``names`` (G2).
+
+    Every requested name is validated **before** anything runs. For a foreign
+    archive that is load-bearing rather than defensive: the names become
+    ``-i!`` include patterns, 7-Zip matches those as globs with no literal
+    mode, and ``safe_relpath`` already refuses ``*`` and ``?`` in a filename -
+    so no name we accept can quietly match more than it says.
+
+    Selecting from one of ours keeps the guarantee: the chosen files are
+    hash-checked against the ledger exactly as a full restore would check all
+    of them.
+    """
+    t0 = time.monotonic()
+    archive, out_dir = Path(archive), Path(out_dir)
+    if not names:
+        raise ValueError(
+            "nothing was selected - refusing to guess that this means "
+            "'extract everything'")
+    wanted = [str(safe_relpath(n)) for n in names]
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if not is_excmp(archive):
+        return _extract_foreign_selected(archive, wanted, out_dir, ctx,
+                                         password, t0)
+
+    with zipfile.ZipFile(archive) as zf:
+        manifest = _read_manifest(zf, archive)
+    missing = [n for n in wanted if n not in manifest.inputs]
+    if missing:
+        raise KeyError(f"not in this archive: {', '.join(sorted(missing))}")
+    ledger = {name: manifest.inputs[name] for name in wanted}
+
+    work = Path(tempfile.mkdtemp(prefix="excmp-sel-", dir=ctx.temp_dir))
+    try:
+        stored_only = all(manifest.inputs[n].get("route") == "store"
+                          for n in wanted)
+        if stored_only:
+            # A zip-directory read. The full ledger still goes in, because it
+            # is what makes the bomb defence exact; `only` limits what gets
+            # written, not what gets validated.
+            extract_stored(archive, out_dir, manifest.inputs, only=set(wanted))
+        else:
+            ctx.log_cb("extract", f"this archive is solid - reaching "
+                                  f"{len(wanted)} file(s) means replaying the "
+                                  f"whole chain")
+            extract(archive, work / "all", ctx)
+            for name in wanted:
+                source = resolve_within(work / "all", name)
+                target = resolve_within(out_dir, name)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source), str(target))
+        verified = verify_restore(out_dir, ledger)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+    return ExtractResult(out_dir=out_dir, files_restored=len(wanted),
+                         verified=verified, elapsed_s=time.monotonic() - t0)
+
+
+def _extract_foreign_selected(archive: Path, wanted: list[str], out_dir: Path,
+                              ctx: StageContext, password: str | None,
+                              t0: float) -> ExtractResult:
+    """Stage into temp, then place exactly what was asked for.
+
+    Extracting straight into ``out_dir`` would trust ``-i!`` to have matched
+    precisely, and would trust 7-Zip's own path handling to keep every member
+    inside the destination. Landing in a private directory and moving named
+    files out re-uses the ``resolve_within`` check on the way, and keeps the
+    standing promise that outputs are placed, never streamed into position.
+    """
+    work = Path(tempfile.mkdtemp(prefix="excmp-sel-", dir=ctx.temp_dir))
+    try:
+        _extract_foreign(archive, work, ctx, password, include=wanted)
+        placed = 0
+        missing: list[str] = []
+        for name in wanted:
+            source = resolve_within(work, name)
+            if not source.is_file():
+                missing.append(name)
+                continue
+            target = resolve_within(out_dir, name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(target))
+            placed += 1
+        if missing:
+            raise KeyError(f"not in this archive: {', '.join(sorted(missing))}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return ExtractResult(out_dir=out_dir, files_restored=placed, verified=0,
+                         elapsed_s=time.monotonic() - t0, ledger_backed=False)
 
 
 def verify_archive(archive: Path, ctx: StageContext) -> VerifyResult:

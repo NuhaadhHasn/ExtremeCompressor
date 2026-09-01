@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-08-07**. **469 tests** (468 pass + 1 strict-xfail).
+> Status date: **2026-09-01**. **552 tests** (551 pass + 1 strict-xfail).
 > Everything below is **merged to `main`**; nothing is awaiting review.
 >
 > **Done:** engine core · Phase A (GUI) · Phase D0 (security hotfix) ·
@@ -18,7 +18,10 @@
 > each other, and §3.3's 32px touch floor wins. See
 > [benchmarks/2026-08-07-ui-wave2b](benchmarks/2026-08-07-ui-wave2b.md).
 >
-> **Next up: G2 (foreign-archive listing), then J5-J7.**
+> **G2 is done** (2026-09-01, branch `phase-g2-foreign-listing`, awaiting
+> review): foreign archives list, encrypted ones ask for a password instead of
+> hanging, and single members can be pulled out of either kind.
+> **Next up: J5-J7** (per-type memory, long-job confirm, self-calibration).
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -220,6 +223,44 @@ display scaling — both need a human at the machine.
       game-fingerprint DBs in the plugins dir (recognize file by CRC ladder →
       known stream layout, zero scanning). Never ship srep (not OSI; plain
       `-dd` dedup is fine without it)
+      ⚠️ **AUDITED 2026-09-01 — B6 as written would still leave the AAA gap
+      open, and the reason is load-bearing.** B6(a) says "re-resolve the
+      oo2core DLL from the game folder at restore". **In the archival case
+      the game folder no longer exists** — and architecturally it cannot,
+      because `planner._CHAINS` is one linear whole-payload chain and a stage
+      is one path in, one path out, so the DLL is *inside the very blob xtool
+      decode has to produce*. Left as written, an xtool archive only restores
+      on the machine that made it, which breaks the lossless guarantee far
+      more seriously than the ratio gap B6 exists to close. **Fix before
+      implementing:** force the oo2core DLL(s) into the `stored/` bucket, copy
+      them in as a container resource when the user's selection did not
+      include them, materialize to the scratch cwd before decode, and make the
+      manifest field a **list** — one game can ship several oo2core/oo2ext
+      versions and different paks can come from different ones.
+      **Five sub-items the plan is missing:** (i) where the xtool stage sits
+      in the chain and how it arbitrates with Precomp (both handle zlib);
+      (ii) a version pin for the xtool binary, not just the DLL; (iii)
+      `excmp/ram.py` is LZMA2-only, so the shipped peak-RAM column will
+      silently under-report — xtool decode's `-dm` default is 75% of RAM,
+      which is the number that hurts on a 2-core/16 GB target; (iv)
+      `excmp/analyzer.py` has zero Oodle/pak awareness and
+      `gui/suggest.py`'s prose already promises "70%" on paks, so J8's
+      estimator backtest **regresses before it improves**; (v) a free-disk
+      preflight for precompression inflation, plus a decision on what an
+      xtool stage does to D9's chain-replay cost. **Also:** the self-test
+      cannot exercise the real failure mode (a *different* DLL at restore),
+      so it will look green while the actual risk is untested — the manifest
+      pin is the only defence. **Phase H conflict:** nothing currently stops
+      an installer being generated from an xtool+Oodle archive, which would
+      embed a proprietary DLL in a redistributable `setup.exe` and break the
+      100%-OSI requirement E4/SignPath depends on. **Effort is 3-4 sessions,
+      not 1-2**, and B6(f) (`.xtl` curation) should be split out as post-v1:
+      doc 09 §4 classifies it as the least transferable lever and it requires
+      owning and running each title. **The "needs E1 first" dependency is
+      soft** — `tools.py` already degrades gracefully and `_resolve_chain`
+      already warns, the same detected-only pattern B4 uses. What E1 really
+      buys is a pinned hash, which restore-side correctness wants anyway.
+
 - [ ] B7. Executables: force 7z BCJ2 explicitly with **`-mf=BCJ2`** (the cheapest
       correct trigger — [19 §4](research/19-source-study-7zip.md): 7z only
       auto-selects BCJ2 at mx≥8 *and* only with the MT mixer, else it falls back
@@ -457,7 +498,47 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       user-installed binary, never link or bundle (never ship unrar.dll — it would
       break the MIT-clean requirement for SignPath signing in E4). *This is the
       single feature that turns a compressor into an archiver.* Effort S
-- [ ] G2. **Archive browser / `excmp list`** — parse `7z l -slt` for foreign archives;
+- [x] G2. ✅ **DONE 2026-09-01** (branch `phase-g2-foreign-listing`, measured in
+      [benchmarks/2026-09-01-g2-foreign-listing.md](benchmarks/2026-09-01-g2-foreign-listing.md)).
+      `excmp/slt.py` parses the pinned grammar, `engine.list_any()` is the
+      foreign-capable twin of `list_archive()`, and `extract_selected()` pulls
+      single members out of either kind. **38,496 entries listed across 19 real
+      archives in 21.3 s.** 552 tests pass (was 469).
+      **Five things the implementation corrected against the plan:**
+      1. **The dummy `-p` was fixing a bug that had already shipped, not
+         hardening a new path.** `_extract_foreign()` passed no `-p` at all, so
+         an encrypted archive dropped on the Extract tab froze the running app
+         on a prompt with nowhere to appear. Measured: **still running after
+         8.0 s** without the guard, **exit 2 in 0.22 s** with it. Four of the
+         nineteen archives in the real corpus have encrypted headers, so this
+         was reachable by dropping a file the user already owns.
+      2. **`communicate()` hides the hang.** The first measurement showed no
+         block, because `subprocess.communicate()` closes stdin and hands
+         7-Zip an EOF a real parent never sends. Reproducing it needs stdin
+         held open. A timeout alone is not enough either — the deadline can
+         only be enforced from a watchdog thread, since a tool blocked on a
+         prompt never returns from the read loop to be checked.
+      3. **`list_archive()` had to stay `.excmp`-only.** Widening it in place
+         looked obvious and would have put a `7z.exe` launch on the GUI thread
+         for every dropped file, because `ExtractTab._suggest_destination()`
+         calls it synchronously on every drop. The `extract`/`extract_any`
+         split already existed for a different reason and turned out to solve
+         this one too.
+      4. **`.msi` is not one format, and the difference is 20x.** 7-Zip reports
+         `cab` for some and `compound` for others; a 371 MB `compound` MSI took
+         **7.14 s** to list against 0.27 s for a 20 MB `cab` one. Seven seconds
+         on the GUI thread is a freeze, which is what makes the worker thread
+         load-bearing rather than tidy.
+      5. **A packed size of 0 is a lie.** 7-Zip leaves `Packed Size` *empty*
+         for every member of a solid block after the first, so `int` could only
+         say "0 bytes" about files that had no individual figure. Carried as
+         `int | None` — the same "a number that could mean two things needs a
+         companion" lesson as `ledger_backed`. Caught by looking at the output,
+         not by a test.
+      **Deliberately not done:** an in-app archive *browser* tab (that is I2);
+      this is the listing surfaced on the Extract tab where the archive is
+      already chosen. Original item:
+      **Archive browser / `excmp list`** — parse `7z l -slt` for foreign archives;
       for `.excmp` the manifest read is FREE and shows size + SHA-256 + route +
       *reason* per file. **`-slt` parser grammar now fully pinned**
       ([17 §4](research/17-source-study-peazip.md), [19 §6](research/19-source-study-7zip.md)):
@@ -797,20 +878,19 @@ by actually running them on a ≤100 MB sample" is the *measurement* upgrade to 
 | ~~UI-1~~ | ~~UI v3 wave 1 (screen fit, merged chooser, action bar, registry, WCAG, fit gate)~~ | ✅ done, merged | all 13 items of research/23 §7; the 1366×768 gate pins the fix |
 | ~~UI-2a~~ | ~~UI v3 wave 2a (Activity tab + status strip, compact results, queue density, scan progress, Banner/I9)~~ | ✅ done, merged | W2-1/3/7/8/9. Populated Compress page 869→748px, last `QMessageBox` gone, scan silence 4.7s→0.3s on the real HDD tree. Also fixed the tests' missing `QT_QPA_FONTDIR` — every prior height gate had been measuring tofu |
 | ~~UI-2b~~ | ~~UI v3 wave 2b (compaction, token sweep, Fluent SVG icons, dark title bar, pending-items list)~~ | ✅ done, merged | W2-4/5/6/10 + intake chip, analysis-card collapse, chooser diet. Populated page 748→415px; the empty page fits 150% for the first time. ≤300px is unreachable without dropping a profile row, the analysis card, or the 32px touch floor — recorded as a strict xfail, not silently dropped |
-| **3b** | **J5-J7 (per-type memory, long-job confirm, self-calibration)** | **1 session** | **finishes Phase J; J7 is what turns a cold-start prior into estimates that fit this machine** |
 | ~~4~~ | ~~B11 + D9 (drop SREP; make the self-test replay the chain)~~ | ✅ done | the chain is SREP-free and nothing publishes without a verified restore — four clean Extreme round-trips on real corpora |
 | ~~UI-3a~~ | ~~UI v3 wave 3a (verify verb + button, `excmp hash`)~~ | ✅ done, merged | The D9 gate became public: same code path, three callers. Catches a single flipped byte in a 721 MB archive and names the file |
 | ~~UI-3b~~ | ~~UI v3 wave 3b (G1 foreign archives, I2-lite listing)~~ | ✅ done, merged | Opens zip/7z/rar/iso/…, and shows the ledger — size, SHA-256, route and *why stored* — without extracting. `ledger_backed` keeps the verified restore distinguishable from the best-effort one |
 | ~~UI-3c~~ | ~~UI v3 wave 3c (`.sha256` sidecar, Settings + persistence, autosubfolder, first-run notice)~~ | ✅ done, merged | Sidecar is **opt-in and remembered** (decided 2026-08-07). The app persists preferences for the first time — it kept only window geometry before. Settings also hosts the tool inventory the status strip elides |
 | ~~UI-4~~ | ~~Level/dict knobs + RAM column + Parameters line~~ | ✅ done | `excmp/ram.py` implements 7-Zip's own peak-RAM formula (doc 19 §3), clamped to the input the way `reduceSize` does. B9's cap drives the dictionary menu; the Parameters line is an allowlist |
-| **G2** | **Foreign archive listing (`7z l -slt`) + password-on-demand** | **1 session** | **what would make "What's inside" work on a zip; wave 3b deliberately refuses rather than showing an empty list** |
-| 5 | G1-G2 (open/browse foreign archives) | 1 session | S-sized, and the single biggest identity gain: stops being one-way |
+| ~~G2~~ | ~~Foreign archive listing (`7z l -slt`) + password-on-demand + selective extract~~ | ✅ done | 38,496 entries across 19 real archives in 21.3 s. Also fixed a shipped hang: `_extract_foreign` passed no `-p`, so an encrypted archive froze the running app — four of the nineteen real archives would have triggered it |
+| **3b** | **J5-J7 (per-type memory, long-job confirm, self-calibration)** | **1 session** | **finishes Phase J** |
 | 6 | D1-D3, D7 (QA core + CI) | 1-2 sessions | locks in the integrity guarantee before adding stages |
 | 7 | B1-B3 + B9-B10 (zpaqfranz, JPEG/PNG, RAM caps) | 1-2 sessions | completes Insane; B9 is one-line arg changes with real payoff |
 | 8 | E1-E2 (downloader + notices) | 1 session | unblocks every remaining specialist (par2, xtool, FFmpeg) |
-| 9 | I1-I2 (settings/persistence + archive browser) | 1-2 sessions | the app forgetting everything is the loudest daily annoyance |
-| 10 | F1-F3 (encryption + recovery records) | 2-3 sessions | table-stakes "secure"; F3 is the WinRAR feature nobody OSS has |
-| 11 | B6 (xtool + Oodle) | 1-2 sessions | the real FitGirl gap on modern games — needs E1 first |
+| **9** | **B6 (xtool + Oodle) + B8 (re-benchmark)** | **3-4 sessions** | **the real FitGirl gap on modern AAA games — the single biggest competitive deficit.** Moved up from 11 on 2026-09-01: the "needs E1 first" dependency is soft (tools degrade gracefully already), and nothing justifies shipping encryption and settings polish ahead of the one thing we measurably lose at. **Read the audit note on B6 before starting — the DLL-bootstrap design flaw must be fixed first or the archives only restore on the machine that made them.** B8 is paired because nothing currently validates the 5-15% vs 50-70% claim; both figures are `(est.)` in doc 09 |
+| 10 | I1-I2 (settings/persistence + archive browser) | 1-2 sessions | I1 already shipped in wave 3c; this is the browser tab |
+| 11 | F1-F3 (encryption + recovery records) | 2-3 sessions | table-stakes "secure"; F3 is the WinRAR feature nobody OSS has |
 | 12 | C (video shrink) | 2-3 sessions | biggest user-visible win on media, but hours of CPU per job |
 | 13 | G3-G8, I3-I8, E3-E4 | as needed | parity + polish + release |
 | 14 | H (installer output) | 2-3 sessions | flagship differentiator, but needs E4 signing to be usable |

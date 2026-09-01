@@ -356,8 +356,16 @@ class MainWindow(QMainWindow):
             close.clicked.connect(lambda: self._about_card.setVisible(False))
             head.addWidget(close)
             box.addLayout(head)
+            # The status strip elides its tool list by design and says so;
+            # this is where the full answer lives, so the qualifiers belong
+            # here too rather than only in Settings.
+            from excmp.tools import LEGACY_ONLY, below_floor
+            _stale = {n for n, _got, _need in below_floor(self.tools)}
             tools = ", ".join(
-                f"{name} {info.version}".strip() if info else f"{name} (not found)"
+                (f"{name} {info.version}".strip()
+                 + (" (legacy)" if name in LEGACY_ONLY else "")
+                 + (" — update it" if name in _stale else ""))
+                if info else f"{name} (not found)"
                 for name, info in self.tools.items())
             body = QLabel(self.tr(
                 "Analyzes every file, routes it to the pipeline that suits it, "
@@ -447,12 +455,22 @@ class MainWindow(QMainWindow):
         The tool list is reference material and is repeated in full in About,
         so it is the half that elides.
         """
+        from excmp.tools import LEGACY_ONLY, below_floor
+
         bar = self.statusBar()
-        found = [name for name, info in self.tools.items() if info is not None]
+        # A legacy tool is found and runnable but never chosen for a new
+        # archive. Listing it bare made the strip advertise a tool the app
+        # will never run, which is the wart docs/NEXT-SESSION-START-HERE.md
+        # recorded; the qualifier is cheaper than either hiding or lying.
+        found = [f"{name} (legacy)" if name in LEGACY_ONLY else name
+                 for name, info in self.tools.items() if info is not None]
         missing = [name for name in ("7z", "precomp") if self.tools.get(name) is None]
         text = self.tr("Tools found: %s") % (", ".join(found) or self.tr("none"))
         if missing:
             text += self.tr("  ·  missing: %s") % ", ".join(missing)
+        for name, got, needed in below_floor(self.tools):
+            text += self.tr("  ·  %(tool)s %(got)s is below %(needed)s — update it") % {
+                "tool": name, "got": got, "needed": needed}
         self._tools_text = text
         self._tools_label = QLabel(text, self)
         self._tools_label.setObjectName("Muted")
@@ -552,6 +570,9 @@ class MainWindow(QMainWindow):
         self.results.dismissed.connect(self._reset_flow)
         self.extract_tab.extractRequested.connect(self._start_extract)
         self.extract_tab.verifyRequested.connect(self.start_verification)
+        self.extract_tab.passwordRequired.connect(self._ask_archive_password)
+        self.extract_tab.extractSelectedRequested.connect(
+            self._start_selected_extract)
 
         QShortcut(QKeySequence.StandardKey.Open, self, self.drop_zone._pick_files)
         QShortcut(QKeySequence("Ctrl+Return"), self, self.start_compression)
@@ -757,6 +778,61 @@ class MainWindow(QMainWindow):
 
     def _start_extract(self, archive: object, dest: object) -> None:
         self.queue.add_extract(Path(archive), Path(dest))
+
+    # -- G2 --------------------------------------------------------------
+    def _ask_archive_password(self, archive: object) -> None:
+        """Ask inline, when the archive turns out to need it (File Roller's
+        timing). The Banner owns the field and wipes it on submit, so this
+        window never holds the secret in a widget of its own.
+        """
+        self.banner.ask_secret(
+            self.tr("%s keeps its file names encrypted. Enter its password to "
+                    "see what is inside.") % Path(archive).name,
+            self.tr("Unlock"),
+            self.extract_tab.unlock_with)
+
+    def _start_selected_extract(self, archive: object, names: object) -> None:
+        """Quote the price of a solid archive before charging it.
+
+        Ticking one 3 KB file out of a 4 GB solid archive replays the whole
+        chain. That is inherent to solid compression, not a bug - but a
+        progress bar that runs for twenty minutes after a user asked for one
+        small file is indistinguishable from a hang unless they were told.
+        """
+        archive, names = Path(archive), list(names)
+        dest = Path(self.extract_tab.dest_edit.text().strip('" '))
+        if not str(dest):
+            self.banner.show_message(
+                self.tr("Choose where the files should go first."), tone="warn")
+            return
+
+        listing = self.extract_tab.current_listing()
+        solid = bool(listing is not None and listing.solid)
+        replay = 0
+        if solid and listing is not None and listing.ledger_backed:
+            from excmp.engine import selection_cost
+            cost = selection_cost(archive, names)
+            solid, replay = cost.solid, cost.bytes_to_replay
+        if solid:
+            note = (self.tr(
+                "%(n)d file(s) selected, but this archive is solid: reaching "
+                "them replays %(bytes)s of compressed data.")
+                % {"n": len(names), "bytes": fmt_size(replay)} if replay else
+                self.tr("%d file(s) selected, but this archive is solid: "
+                        "reaching them means decompressing the whole stream.")
+                % len(names))
+            self.banner.show_message(
+                note, tone="warn",
+                actions=[(self.tr("Extract anyway"),
+                          lambda: self._run_selected(archive, names, dest)),
+                         (self.tr("Cancel"), self.banner.hide_banner)])
+            return
+        self._run_selected(archive, names, dest)
+
+    def _run_selected(self, archive: Path, names: list, dest: Path) -> None:
+        self.banner.hide_banner()
+        self.queue.add_extract_selected(
+            archive, dest, names, self.extract_tab.current_password())
 
     def _focus_params(self) -> None:
         self.banner.hide_banner()

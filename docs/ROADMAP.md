@@ -223,6 +223,19 @@ display scaling — both need a human at the machine.
       game-fingerprint DBs in the plugins dir (recognize file by CRC ladder →
       known stream layout, zero scanning). Never ship srep (not OSI; plain
       `-dd` dedup is fine without it)
+      🔒 **RESEARCH 2026-09-01 ([24](research/24-fitgirl-razor12911-toolchain.md)
+      §2): there is no open-source Oodle *encoder*, and there will not be one.**
+      `powzix/ooz` is the reverse-engineered Oodle implementation everyone
+      cites, and its own README reads `-z --compress compress (requires
+      oo2core_7_win64.dll)` — it **decodes** in open code and **encodes by
+      calling the proprietary DLL**. Since our model is restore = recompress,
+      the DLL is unavoidable and permanent. This converts the audit note below
+      from "prudent design" into "forced": B6 must be built around shipping or
+      re-sourcing the exact `oo2core` version, because no OSI-only path to
+      Oodle recompression exists. Also confirmed: xtool is **MIT, © 2016-2022,
+      archived 28 Oct 2023** — our routing was correct, but nothing upstream
+      will ever be fixed, so pin the version and verify every roundtrip.
+
       ⚠️ **AUDITED 2026-09-01 — B6 as written would still leave the AAA gap
       open, and the reason is load-bearing.** B6(a) says "re-resolve the
       oo2core DLL from the game folder at restore". **In the archival case
@@ -386,7 +399,7 @@ display scaling — both need a human at the machine.
       verify sha256 **and size** → atomic `os.replace`; hard-fail and delete on
       mismatch; **never add the download dir to PATH**; re-hash before first use each
       run. (The old "solves SREP legally by download-to-user" rationale is retired —
-      SREP was dropped from all plans after the source study, doc 20 §4 / doc 21 §5.)
+      SREP was dropped from all plans after the source study, doc 20 §4 / doc 21 §5. **Rationale corrected 2026-09-01** ([24](research/24-fitgirl-razor12911-toolchain.md) §5): the licence is *unclear*, not provably non-OSI — SREP-adjacent source sits in GPL-2.0 repos, though the shipped `srep64.exe` is an unlicensed freeware binary. **The disqualifying reason is integrity:** it failed its own decompression checksum on 1 of 3 runs over byte-identical input. Lead with that, not the licence.)
       **New in 2026:** GitHub's release API exposes a per-asset `digest` (sha256) —
       verified present for 7-Zip 26.02, zpaqfranz 64.8, oxipng 10.1.1, par2 1.4.0 —
       so `tools/make_manifest.py` can seed hashes from the API for a human to pin.

@@ -359,15 +359,24 @@ display scaling — both need a human at the machine.
       already warns, the same detected-only pattern B4 uses. What E1 really
       buys is a pinned hash, which restore-side correctness wants anyway.
 
-- [ ] B7. Executables: force 7z BCJ2 explicitly with **`-mf=BCJ2`** (the cheapest
-      correct trigger — [19 §4](research/19-source-study-7zip.md): 7z only
-      auto-selects BCJ2 at mx≥8 *and* only with the MT mixer, else it falls back
-      to plain BCJ; ARM64/RISCV get their own filters, never BCJ2). **Flag the
-      "5-10% on x86" figure as benchmark-derived** — there is no source-level
-      percentage. **Never UPX** (AV flags, hurts archive ratio)
+- [x] B7. ✅ **DONE 2026-09-02** — BCJ2, measured rather than assumed
+      (`tests/test_sevenzip_switches.py` carries the table).
+      Across three corpora on 7-Zip 26.02 at mx9: forcing `-mf=BCJ2` is worth
+      **−1.296%** on 23.5 MB of real DLLs/EXEs, **+0.000%** on 163 MB of
+      installers, and **+0.043%** (i.e. slightly worse) on 3.2 MB of source.
+      So it is applied **conditionally** — `_wants_bcj2()` turns it on when
+      ≥25% of the *piped bytes* are `Category.EXECUTABLE`, weighed by bytes
+      rather than file count, because one 50 MB DLL beside a hundred small
+      text files is an executable job.
+      **The plan's "5-10% on x86" figure is not supported**: measured here it
+      is **1.3%**. The item already flagged it as benchmark-derived with no
+      source-level basis; this is our own number replacing it. Forcing the
+      filter also proved necessary — at mx9 with the MT mixer 7-Zip is
+      documented to auto-select BCJ2 and plainly had not. **Never UPX** still
+      stands.
 - [ ] B8. Re-benchmark everything on Silesia + a real game folder; update README table
       — this is also what replaces every *(est.)* in the doc 09 comparison table
-- [ ] B9. **RAM caps + thread defaults** (verified formulas, [research/12](research/12-lightweight-and-performance.md);
+- [~] B9. 🟡 **PARTLY DONE 2026-09-02** — `-mqs` is now always passed (measured never harmful, worth 0.13% on source trees; 7-Zip leaves it off by default). **`-md=192m` was measured and deliberately NOT adopted: zero bytes of difference on all three corpora, up to 27% more time.** It stays a user knob, not a default. Default threads is already 2. The remaining part is the exact RAM estimator formula. Original item: **RAM caps + thread defaults** (verified formulas, [research/12](research/12-lightweight-and-performance.md);
       **corrected by [19 §3](research/19-source-study-7zip.md)**):
       change default `threads` from 4 to **2** — but the reason is that at mx9 each
       LZMA2 **block** (not "chunk") uses 2 threads (match-finder + coder), so
@@ -422,14 +431,49 @@ display scaling — both need a human at the machine.
 
 ## Phase D — QA hardening (data integrity IS the product)
 
-- [ ] D1. **Property-based roundtrip tests** (Hypothesis): custom composite strategy
-      generating file trees — unicode/emoji names, 0-byte files, nested dirs, binary/
-      text/already-compressed content; property: compress→extract→byte-identical
-- [ ] D2. **Edge-case matrix** as parametrized pytest: >260-char paths (with/without
-      long-path registry opt-in), reserved names (CON, NUL), locked files, read-only
-      attrs, case-only name collisions, >4 GB file (slow-marked), symlink policy
-- [ ] D3. **Crash-consistency**: kill the subprocess at EVERY pipeline stage; assert
-      input untouched (bytes + mtime), no partial output at final path, temp cleaned
+- [x] D1. ✅ **DONE 2026-09-02** — property-based roundtrip tests
+      (`tests/test_property_roundtrip.py`, Hypothesis, MPL-2.0, dev-only).
+      States the product's whole claim as one executable property:
+      `extract(compress(T)) == T` for every generated tree. Trees mix names
+      drawn from the characters that actually break archivers (unicode,
+      spaces, dots, `=`, `#`, `&`), contents from the three regimes a codec
+      treats differently (compressible / random / empty), and per-file depth
+      0-3 so one example can hold a top-level file and a four-deep one.
+      Two more properties alongside it: **the input is never modified** (bytes
+      *and* mtime) and **the ledger accounts for every file** — an entry
+      missing from the ledger is a file nobody would notice failing to return.
+      Suite runs 30 examples; a one-off deeper hunt of **120 generated trees
+      found no counterexample**.
+- [x] D2. ✅ **DONE 2026-09-02** — the awkward-but-legitimate file matrix
+      (`tests/test_edge_cases.py`, 25 cases, all real engine round-trips).
+      The complement to D0: `test_safepath.py` pins what we **refuse**, this
+      pins what we must **accept**, because rejecting a legitimate awkward
+      name is its own kind of data loss. Covers spaces, parens, `=`, `%`,
+      `&`, `#`, brackets, apostrophes, Cyrillic, Japanese, **Dhivehi**, emoji,
+      200-character names, leading dashes; zero-byte files, trees of nothing
+      but empty files, 20-deep nesting, 200 small files, >260-character paths,
+      read-only attributes, and names that merely *contain* a reserved word
+      (`CONTENTS.txt`, `console.log`, `NULLABLE.md`) — the false-positive half
+      of D0's validator. Plus an explicit input-is-never-modified check on
+      bytes and mtime. **All 25 passed first time**; no bugs found, but the
+      class was previously untested.
+- [x] D3. ✅ **DONE 2026-09-02** — crash consistency
+      (`tests/test_crash_consistency.py`, 8 cases). Cancels a job from inside
+      `progress_cb` so the interrupt lands *during* a stage rather than at a
+      boundary, then asserts the three things that must hold either way: the
+      input is untouched (bytes and mtime), nothing partial sits at the output
+      path, and temp is clean — the last one matters because Precomp
+      legitimately inflates 2-5x mid-pipeline. Also pins D9 as a
+      crash-consistency property: an assertion inside the progress callback
+      fires if a `.excmp` ever appears at the final path *before* verification
+      finishes. Plus: a cancelled run must not poison the next run sharing the
+      same temp dir.
+      **One thing the implementation corrected:** the first version asserted
+      `pytest.raises` and failed on the Fast profile — not a bug, the corpus
+      simply finished before the cancel landed. Whether a cancel wins is a
+      race, so the tests now assert the invariant that holds *either way*: if
+      the job finished it must have published a genuinely restorable archive,
+      and if it stopped it must have published nothing.
 - [ ] D4. **Disk-full simulation** on a small VHDX/subst volume; graceful failure
 - [ ] D5. **Deep-verify command** (`excmp verify archive.excmp`): full decompress +
       hash-compare every file. Model source-pinned by

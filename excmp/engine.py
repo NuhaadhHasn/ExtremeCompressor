@@ -18,7 +18,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .analyzer import FileInfo, analyze_tree
+from .analyzer import Category, FileInfo, analyze_tree
 from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
@@ -196,12 +196,34 @@ class StageOptions:
         return out
 
 
-def _stage_factory(options: StageOptions | None = None) -> dict[str, Stage]:
+#: Fraction of *piped bytes* that must be executable before we force BCJ2.
+#: Deliberately low, because the payoff is asymmetric: measured, being right
+#: is worth 1.3% and being wrong costs 0.04%.
+BCJ2_BYTE_SHARE = 0.25
+
+
+def _wants_bcj2(infos: "list[FileInfo]") -> bool:
+    """Is this job executable-heavy enough for the x86 branch filter? (B7)
+
+    Weighed by **bytes, not file count**: one 50 MB DLL beside a hundred 1 KB
+    text files is an executable job, and counting files would call it a text
+    job and leave the 1.3% on the table.
+    """
+    total = sum(i.size for i in infos)
+    if not total:
+        return False        # an all-stored job pipes nothing to filter
+    exe = sum(i.size for i in infos if i.category is Category.EXECUTABLE)
+    return exe / total >= BCJ2_BYTE_SHARE
+
+
+def _stage_factory(options: StageOptions | None = None,
+                   bcj2: bool = False) -> dict[str, Stage]:
     opts = options or StageOptions()
     seven = (SevenZipStage(level=opts.level if opts.level is not None else 9,
                            dict_size=opts.dict_size,
-                           extra_args=list(opts.extra_args))
-             if (opts.level is not None or opts.dict_size or opts.extra_args)
+                           extra_args=list(opts.extra_args), bcj2=bcj2)
+             if (opts.level is not None or opts.dict_size or opts.extra_args
+                 or bcj2)
              else SevenZipStage())
     zstd = (ZstdStage(level=opts.level) if opts.level is not None
             else ZstdStage())
@@ -392,7 +414,13 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     the_plan.warnings.extend(
         _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
 
-    registry = _stage_factory(options)
+    # B7: the branch filter is decided from what will actually be *piped*,
+    # not from the whole input. A folder of installers is mostly stored, and
+    # what reaches 7-Zip may look nothing like the folder as a whole.
+    _piped = next((r for r in the_plan.routes if r.action == "pipeline"), None)
+    _piped_set = set(_piped.files) if _piped else set()
+    registry = _stage_factory(
+        options, bcj2=_wants_bcj2([i for i in infos if i.path in _piped_set]))
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-", dir=ctx.temp_dir))
     tmp_out: Path | None = None
     try:

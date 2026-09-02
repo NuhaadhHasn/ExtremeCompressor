@@ -59,9 +59,14 @@ class SevenZipStage(Stage):
     id = "sevenzip"
 
     def __init__(self, level: int = 9, dict_size: str | None = None,
-                 extra_args: list[str] | None = None):
+                 extra_args: list[str] | None = None, bcj2: bool = False):
         self.level = level
         self.dict_size = dict_size  # e.g. "192m"; None = 7z default for level
+        #: Force the BCJ2 x86 branch filter (B7). Off by default and set from
+        #: the *measured* file mix rather than always: it is worth 1.3% on
+        #: real executable code and costs 0.04% on text
+        #: (tests/test_sevenzip_switches.py carries the table).
+        self.bcj2 = bool(bcj2)
         # The Parameters line (research/23 section 5). Already allowlisted by
         # excmp.ram.parse_extra_args before it gets here - this class does not
         # re-validate, it just places them where 7-Zip expects switches.
@@ -78,7 +83,16 @@ class SevenZipStage(Stage):
         """The argument list, split out so the knobs are testable without
         running 7-Zip - and so it is obvious that the output path is ours and
         the extra switches cannot displace it."""
-        cmd = [exe, "a", "-t7z", f"-mx{self.level}", "-bsp1", "-y"]
+        # -mqs sorts by file type inside the solid block. 7-Zip leaves it
+        # OFF by default (research/19 section 5); measured here it never cost
+        # anything on any corpus and was worth 0.13% on source trees, so not
+        # passing it was a choice we were making by accident.
+        cmd = [exe, "a", "-t7z", f"-mx{self.level}", "-bsp1", "-y", "-mqs"]
+        if self.bcj2:
+            # Forcing it matters: at mx9 with the MT mixer 7-Zip is documented
+            # to auto-select BCJ2, but measured on 23.5 MB of real DLLs it
+            # plainly had not - forcing the filter took another 1.296% off.
+            cmd.append("-mf=BCJ2")
         if self.dict_size:
             cmd.append(f"-md={self.dict_size}")
         if threads:

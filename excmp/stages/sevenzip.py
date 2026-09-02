@@ -59,7 +59,8 @@ class SevenZipStage(Stage):
     id = "sevenzip"
 
     def __init__(self, level: int = 9, dict_size: str | None = None,
-                 extra_args: list[str] | None = None, bcj2: bool = False):
+                 extra_args: list[str] | None = None, bcj2: bool = False,
+                 archive_type: str = "7z"):
         self.level = level
         self.dict_size = dict_size  # e.g. "192m"; None = 7z default for level
         #: Force the BCJ2 x86 branch filter (B7). Off by default and set from
@@ -67,6 +68,11 @@ class SevenZipStage(Stage):
         #: real executable code and costs 0.04% on text
         #: (tests/test_sevenzip_switches.py carries the table).
         self.bcj2 = bool(bcj2)
+        #: `7z` normally; `zip` for the G4 standard export. A parameter rather
+        #: than an extra_arg because `-t` may appear exactly once - appending
+        #: `-tzip` beside the baked-in `-t7z` makes 7-Zip exit 7 with
+        #: "Multiple instances for switch".
+        self.archive_type = str(archive_type)
         # The Parameters line (research/23 section 5). Already allowlisted by
         # excmp.ram.parse_extra_args before it gets here - this class does not
         # re-validate, it just places them where 7-Zip expects switches.
@@ -87,8 +93,15 @@ class SevenZipStage(Stage):
         # OFF by default (research/19 section 5); measured here it never cost
         # anything on any corpus and was worth 0.13% on source trees, so not
         # passing it was a choice we were making by accident.
-        cmd = [exe, "a", "-t7z", f"-mx{self.level}", "-bsp1", "-y", "-mqs"]
-        if self.bcj2:
+        cmd = [exe, "a", f"-t{self.archive_type}", f"-mx{self.level}",
+               "-bsp1", "-y"]
+        # -mqs and -mf are 7z-format concepts: zip has no solid block to sort
+        # within and no method chain to place a filter in. Passing them to a
+        # zip is not merely useless, 7-Zip refuses the whole command with
+        # "The parameter is incorrect".
+        if self.archive_type == "7z":
+            cmd.append("-mqs")
+        if self.bcj2 and self.archive_type == "7z":
             # Forcing it matters: at mx9 with the MT mixer 7-Zip is documented
             # to auto-select BCJ2, but measured on 23.5 MB of real DLLs it
             # plainly had not - forcing the filter took another 1.296% off.

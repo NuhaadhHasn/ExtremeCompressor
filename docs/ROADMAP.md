@@ -764,14 +764,29 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       that simply ended there and we would have joined a truncated archive; it
       now scans to the highest number present and names the hole. (2) **The G6
       sidecar had never been checkable with `sha256sum -c`** — `write_text`
-      emits CRLF on Windows, so the trailing `` became part of the filename
+      emits CRLF on Windows, so the trailing `
+` became part of the filename
       and every line failed with "No such file or directory". A feature whose
       entire purpose was that one command, shipped broken. Both sidecars now
       pass `newline="
 "`, with a test asserting no CRLF.
-- [ ] G4. **Standard-format export** — a "plain .7z/.zip (compatible)" checkbox that
-      runs only the 7z stage and skips the container. Kills the lock-in objection;
-      nearly free given the existing stage
+- [x] G4. ✅ **DONE 2026-09-02** — `compress --format 7z|zip` writes a plain
+      archive with no container (`engine.compress_standard`). Verified for real:
+      a `.zip` opened by Python's own `zipfile` (15 entries, `testzip()` clean)
+      and a `.7z` that `7z t` accepts, 75.22% on executables.
+      **It reuses `SevenZipStage`** rather than reimplementing anything, so the
+      output path staying last, the password redaction and the progress parsing
+      all come free; only the container type differs. That needed a real
+      `archive_type` parameter — appending `-tzip` to `extra_args` beside the
+      baked-in `-t7z` makes 7-Zip exit 7 with "Multiple instances for switch",
+      and `-mqs`/`-mf` are 7z-format concepts that make it refuse a zip outright
+      with "The parameter is incorrect", so both are now gated on the type.
+      **The honesty is the feature.** A standard archive has no ledger, so
+      nothing can re-verify it later — but it is still extracted and hashed
+      against the originals *before* publication, exactly like the `.excmp`
+      path, and nothing is written if that fails. `StandardResult.has_ledger`
+      and `.note` exist so the caller says which half of the guarantee it has
+      rather than implying both.
 - [ ] G5. **"Convert & shrink"** (zip/rar/7z/iso → `.excmp`) — extract to temp →
       analyze → pipeline → report *why* it did or didn't help. Parity feature
       elsewhere; a **signature feature** with our analyzer attached

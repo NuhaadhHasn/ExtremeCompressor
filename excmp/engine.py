@@ -412,6 +412,109 @@ def _write_sidecar(archive: Path) -> Path:
     return side
 
 
+@dataclass
+class StandardResult:
+    """What a plain-format export produced, and what it cannot promise."""
+
+    archive: Path
+    orig_bytes: int
+    final_bytes: int
+    elapsed_s: float
+    #: Files compared against the original by SHA-256 after a real extract.
+    verified: int
+    #: Always False here. A standard archive carries no per-file ledger, so
+    #: nothing can re-check it later - which is the honest difference from an
+    #: `.excmp` and the reason this field exists rather than being implied.
+    has_ledger: bool
+    #: One sentence for the user about that trade.
+    note: str
+
+
+def _hash_tree(root: Path) -> dict[str, str]:
+    return {p.relative_to(root).as_posix(): hash_file(p)
+            for p in Path(root).rglob("*") if p.is_file()}
+
+
+def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
+                      ctx: StageContext,
+                      tools: dict[str, ToolInfo | None] | None = None,
+                      level: int = 9) -> StandardResult:
+    """Write a plain `.7z` or `.zip` — one anybody can open (G4).
+
+    The lock-in objection is fair and this is the answer: no container, no
+    manifest, just an archive that 7-Zip, Explorer, macOS and `unzip` all
+    read.
+
+    **What is given up** is the *later* half of the guarantee. Without a ledger
+    there is nothing to re-check against, so `excmp verify` can say nothing
+    about this file in six months.
+
+    **What is kept** is the *now* half, and it is not a token: the archive is
+    extracted to temp and every file compared against the original by SHA-256
+    before it is published. Same rule as the `.excmp` path — if it does not
+    restore, no file appears at the destination. So this archive has been
+    proven to restore once, on this machine; we simply cannot prove it again.
+    """
+    fmt = str(fmt).lower()
+    if fmt not in {"7z", "zip"}:
+        raise ValueError(
+            f"unsupported format {fmt!r}: choose '7z' or 'zip'. RAR creation "
+            f"is not legally possible for any tool but WinRAR")
+
+    t0 = time.monotonic()
+    tools = tools if tools is not None else find_tools(with_versions=True)
+    out_path = Path(out_path)
+    infos, _relmap = _collect([Path(p) for p in inputs])
+    if not infos:
+        raise ValueError("nothing to compress")
+    orig = sum(i.size for i in infos)
+
+    job_dir = Path(tempfile.mkdtemp(prefix="excmp-std-", dir=ctx.temp_dir))
+    tmp_out = out_path.with_suffix(out_path.suffix + ".tmp")
+    try:
+        # Same stage the .excmp route uses - the output path staying last, the
+        # password redaction, the progress parsing all come for free. Only the
+        # container type differs.
+        stage = SevenZipStage(level=level, archive_type=fmt)
+        roots = [Path(p) for p in inputs]
+        source = roots[0] if len(roots) == 1 and roots[0].is_dir() else None
+        stage.compress(source if source is not None else roots[0], tmp_out, ctx)
+
+        # Prove it restores, right now, the only moment we can.
+        check_dir = job_dir / "check"
+        stage.extract(tmp_out, check_dir, ctx)
+        want = _hash_tree(source) if source is not None else {}
+        got = _hash_tree(check_dir)
+        verified = 0
+        for rel, digest in want.items():
+            match = [v for k, v in got.items() if k.endswith(rel)]
+            if not match or match[0] != digest:
+                raise StageError(
+                    f"{fmt} export did not restore {rel!r} identically - "
+                    f"refusing to publish it")
+            verified += 1
+
+        tmp_out.replace(out_path)
+        tmp_out = None
+    finally:
+        if tmp_out is not None:
+            Path(tmp_out).unlink(missing_ok=True)
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    return StandardResult(
+        archive=out_path,
+        orig_bytes=orig,
+        final_bytes=out_path.stat().st_size,
+        elapsed_s=time.monotonic() - t0,
+        verified=verified,
+        has_ledger=False,
+        note=("standard %s: any tool can open it, and it was verified by "
+              "extracting and hashing every file just now - but it carries no "
+              "ledger, so it cannot be re-verified later the way an .excmp can"
+              % fmt),
+    )
+
+
 def compress(inputs: list[Path], out_path: Path, profile: Profile,
              ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None,
              sidecar: bool = False,

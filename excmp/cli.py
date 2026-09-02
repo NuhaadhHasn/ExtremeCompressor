@@ -52,6 +52,9 @@ def cmd_compress(args: argparse.Namespace) -> int:
     from . import engine  # deferred: keeps analyze fast
     ctx = StageContext(temp_dir=Path(args.temp))
 
+    if getattr(args, "format", "excmp") != "excmp":
+        return _compress_standard(args, engine, ctx)
+
     def show(stage: str, pct: float) -> None:
         if not args.json:
             print(f"\r  [{stage}] {pct:5.1f}%", end="", flush=True)
@@ -108,6 +111,40 @@ def cmd_compress(args: argparse.Namespace) -> int:
                   f"`sha256sum -c {result.sidecar.name}`")
         for w in result.warnings:
             print(f"warning: {w}")
+    return 0
+
+
+def _compress_standard(args, engine, ctx: StageContext) -> int:
+    """G4: a plain .7z/.zip. Reports what it can and cannot promise."""
+    def show(stage: str, pct: float) -> None:
+        if not args.json:
+            print(f"\r  [{stage}] {pct:5.1f}%", end="", flush=True)
+
+    ctx.progress_cb = show
+    result = engine.compress_standard(
+        [Path(p) for p in args.inputs], Path(args.output), args.format, ctx)
+    if not args.json:
+        print()
+    payload = {
+        "archive": str(result.archive),
+        "format": args.format,
+        "original": result.orig_bytes,
+        "final": result.final_bytes,
+        "saved_percent": round((1 - result.final_bytes / result.orig_bytes) * 100, 2)
+        if result.orig_bytes else 0.0,
+        "elapsed_s": round(result.elapsed_s, 1),
+        "verified": result.verified,
+        "has_ledger": result.has_ledger,
+        "note": result.note,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"done: {_fmt_size(result.orig_bytes)} -> "
+              f"{_fmt_size(result.final_bytes)} "
+              f"({payload['saved_percent']}% saved) in {payload['elapsed_s']}s")
+        print(f"verified {result.verified} file(s) by extracting and hashing")
+        print(f"note: {result.note}")
     return 0
 
 
@@ -336,6 +373,12 @@ def build_parser() -> argparse.ArgumentParser:
     # option, so it must be spelled --params=-mqs. Saying so in the help is
     # cheaper than the "expected one argument" people would otherwise hit on
     # their first try.
+    pc.add_argument("--format", default="excmp", choices=["excmp", "7z", "zip"],
+                    help="'excmp' (default) is our container: per-file SHA-256 "
+                         "and a restore we can re-verify any time. '7z' or "
+                         "'zip' write a plain archive any tool can open - "
+                         "still checked by extracting and hashing before it is "
+                         "published, but with no ledger to re-check later")
     pc.add_argument("--split", default=None, metavar="SIZE",
                     help="split the finished archive into volumes of this "
                          "size, e.g. 100m or 4g. Parts are named .001, .002 "

@@ -24,7 +24,7 @@ from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
                        read_container, write_container)
-from .planner import Plan, Profile, plan as make_plan, store_reason
+from .planner import Plan, Profile, plan as make_plan, precomp_inflation, store_reason
 from .safepath import resolve_within, safe_relpath
 from .slt import classify_failure
 from .stages.base import Stage, StageContext, StageError, StageSkip
@@ -105,7 +105,14 @@ def compress_space_needs(out_path: Path, temp_dir: Path, infos: list[FileInfo],
     piped = size.piped_bytes
     total = size.stored_bytes + size.piped_bytes
     stages = next((r.stages for r in the_plan.routes if r.action == "pipeline"), [])
-    inflation = _PRECOMP_INFLATION if "precomp" in stages else 1
+    # B3: the multiplier is per data type, not a flat 5x. A PNG folder inflates
+    # ~50x through Precomp (deflate all the way down, so expanding it yields
+    # raw pixels), and reserving 5x for one would under-book temp by an order
+    # of magnitude - which is the exact failure this preflight exists to catch.
+    piped_infos = next(
+        (set(r.files) for r in the_plan.routes if r.action == "pipeline"), set())
+    inflation = (precomp_inflation([i for i in infos if i.path in piped_infos])
+                 if "precomp" in stages else 1)
 
     # Output: the .tmp twin, which is the whole archive. Use the pessimistic end
     # of the estimate - being wrong here means a disk-full failure late in a long
@@ -475,6 +482,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 _wait_if_paused(ctx)
                 stage = registry[sid]
                 nxt = job_dir / f"s{i}{_PAYLOAD_EXT.get(sid, '.bin')}"
+                consumed = _tree_size(current)
                 try:
                     current = stage.compress(current, nxt, ctx)
                 except StageSkip as skip:
@@ -490,6 +498,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # "copy as command" is not guessing. Empty when the user
                     # chose nothing, rather than claiming the tool's defaults
                     # as deliberate settings.
+                    input_bytes=consumed,
                     params=(options.as_params() if options
                             and sid in ("sevenzip", "zstd") else {}),
                 ))
@@ -941,13 +950,23 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
                     raise StageError(f"archive needs stage '{sid}' which is not available")
                 is_last = i == len(stages) - 1
                 dst = out_dir if is_last else job_dir / f"r{i}"
+                # The chain runs backwards, so this stage should reproduce
+                # what the *corresponding* compress stage consumed. When the
+                # archive recorded that number, use it: an exact figure plus
+                # slack is a far tighter bound than a blanket multiplier, and
+                # it is the only way to allow Precomp's honest ~50x on PNG
+                # without weakening the guard for everything else.
+                record = manifest.stages[len(stages) - 1 - i]
+                declared_in = getattr(record, "input_bytes", 0) or 0
+                budget = (int(declared_in * 1.25) + _STAGE_FLOOR_BYTES
+                          if declared_in else stage_budget)
                 current = stage.extract(current, dst, ctx)
                 produced = _tree_size(current)
-                if produced > stage_budget:
+                if produced > budget:
                     raise ContainerError(
-                        f"stage '{sid}' produced {produced >> 20} MiB, far beyond "
-                        f"the {stage_budget >> 20} MiB implied by the manifest "
-                        f"ledger - refusing to continue")
+                        f"stage '{sid}' produced {produced >> 20} MiB, beyond "
+                        f"the {budget >> 20} MiB this archive declares for it "
+                        f"- refusing to continue")
                 if not is_last and current.is_dir():
                     # intermediate extract of a single-file payload: descend
                     inner = [p for p in current.rglob("*") if p.is_file()]

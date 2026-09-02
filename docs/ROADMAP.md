@@ -303,7 +303,32 @@ display scaling — both need a human at the machine.
       storing it raw is still free, instead of at restore time when D9 would
       refuse the whole archive. Reuses the `stored/` machinery G9 extended
       (a `codec: "lepton"` ledger entry), so no new route was needed.
-- [ ] B3. **PNG specialist**: `oxipng -o max` default, ECT `-9` under Extreme
+- [x] B3. ✅ **DONE 2026-09-02 — but NOT as specified.** The plan said
+      "`oxipng -o max` default"; measured, that would have broken the product.
+      ([benchmarks/2026-09-02-b3](benchmarks/2026-09-02-b3-png.md).)
+      **oxipng does not preserve bytes**: on 10 real PNGs it saved 31.79% and
+      produced **0 byte-identical files**. It re-encodes the image to a smaller
+      form that renders the same — pixel-lossless, not byte-lossless — so it
+      cannot satisfy a SHA-256 ledger. **oxipng moves to Phase C** with the
+      AV1 re-encoder: opt-in, labelled, changes your file.
+      **The lossless route is better anyway.** PNG is deflate all the way down,
+      so Precomp expands and reconstructs it exactly: **38.41% saved, 15/15
+      byte-identical**, against oxipng's 31.79% and zero. All it needed was for
+      PNGs to stop being routed to `store` — `_DEFLATE_MEDIA = {".png"}` is the
+      one exception to "media stays stored", because a PNG's entropy is deflate
+      output rather than real randomness. JPEG deliberately stays out: its
+      entropy *is* real and it has B2/lepton on the stored route.
+      **Uncovered a bigger bug.** PNG inflates ~50x through Precomp (3.5 MB tar
+      → 177 MB .pcf), and extraction runs the chain backwards, so the
+      decompression-bomb guard's flat 8x-over-ledger allowance refused the
+      restore. No multiplier can fix that — loose enough for PNG is no defence,
+      tight enough to defend rejects PNG. So `StageRecord.input_bytes` now
+      records what each stage actually consumed, and extraction is bounded by
+      that measured figure + 25% instead of a ratio. **This makes the bomb
+      defence stronger**, and old archives (`input_bytes: 0`) fall back to the
+      multiplier, with a test that strips the field and restores one.
+      Also: `precomp_inflation()` is now per-type and byte-weighted, because a
+      flat 5x under-reserved temp for PNG by an order of magnitude.
 - [ ] B4. **WAV specialist**: FLAC 1.5 `-8 -j N`; TAK/OptimFROG as detected-only
       opt-ins (closed freeware — never bundled)
 - [ ] B5. **PDF/Office**: qpdf `--object-streams=generate --recompress-flate`;
@@ -446,6 +471,13 @@ display scaling — both need a human at the machine.
 - [ ] C4. Honest UX: ETA warning before starting ("~9 hours on this machine — run
       overnight?"), output tagged so we never re-encode our own output
 - [ ] C5. Later: ab-av1-style CRF search targeting VMAF 95 (needs beefier machine)
+- [ ] C6. **(moved from B3, 2026-09-02)** `oxipng` / ECT as an **opt-in**
+      PNG re-encoder. Measured 31.79% on real PNGs but **0 of 10 files came
+      back byte-identical** — it rewrites the image to a smaller encoding.
+      That is pixel-lossless, not byte-lossless, so it belongs here with the
+      AV1 re-encoder and not in a lossless phase. Note the lossless
+      `precomp → 7z` route already beats it (38.41%), so this is only worth
+      building for the case where Precomp is unavailable.
 
 ## Phase D — QA hardening (data integrity IS the product)
 

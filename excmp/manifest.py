@@ -41,6 +41,18 @@ class StageRecord:
     tool_name: str
     tool_version: str
     params: dict
+    #: Bytes this stage **consumed** at compress time.
+    #:
+    #: On extraction the chain runs backwards, so this is exactly what the
+    #: stage should produce - which turns the decompression-bomb guard from a
+    #: blanket multiplier into a number we actually measured. That matters
+    #: because Precomp's legitimate inflation is wildly data-dependent: 2-5x
+    #: on installers, but ~50x on PNG, where expanding deflate yields raw
+    #: pixels. A multiplier loose enough for PNG would be no defence at all.
+    #:
+    #: ``0`` means "not recorded" - every archive written before this field
+    #: existed - and the reader falls back to the old multiplier for those.
+    input_bytes: int = 0
 
 
 @dataclass

@@ -25,6 +25,9 @@ STAGE_WEIGHTS: dict[str, float] = {
     "precomp": 35.0,
     "srep": 20.0,
     "sevenzip": 40.0,
+    # Mid-range context mixing at -m4: heavier per byte than LZMA2 at mx9,
+    # and it is doing the CDC dedup pass in the same breath.
+    "zpaqfranz": 50.0,
     "zstd": 100.0,   # the whole fast profile is this one stage
 }
 DEFAULT_WEIGHT = 25.0

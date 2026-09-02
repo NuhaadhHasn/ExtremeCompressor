@@ -282,6 +282,7 @@ STAGE_LABELS: dict[str, str] = {
     "sevenzip": "7-Zip",
     "precomp": "Precomp",
     "srep": "SREP",
+    "zpaqfranz": "zpaqfranz",
 }
 
 

@@ -39,9 +39,11 @@ _CHAINS: dict[str, list[tuple[str, str | None]]] = {
     "fast": [("zstd", None)],
     "normal": [("sevenzip", "7z")],
     "extreme": [("precomp", "precomp"), ("sevenzip", "7z")],
-    # INSANE upgrades the final codec to zpaqfranz when a stage exists for it;
-    # until then it is the extreme chain (a warning tells the user).
-    "insane": [("precomp", "precomp"), ("sevenzip", "7z")],
+    # INSANE swaps 7-Zip for zpaqfranz (B1): same place in the chain, but it
+    # also brings unlimited-distance CDC dedup, which is what B11 took away
+    # when SREP came out. Falls back to the extreme chain when zpaqfranz is
+    # absent - see _FINAL_CODEC_FALLBACK.
+    "insane": [("precomp", "precomp"), ("zpaqfranz", "zpaqfranz")],
 }
 
 
@@ -67,6 +69,16 @@ class Plan:
     warnings: list[str] = field(default_factory=list)
 
 
+#: Stages that emit something which is *not* a finished archive. Dropping a
+#: missing tool's stage is fine anywhere else in a chain, but if the chain
+#: ends on one of these the engine would publish an intermediate stream - a
+#: .pcf or a .tar - as though it were the archive.
+_INTERMEDIATE = {"precomp", "tar", "srep"}
+
+#: When a final codec's tool is missing, what to try instead, in order.
+_FINAL_CODEC_FALLBACK: list[tuple[str, str]] = [("sevenzip", "7z"), ("zstd", "")]
+
+
 def _resolve_chain(profile: Profile, tools: dict[str, ToolInfo | None]) -> tuple[list[str], list[str]]:
     stages: list[str] = []
     warnings: list[str] = []
@@ -77,10 +89,20 @@ def _resolve_chain(profile: Profile, tools: dict[str, ToolInfo | None]) -> tuple
             warnings.append(
                 f"{profile.value}: stage '{stage_id}' skipped - tool '{tool}' not installed"
             )
-    if profile is Profile.INSANE:
-        warnings.append(
-            "insane: zpaqfranz backend not integrated yet - using extreme chain"
-        )
+    # A chain that lost its final codec must borrow another one, not simply
+    # run shorter. Insane is the case that made this necessary: without
+    # zpaqfranz it degraded to ["precomp"], whose output is an intermediate
+    # precomp stream, and the engine would have published that as the archive.
+    if stages and stages[-1] in _INTERMEDIATE:
+        for stage_id, tool in _FINAL_CODEC_FALLBACK:
+            if not tool or tools.get(tool) is not None:
+                stages.append(stage_id)
+                warnings.append(
+                    f"{profile.value}: falling back to '{stage_id}' as the final codec"
+                )
+                break
+        else:
+            stages = [s for s in stages if s not in _INTERMEDIATE]
     if not stages:
         stages = ["zstd"]
         warnings.append(f"{profile.value}: no external tools found - fell back to zstd")

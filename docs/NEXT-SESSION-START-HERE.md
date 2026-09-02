@@ -1,13 +1,13 @@
-# 🚦 START HERE — handoff (written 2026-09-02)
+# 🚦 START HERE — handoff (written 2026-09-02, second pass)
 
 > **G2 and the licence change are merged and pushed.** The repo is PRIVATE and
 > the OSI rule is retired. **B1 (zpaqfranz) is on branch
 > `phase-b1-zpaqfranz`, awaiting review** — it is the only unmerged work.
 >
-> **Start here: G9 — deduplicate stored files against the ledger.** It is new,
-> it is small, and it is measured to be worth more than B1 was. Section 3.
+> **Start here: B6 — the Oodle/AAA gap.** Section 3. It is the last place we
+> measurably lose, and it is now unblocked in a way it never was before.
 
-**592 tests: 591 pass + 1 strict-xfail.**
+**605 tests: 604 pass + 1 strict-xfail.**
 
 ```
 .venv\Scripts\python.exe -m pytest -q
@@ -69,38 +69,39 @@ freeze the window.
 8. **`--password` takes no value.** It prompts. A password in argv is in the
    process table and the shell history.
 
-## 3. The next job: G9 — dedup the stored files
+## 3. The next job: B6 — Oodle, the last real gap
 
-**B1 shipped, and measuring it found something worth more than B1 was.**
+**Everything cheap is now done.** G9 took the duplicate corpus from 5.22% to
+**51.08%** — a bigger single move than every compressor change this project
+has made put together. What is left is the one thing we still measurably lose
+at: modern AAA games compressed with Oodle, where we get ~5-15% against a
+repack scene getting 50-70%.
 
-On a corpus that was **49% exact duplicates**, Extreme saved 5.22% and Insane
-5.21%. Neither compressor could see the duplication, because the two identical
-23.8 MB executables were high-entropy and so were routed to **`store`** —
-copied verbatim, correctly, and therefore never entering the pipeline where
-every deduplicator we have lives. We wrote both copies in full.
+**Read these two things first, in this order:**
 
-**We already have everything needed to fix it.** A SHA-256 per file *is* the
-ledger. Two entries with the same hash are the same bytes by definition.
-Store one copy, point both names at it. On that corpus it is worth **~45%**
-where both compressors managed 5%.
+1. **research/24 §2** — the finding that settles the design. There is **no
+   open-source Oodle encoder and there will not be one**. `powzix/ooz` decodes
+   in open code and *encodes by calling the proprietary DLL* — its own README
+   says `-z --compress compress (requires oo2core_7_win64.dll)`. Since our
+   model is restore = recompress, the `oo2core` DLL is unavoidable and
+   permanent.
+2. **The audit note on B6 in ROADMAP.md** — five sub-items the original plan
+   was missing, and the one design flaw that matters.
 
-Spec is roadmap **G9**. The shape:
+**The flaw, and why it is now easy.** B6 says to "re-resolve the oo2core DLL
+from the game folder at restore". For an archive, that folder is gone. The DLL
+is inside the very blob xtool has to decode. That was a genuine chicken-and-egg
+— **until the repo went private.** Now we can simply vendor the DLL, or force
+it into the `stored/` bucket. The problem does not need solving so much as
+deleting, but it does need a decision recorded before any code is written.
 
-- Add a per-entry `same_as` to the ledger, pointing at the first entry with
-  that hash. `excmp/manifest.py` owns this.
-- `extract_stored()` copies from the referenced member instead of the zip.
-- `verify_restore()` needs **no change** — it re-hashes the restored file,
-  which is exactly the property that makes this safe.
-- Two hazards worth a test each: an entry must never reference a *later* one
-  (write order), and a `same_as` chain must not be followable more than one
-  hop, or a hostile archive can build a cycle.
+**Realistic scope: 3-4 sessions, not the 1-2 the item claims.** Split
+B6(f) (`.xtl` game-fingerprint curation) out as post-v1 — doc 09 §4 calls it
+the least transferable lever and it needs you to own and run each title.
 
-**This also reframes the SREP story.** SREP lived inside the pipeline too, so
-it never saw stored duplicates either. The long-range dedup we spent B1
-restoring was never where the duplicate-file win actually was.
-
-**Then:** B6 (Oodle/AAA — read its audit note *and* research/24 §2 first),
-B12 (LOLZ), B8 (re-benchmark and replace every `(est.)`).
+**Then:** B12 (LOLZ), then B8 (re-benchmark everything and replace every
+`(est.)` in doc 09's comparison table — nothing currently validates the claim
+B6 exists to fix).
 
 ## 4. Run the QA sweep before calling any UI work done
 

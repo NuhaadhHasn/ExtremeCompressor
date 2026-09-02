@@ -143,12 +143,40 @@ def write_container(archive_path: Path, manifest: Manifest,
     stored_norm = {str(safe_relpath(rel)): src
                    for rel, src in (stored_files or {}).items()}
 
+    # G9: identical files are written once.
+    #
+    # Two ledger entries with the same SHA-256 are the same bytes, and we have
+    # already paid for that hash - it *is* the ledger. So the first entry of
+    # each hash carries the bytes and the rest carry a `same_as` pointing at
+    # it. Measured worth: a corpus that was 49% duplicates compressed by ~5%
+    # before this, because the duplicated files were high-entropy and so were
+    # stored verbatim, where no compressor could ever see them
+    # (benchmarks/2026-09-02).
+    #
+    # Only *stored* entries are considered. A pipelined file is inside the
+    # payload, where the codec's own dedup applies and this pointer means
+    # nothing. A file with no recorded hash is never deduplicated: an empty
+    # `sha256` means "we do not know", which is not a statement about equality.
+    first_by_hash: dict[str, str] = {}
+    for rel in stored_norm:
+        digest = str(manifest.inputs.get(rel, {}).get("sha256", ""))
+        if not digest:
+            continue
+        if digest in first_by_hash:
+            manifest.inputs[rel]["same_as"] = first_by_hash[digest]
+        else:
+            first_by_hash[digest] = rel
+
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED,
                          allowZip64=True) as zf:
+        # The manifest goes in first and now carries the `same_as` pointers,
+        # so the dedup pass above has to run before this line.
         zf.writestr(MANIFEST_NAME, manifest.to_json())
         if payload_path is not None:
             zf.write(payload_path, arcname=manifest.payload_name)
         for rel, src in stored_norm.items():
+            if "same_as" in manifest.inputs.get(rel, {}):
+                continue
             zf.write(src, arcname=STORED_PREFIX + rel)
 
 
@@ -282,6 +310,62 @@ def extract_stored(archive_path: Path, out_dir: Path,
                         f"declares {declared}")
             except BaseException:
                 # Never leave a truncated file behind on refusal.
+                target.unlink(missing_ok=True)
+                raise
+            written.append(target)
+
+        # G9 second pass: entries whose bytes live under another entry's name.
+        #
+        # Read from the zip rather than from whatever landed on disk, so a
+        # selective extract that asks only for the duplicate still works.
+        for key, meta in ledger.items():
+            source_key = meta.get("same_as")
+            if not source_key:
+                continue
+            if only is not None and key not in only:
+                continue
+            source_meta = ledger.get(source_key)
+            if source_meta is None:
+                raise ContainerError(
+                    f"stored entry {key!r} claims to duplicate "
+                    f"{source_key!r}, which is not in the ledger")
+            # One hop, never a chain. A chain that terminates is still a
+            # reader an archive can walk, and nothing we write ever emits one
+            # - the writer always points at the *first* entry for that hash.
+            # This is also what makes a cycle impossible rather than merely
+            # bounded.
+            if source_meta.get("same_as"):
+                raise ContainerError(
+                    f"stored entry {key!r} points at {source_key!r}, which is "
+                    f"itself a duplicate - chains are not followed")
+            # The pointer is a claim; the hashes are the evidence. Believing
+            # the pointer over them would let an archive serve one file's
+            # bytes under another file's name *and* another file's hash.
+            if (not source_meta.get("sha256")
+                    or source_meta.get("sha256") != meta.get("sha256")
+                    or int(source_meta.get("size", -1)) != int(meta.get("size", -2))):
+                raise ContainerError(
+                    f"stored entry {key!r} claims to duplicate {source_key!r} "
+                    f"but their ledger hashes or sizes disagree")
+            member = STORED_PREFIX + str(safe_relpath(source_key))
+            try:
+                info = zf.getinfo(member)
+            except KeyError:
+                raise ContainerError(
+                    f"stored entry {key!r} duplicates {source_key!r}, whose "
+                    f"bytes are not in the archive") from None
+            declared = int(meta.get("size", 0))
+            target = resolve_within(out_dir, key)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with zf.open(info) as src, target.open("wb") as dst:
+                    got = _copy_bounded(src, dst, declared,
+                                        f"stored entry {key!r}")
+                if got != declared:
+                    raise ContainerError(
+                        f"stored entry {key!r} holds {got} bytes, the ledger "
+                        f"declares {declared}")
+            except BaseException:
                 target.unlink(missing_ok=True)
                 raise
             written.append(target)

@@ -668,29 +668,28 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       cap dict/window/threads and spill to temp when RAM is short, because archives
       get extracted on weaker machines than they were created on
 - [ ] G8. Hash tool (`excmp hash`, stdlib hashlib) — cheap credibility, fits the brand
-- [ ] **G9. Deduplicate stored files against the ledger** ⭐ **(new 2026-09-02,
-      and the highest value-per-effort item on this roadmap)**. Measured in
-      [benchmarks/2026-09-02](benchmarks/2026-09-02-b1-zpaqfranz.md): on a
-      corpus that was **49% exact duplicates**, Extreme saved 5.22% and Insane
-      5.21%. Neither compressor could see the duplication, because the two
-      identical 23.8 MB executables were high-entropy and therefore **routed to
-      `store`** — copied verbatim, correctly, and so never entering the
-      pipeline where any deduplicator lives. We wrote both copies in full.
-      **The fix is nearly free and exactly lossless:** we already compute a
-      SHA-256 for every file — it *is* the ledger. Two entries with the same
-      hash are the same bytes by definition, so store one copy and point both
-      names at it. That single change would have saved **~45%** of that corpus
-      where both compressors managed 5%.
-      Design notes: the ledger already keys on the archive-internal path, so
-      add a per-entry `same_as` pointing at the first entry with that hash;
-      `extract_stored()` copies from the referenced member; `verify_restore()`
-      needs no change at all because it re-hashes the *restored file*, which is
-      the point. Watch two things: an entry must never reference a later one
-      (write order), and a `same_as` chain must not be followable more than one
-      hop, or a malicious archive could build a cycle. **This also reframes the
-      SREP story** — SREP sat inside the pipeline too, so it never saw stored
-      duplicates either. Long-range dedup between installers was never the
-      thing that was missing.
+- [x] **G9. ✅ DONE 2026-09-02** — deduplicate stored files against the ledger.
+      Measured in [benchmarks/2026-09-02](benchmarks/2026-09-02-b1-zpaqfranz.md):
+      on the 49%-duplicate corpus, Extreme went **5.22% → 51.08% saved
+      (+45.86 points)** and Insane **5.21% → 51.06%**, 5/5 byte-identical, and
+      marginally *faster* because writing one copy of a 23.8 MB file beats
+      writing two. For scale, B1 moved that same corpus by −0.02 points.
+      **The duplicate-file win was never in the compressor** — it was in the
+      store route, which copies identical high-entropy files verbatim where no
+      deduplicator can see them.
+      Implementation: `write_container` groups stored entries by the SHA-256
+      the ledger already carries, writes the first, and gives the rest a
+      `same_as` pointer; `extract_stored` gains a second pass that reads the
+      source **from the zip** (not from disk, so selective extract still
+      works) and writes every duplicate out in full. `verify_restore` needed
+      **no change at all** — it re-hashes the restored file on disk, which is
+      exactly what makes this safe.
+      Four hostile cases are refused and tested: a `same_as` cycle, a chain of
+      more than one hop, a pointer outside the ledger, and a pointer whose
+      ledger hash or size disagrees with the target's. Chains are refused
+      rather than bounded, which is what makes a cycle impossible instead of
+      merely survivable. A file with an empty `sha256` is never deduplicated:
+      "we do not know" is not a statement about equality.
 
 **Explicitly skipped, decision recorded:** file manager (dilutes the drop→analyze→queue
 identity), password manager (liability), secure delete (ineffective on SSDs — would

@@ -153,3 +153,25 @@ route, and we already have the hashes to claim it.
 Corpus B = the 5 files listed in `2026-08-01-estimator-backtest.md` §"Corpus B".
 Corpus D = HandBrake + Composer + RAMMap from that set, with HandBrake and
 Composer each duplicated under a second name.
+
+---
+
+# Addendum — G9 shipped the same day, and it is the real result
+
+Same corpus D, same machine, same profiles. The only change is that identical
+stored files are now written once.
+
+| profile | before G9 | after G9 | delta |
+|---|---|---|---|
+| extreme | 49,146,313 (5.22%) | **25,366,366 (51.08%)** | **+45.86 points** |
+| insane | 49,156,048 (5.21%) | **25,376,101 (51.06%)** | **+45.85 points** |
+
+5/5 byte-identical on both, under the D9 gate *and* an independent
+extract-and-hash. Compression also got marginally **faster** (5.7 s → 5.2 s),
+because writing one copy of a 23.8 MB file beats writing two.
+
+For scale: **B1 moved this corpus by −0.02 points. G9 moved it by +45.86.**
+The duplicate-file win was never in the compressor.
+
+Corpus B is unaffected by design — it has no duplicate files, so no entry
+carries a `same_as` and the container is byte-for-byte what it was.

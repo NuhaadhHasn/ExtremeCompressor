@@ -46,6 +46,69 @@
 
 ---
 
+## ⚖️ 2026-09-01 — the repo went private, and the licence constraint is gone
+
+The repo is now **PRIVATE**. The 100%-OSI rule existed to keep free SignPath
+code signing available for a public release; there is no public release, so
+there is no distribution, so the obligations that trigger on distribution do
+not apply. **SREP, LOLZ, Oodle/`oo2core`, `unarc.dll` and xtool Patreon builds
+are all permitted now.**
+
+### What this unblocks
+
+| Item | Was blocked by | Now |
+|---|---|---|
+| **B6** (xtool + Oodle) | needed E1 for a pinned hash | **unblocked** — and the `oo2core` DLL may simply be vendored, which dissolves the restore-time bootstrap problem doc 24 §2 showed is otherwise permanent |
+| **LOLZ as final codec** | not OSI, never even listed | **new item B12** below |
+| **SREP** | "not OSI" (which doc 24 §5 showed was shaky anyway) | permitted — **but still not recommended**, see below |
+| **`unarc.dll` / ISDone** (H3) | GPL, in-process = linking | permitted; still only matters when Phase H starts |
+
+### What it does NOT change — and what gets *more* important
+
+**The lossless guarantee, and the SHA-256 gate that enforces it.** Several
+newly-permitted tools are known-unreliable. SREP failed its own decompression
+checksum on **1 of 3 runs over byte-identical input**. The licence rule was
+never what protected us from that — `_verify_before_publish` was. With flakier
+tools now in scope, that gate is the whole safety story. **Never weaken
+verification to accommodate a new tool.**
+
+### What becomes optional
+
+**Phase E4 (SignPath code signing) no longer applies**, and E3/E5 (installer,
+auto-update) matter only if this is ever shared. Deprioritise the whole of
+Phase E except **E1's tool downloader**, which is still useful for *fetching*
+tools onto the machine.
+
+### Standing recommendation on SREP
+
+Permitted ≠ advisable. It buys ~3.5 points; **zpaqfranz (B1) does the same job**
+— long-range CDC dedup at unlimited distance — is actively maintained, MIT, and
+has never failed a restore here. **Do B1 first.** Only reach for SREP if B1
+measurably underperforms on a real corpus, and if it goes in, it goes in behind
+the verification gate like everything else.
+
+### Revised order, best-app-first
+
+1. **B1** (zpaqfranz) — dedup back, no risk, completes Insane
+2. **B6** (xtool + Oodle) — the AAA gap; now vendorable, so the DLL problem is solvable
+3. **B12** (LOLZ) — final-codec upgrade
+4. **B8** — re-benchmark and replace every `(est.)` with a measurement
+5. J5-J7, then D1-D3/D7 (QA + CI)
+
+If the repo is ever made public again, **this entire section reverts** and the
+OSI rule comes back before anything ships.
+
+- [ ] B12. **LOLZ as an optional final codec** (new 2026-09-01, unblocked by the
+      licence change). ~5-10% over LZMA2 on game data per scene reports —
+      **unverified by us**, so B8 must measure it before any UI copy quotes a
+      number. Closed-source, so: treat exactly like every other untrusted
+      stage — pinned binary, `-t2`, no trust in its exit code, and the
+      post-restore SHA-256 comparison is what decides whether the archive
+      publishes. Route it as an Insane-tier alternative to the 7-Zip stage,
+      never as a default, and degrade gracefully when the binary is absent.
+
+---
+
 ## Phase D0 — Security hotfix ✅ DONE (2026-07-31, D0.1-D0.5)
 
 Research on 2026-07-31 audited our own code and found an **exploitable

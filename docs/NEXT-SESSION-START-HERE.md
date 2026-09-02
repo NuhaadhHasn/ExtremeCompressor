@@ -1,24 +1,35 @@
 # 🚦 START HERE — handoff (written 2026-09-01)
 
-> **G2 is done and sitting on branch `phase-g2-foreign-listing`, unmerged,
-> awaiting your review.** Foreign archives list, encrypted ones ask for a
-> password instead of freezing the app, and single members come out of either
-> kind of archive.
+> **G2 is merged. The repo is now PRIVATE and the OSI rule is retired.**
+> Every branch is merged and deleted; `main` == `origin/main`.
 >
-> **Start here: J5-J7** — per-type memory, long-job confirm, self-calibration.
-> Section 3 has the detail.
+> **Start here: B1 — the zpaqfranz stage.** Section 3 has the detail and says
+> why B1 comes before B6 even though B6 is the bigger prize.
 
-**552 tests: 551 pass + 1 strict-xfail.** Baseline last session was 469.
+**574 tests: 573 pass + 1 strict-xfail.**
 
 ```
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-```
-git merge --no-ff phase-g2-foreign-listing
-```
-
 ---
+
+## 0. The big change this session: licensing
+
+The repo went **private**, so there is no distribution and the 100%-OSI rule
+is retired (`CLAUDE.md` and `ROADMAP.md` both record this). **SREP, LOLZ,
+Oodle/`oo2core`, `unarc.dll` and xtool Patreon builds are all permitted now.**
+
+Two consequences that are easy to get wrong:
+
+1. **The lossless guarantee did not move, and now carries more weight.** The
+   licence rule never protected us from bad tools — `_verify_before_publish`
+   did. Newly-permitted tools include one with *known intermittent
+   corruption*. **Never weaken verification to make a tool fit.**
+2. **Phase E4 (SignPath signing) no longer applies.** E3/E5 matter only if
+   this is ever shared. E1's downloader is still useful for fetching tools.
+
+If the repo is ever made public again, **the OSI rule comes back first.**
 
 ## 1. What is on `main` (plus the unmerged branch)
 
@@ -57,27 +68,37 @@ freeze the window.
 8. **`--password` takes no value.** It prompts. A password in argv is in the
    process table and the shell history.
 
-## 3. The next job: J5-J7
+## 3. The next job: B1 — the zpaqfranz stage
 
-`docs/ROADMAP.md` Phase J. J1-J4 and J8 shipped 2026-08-01; these three finish
-it.
+**Why B1 and not B6, when B6 is the bigger prize.** B6 (Oodle/AAA games) is
+worth far more — it is the only place we measurably lose. But B1 is a clean
+1-session win that B6's own value depends on: B11 removed SREP and cost us
+**3.5 points** on dedup-friendly data, and zpaqfranz's CDC dedup is what was
+always meant to replace it. It is MIT, maintained, and matches identical
+fragments at unlimited distance in <500 MB RAM for 200 GB of data. Doing it
+first means B6's measurements are taken against a chain that is not silently
+missing its dedup stage.
 
-- **J5 — remember the last choice per content type.** QSettings map
-  `dominant category -> profile`. **The I1 dependency the roadmap warns about
-  is gone** — wave 3c shipped QSettings persistence, so `gui/settings_tab.py`
-  and its store already exist. Extend them; do not bootstrap a second one.
-- **J6 — long-job confirmation** past ~45 min estimated. **Use
-  `Banner.show_message` with two verb-labelled actions** — the pattern is now
-  worked twice over, most recently by G2's solid-archive warning in
-  `MainWindow._start_selected_extract`, which prices the wait in bytes before
-  charging it. Copy that shape. **Not a modal.**
-- **J7 — self-calibrating rates.** Record real `piped_bytes / elapsed` **per
-  resolved chain** after each job, EMA it into `Rates`, keep the shipped
-  defaults as the cold-start prior. `Rates` is already an injected argument,
-  so no model change is needed. This is the one that turns a benchmark
-  laptop's numbers into this machine's.
+Spec is roadmap **B1**. Key points already decided:
 
-After that, the roadmap's own order: D1-D3/D7 (QA core + CI), B1-B3/B9-B10.
+- `a -m4 -longpath` for Insane; `-m5` only behind an "overnight" warning —
+  both use 64 MiB blocks and `-m5` is ~2-3x the CPU for CM depth, so **`-m4`
+  is the realistic ceiling on 2 cores**.
+- Add `-test` for a one-shot post-add decompress check — *in addition to*, not
+  instead of, our own SHA-256 gate.
+- Keep archives **vanilla-zpaq-7.15-readable**: plain `a` only, no `backup`
+  multipart / ZETA / W-chunk.
+- `planner._CHAINS["insane"]` currently degrades to the extreme chain with a
+  warning. B1 is what makes Insane real; the warning string is asserted by a
+  test, so update both.
+
+**Then B6** (3-4 sessions — read its audit note *and* research/24 §2 first;
+the DLL problem is now solvable by vendoring, which is new), **then B12**
+(LOLZ), **then B8** (re-benchmark and replace every `(est.)`).
+
+**Standing advice: do not add SREP.** Permitted now, but it buys 3.5 points
+that B1 also buys, and it failed its own decompression checksum on 1 of 3 runs
+over byte-identical input. Only revisit if B1 measurably underperforms.
 
 ## 4. Run the QA sweep before calling any UI work done
 
@@ -148,9 +169,10 @@ eats values starting with `-`). G2 adds seven:
 - **No AI attribution in commits** — audit before committing.
 - Docs → `main`; code → its own branch, left unmerged for review. One phase
   per session.
-- **100 % OSI-clean.** `assets/icons/` vendors Fluent UI System Icons (MIT)
-  with the upstream `LICENSE` beside them. Never bundle SREP / lolz / oo2core /
-  unrar.dll / Segoe Fluent Icons (EULA).
+- **OSI rule retired 2026-09-01** (repo is private — see section 0). Any tool
+  may now be used or vendored. `assets/icons/` still vendors Fluent UI System
+  Icons (MIT) with the upstream `LICENSE` beside them — keep that, it costs
+  nothing and stays correct if the repo ever goes public again.
 - Target hardware: 2-core i7-3540M, 16 GB, **1366×768 primary display**.
 - Lossless is a hard guarantee; post-restore SHA-256 is the acceptance gate.
 

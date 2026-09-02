@@ -745,9 +745,30 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       entries are instant zip reads; payload members get an honest "this archive
       is solid — one file replays the whole chain" warning first. Engine: additive
       `list_archive()` + `extract_selected()`
-- [ ] G3. **Split volumes** (`.excmp.001`…) — pure-Python chunking with per-part
-      SHA-256; extraction accepts part 001 and auto-joins. Simpler and format-safer
-      than `7z -v` because `.excmp` isn't a bare `.7z`
+- [x] G3. ✅ **DONE 2026-09-02** — split volumes (`excmp/volumes.py`,
+      `compress --split 100m`, and `extract` auto-joins when handed a `.001`).
+      Pure-Python chunking as planned: parts are `<archive>.001`, `.002`, …,
+      zero-padded so a lexical sort *is* the join order, capped at 999 because
+      `.1000` would sort before `.101` and silently reorder the archive. The
+      container is untouched — join first, then the ordinary reader runs — so
+      a split archive is not a second format to reason about, and the split
+      happens only **after** the D9 gate has published, because splitting an
+      unverified archive just produces several unverified files.
+      Per-part SHA-256 goes in a `.sha256` sidecar in `sha256sum` layout. It is
+      a convenience, not a correctness requirement: joining works without it,
+      and it exists so a failed transfer can name *which* part to re-fetch.
+      Verified end-to-end: 22.5 MB of executables split into 2 volumes, whole
+      archive deleted, rejoined from the parts alone — **32/32 byte-identical**.
+      **Two bugs found while building it.** (1) `part_paths` originally stopped
+      at the first gap, so a missing middle volume looked identical to a set
+      that simply ended there and we would have joined a truncated archive; it
+      now scans to the highest number present and names the hole. (2) **The G6
+      sidecar had never been checkable with `sha256sum -c`** — `write_text`
+      emits CRLF on Windows, so the trailing `` became part of the filename
+      and every line failed with "No such file or directory". A feature whose
+      entire purpose was that one command, shipped broken. Both sidecars now
+      pass `newline="
+"`, with a test asserting no CRLF.
 - [ ] G4. **Standard-format export** — a "plain .7z/.zip (compatible)" checkbox that
       runs only the 7z stage and skips the container. Kills the lock-in objection;
       nearly free given the existing stage

@@ -402,7 +402,13 @@ def _write_sidecar(archive: Path) -> Path:
     transport sidecar exists for.
     """
     side = Path(str(archive) + ".sha256")
-    side.write_text(f"{hash_file(archive)}  {archive.name}\n", encoding="utf-8")
+    # newline="\n": see volumes.write_parts_sidecar. Python writes CRLF on
+    # Windows by default, and `sha256sum -c` then treats the trailing \r as
+    # part of the filename and fails every line. This shipped broken until
+    # 2026-09-02 - the sidecar existed for exactly one command and did not
+    # survive it.
+    side.write_text(f"{hash_file(archive)}  {archive.name}\n",
+                    encoding="utf-8", newline="\n")
     return side
 
 

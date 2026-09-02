@@ -81,9 +81,23 @@ def cmd_compress(args: argparse.Namespace) -> int:
         "warnings": result.warnings,
         "sidecar": str(result.sidecar) if result.sidecar else None,
     }
+    # G3: split only after compress() has published, which means only after
+    # the D9 gate has restored and hashed the whole archive. Splitting an
+    # unverified archive would just produce several unverified files.
+    parts: list[Path] = []
+    if getattr(args, "split", None):
+        from .volumes import parse_size, split_file, write_parts_sidecar
+        parts = split_file(result.archive, parse_size(args.split))
+        write_parts_sidecar(parts)
+        payload["volumes"] = [str(p) for p in parts]
+
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
+        if parts:
+            print(f"split into {len(parts)} volumes: {parts[0].name} .. "
+                  f"{parts[-1].name}")
+            print(f"extract with: excmp extract {parts[0].name}")
         print(f"done: {_fmt_size(result.orig_bytes)} -> {_fmt_size(result.final_bytes)} "
               f"({payload['saved_percent']}% saved) in {payload['elapsed_s']}s")
         for r in result.routes:
@@ -98,7 +112,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
-    """Extract ours or somebody else's (G1).
+    """Extract ours or somebody else's (G1), joining volumes first (G3).
 
     The two cases report differently on purpose. A foreign zip has no SHA-256
     ledger, so "restored 2 files" is the whole truth about it - borrowing the
@@ -106,6 +120,23 @@ def cmd_extract(args: argparse.Namespace) -> int:
     """
     from . import engine
     ctx = StageContext(temp_dir=Path(args.temp))
+
+    # G3: handed a `.001`, rejoin the set first. The join is a plain
+    # concatenation into temp and nothing about the container changes, so
+    # everything below - including the verified restore - is the ordinary
+    # path. A split archive is not a second format to reason about.
+    archive_path = Path(args.archive)
+    joined_tmp: Path | None = None
+    from .volumes import VolumeError, is_first_part, join_parts, part_paths
+    if is_first_part(archive_path):
+        parts = part_paths(archive_path)
+        print(f"joining {len(parts)} volumes ({parts[0].name} .. "
+              f"{parts[-1].name})...")
+        joined_tmp = Path(args.temp) / (archive_path.with_suffix("").name)
+        joined_tmp.parent.mkdir(parents=True, exist_ok=True)
+        archive_path = join_parts(archive_path, joined_tmp)
+        args.archive = str(archive_path)
+
     password = _ask_password(args)
     if args.only:
         result = engine.extract_selected(Path(args.archive), args.only,
@@ -305,6 +336,12 @@ def build_parser() -> argparse.ArgumentParser:
     # option, so it must be spelled --params=-mqs. Saying so in the help is
     # cheaper than the "expected one argument" people would otherwise hit on
     # their first try.
+    pc.add_argument("--split", default=None, metavar="SIZE",
+                    help="split the finished archive into volumes of this "
+                         "size, e.g. 100m or 4g. Parts are named .001, .002 "
+                         "and a .sha256 lists them so a bad transfer can name "
+                         "the part to re-fetch. The whole archive is written "
+                         "and verified first, then split")
     pc.add_argument("--params", default=None, metavar="SWITCHES",
                     help='extra 7-Zip method switches - use an equals sign, '
                          'e.g. --params="-mqs -myx=9". Method switches only; '

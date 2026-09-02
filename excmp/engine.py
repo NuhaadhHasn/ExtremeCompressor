@@ -38,7 +38,7 @@ from .verify import hash_file, verify_restore
 _TREE_CAPABLE = {"sevenzip", "zstd"}
 
 _PAYLOAD_EXT = {"sevenzip": ".7z", "zstd": ".tar.zst", "tar": ".tar",
-                "precomp": ".pcf", "srep": ".srep"}
+                "precomp": ".pcf", "srep": ".srep", "zpaqfranz": ".zpaq"}
 
 
 # A restored stage output beyond this multiple of the declared total is a
@@ -213,8 +213,10 @@ def _stage_factory(options: StageOptions | None = None) -> dict[str, Stage]:
     try:  # optional stages, present once task 9 lands / tools installed
         from .stages.precomp import PrecompStage
         from .stages.srep import SrepStage
+        from .stages.zpaqfranz import ZpaqfranzStage
         registry["precomp"] = PrecompStage()
         registry["srep"] = SrepStage()
+        registry["zpaqfranz"] = ZpaqfranzStage()
     except ImportError:
         pass
     return registry

@@ -249,7 +249,29 @@ display scaling — both need a human at the machine.
 > round-trip-verify every path. **Our own post-restore SHA-256 comparison is
 > the acceptance gate for every stage** (fold into the stage base class).
 
-- [ ] B1. **zpaqfranz stage** (actively maintained, FOSS, MIT): `a -m4 -longpath`
+- [x] B1. ✅ **DONE 2026-09-02** (branch `phase-b1-zpaqfranz`, measured in
+      [benchmarks/2026-09-02-b1-zpaqfranz.md](benchmarks/2026-09-02-b1-zpaqfranz.md)).
+      Insane is real: `precomp → zpaqfranz`, 5/5 byte-identical on two corpora
+      under an independent SHA-256 check, and the profile no longer prints
+      "zpaqfranz backend not integrated yet" while quietly running the Extreme
+      chain. `-m4 -longpath`, plain `a` (vanilla-zpaq-7.15-readable), never
+      `t -paranoid -to` (captcha hazard).
+      **Three things the implementation corrected against this plan:**
+      (1) **It did not buy the 3.5 points.** Insane measured **40.77%** against
+      Extreme's **41.75%** on corpus B — *worse* by 0.97 points, at 2.3× the
+      compress time and 4.8× the extract time. After Precomp the stream is five
+      *distinct* installers, so CDC has nothing to find and LZMA2 simply wins
+      the CM contest. (2) **The 3.5 points came back anyway, without it.** Same
+      corpus, unchanged Extreme chain: 37.91% in August, **41.75%** now. Leading
+      hypothesis is the 7-Zip 24.07 → 26.02 upgrade; **unconfirmed**, because
+      24.07 is no longer installed to A/B against. (3) **zpaqfranz cannot be
+      tree-capable here.** It stores the *absolute* path it is handed
+      (`C:` → `C_`) and `add` has no relative-path switch, so a tar must
+      precede it and it only ever gets one file; `extract` relocates that file
+      back to its real name. Found by the D9 gate refusing to publish, not by
+      any test — Precomp exits 0 while producing nothing when the path passes
+      `MAX_PATH`. Original item:
+      **zpaqfranz stage** (actively maintained, FOSS, MIT): `a -m4 -longpath`
       default for Insane (`-m5` behind an "overnight" warning — note both use
       64 MiB blocks, `-m5` is ~2-3× the CPU for CM depth, so **`-m4` is the
       realistic Insane ceiling on 2 cores**, `-m5` a small-precious-data niche);
@@ -646,6 +668,29 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       cap dict/window/threads and spill to temp when RAM is short, because archives
       get extracted on weaker machines than they were created on
 - [ ] G8. Hash tool (`excmp hash`, stdlib hashlib) — cheap credibility, fits the brand
+- [ ] **G9. Deduplicate stored files against the ledger** ⭐ **(new 2026-09-02,
+      and the highest value-per-effort item on this roadmap)**. Measured in
+      [benchmarks/2026-09-02](benchmarks/2026-09-02-b1-zpaqfranz.md): on a
+      corpus that was **49% exact duplicates**, Extreme saved 5.22% and Insane
+      5.21%. Neither compressor could see the duplication, because the two
+      identical 23.8 MB executables were high-entropy and therefore **routed to
+      `store`** — copied verbatim, correctly, and so never entering the
+      pipeline where any deduplicator lives. We wrote both copies in full.
+      **The fix is nearly free and exactly lossless:** we already compute a
+      SHA-256 for every file — it *is* the ledger. Two entries with the same
+      hash are the same bytes by definition, so store one copy and point both
+      names at it. That single change would have saved **~45%** of that corpus
+      where both compressors managed 5%.
+      Design notes: the ledger already keys on the archive-internal path, so
+      add a per-entry `same_as` pointing at the first entry with that hash;
+      `extract_stored()` copies from the referenced member; `verify_restore()`
+      needs no change at all because it re-hashes the *restored file*, which is
+      the point. Watch two things: an entry must never reference a later one
+      (write order), and a `same_as` chain must not be followable more than one
+      hop, or a malicious archive could build a cycle. **This also reframes the
+      SREP story** — SREP sat inside the pipeline too, so it never saw stored
+      duplicates either. Long-range dedup between installers was never the
+      thing that was missing.
 
 **Explicitly skipped, decision recorded:** file manager (dilutes the drop→analyze→queue
 identity), password manager (liability), secure delete (ineffective on SSDs — would

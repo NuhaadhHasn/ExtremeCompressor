@@ -1,4 +1,4 @@
-# 🚦 START HERE — handoff (written 2026-09-02, second pass)
+# 🚦 START HERE — handoff (written 2026-09-02, third pass)
 
 > **G2 and the licence change are merged and pushed.** The repo is PRIVATE and
 > the OSI rule is retired. **B1 (zpaqfranz) is on branch
@@ -7,7 +7,7 @@
 > **Start here: B6 — the Oodle/AAA gap.** Section 3. It is the last place we
 > measurably lose, and it is now unblocked in a way it never was before.
 
-**605 tests: 604 pass + 1 strict-xfail.**
+**682 tests: 681 pass + 1 strict-xfail.**
 
 ```
 .venv\Scripts\python.exe -m pytest -q

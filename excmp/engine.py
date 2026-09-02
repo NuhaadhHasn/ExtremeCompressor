@@ -18,6 +18,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import jpeg
 from .analyzer import Category, FileInfo, analyze_tree
 from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
@@ -429,12 +430,28 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         store_route = next((r for r in the_plan.routes if r.action == "store"), None)
 
         ledger: dict[str, dict] = {}
+        piped_paths = set(pipe_route.files) if pipe_route else set()
         for info in infos:
-            ledger[relmap[info.path]] = {
+            route = "pipeline" if info.path in piped_paths else "store"
+            entry = {
                 "size": info.size,
                 "sha256": hash_file(info.path),
-                "route": "pipeline" if pipe_route and info.path in set(pipe_route.files) else "store",
+                "route": route,
             }
+            # B2: a stored JPEG is the one case where "store" is leaving money
+            # on the table. Lepton reproduces the file bit-for-bit and measured
+            # 33.4% on real photos here. `pack()` round-trips before answering,
+            # so a `codec` claim is one we have already honoured once; if it
+            # declines - CMYK and >16384px are both common and both refused -
+            # the file is simply stored raw as before.
+            if route == "store" and jpeg.available():
+                try:
+                    if jpeg.pack(info.path.read_bytes()) is not None:
+                        entry["codec"] = "lepton"
+                except OSError:
+                    pass    # unreadable here means unreadable later; let the
+                            # normal store path produce the error
+            ledger[relmap[info.path]] = entry
 
         # --- run the pipeline chain on a staging copy ----------------------
         payload_path: Path | None = None

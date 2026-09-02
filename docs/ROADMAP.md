@@ -283,8 +283,26 @@ display scaling — both need a human at the machine.
       no Windows path) and `zstd --long=31` / 7z big-dict stay the ≤2 GB
       default. [20](research/20-source-study-lrzip-zpaqfranz.md); completes
       Insane; add to bench
-- [ ] B2. **JPEG specialist**: `lepton_jpeg_rust` (Microsoft, Apache-2.0) — ~22%
-      lossless, bit-exact restore; route `Category.IMAGE/jpeg` through it
+- [x] B2. ✅ **DONE 2026-09-02** — JPEG specialist via the
+      `lepton-jpeg-python` 0.5.8 wheel (as B10 corrected: in-process, no exe).
+      Measured on **37 real JPEGs** from this machine
+      ([benchmarks/2026-09-02-b2](benchmarks/2026-09-02-b2-lepton-jpeg.md)):
+      **33.42% saved on the 23 files lepton accepted** — better than the ~22%
+      predicted — and **37/37 byte-identical** end-to-end.
+      **The finding that shaped it: lepton refused 14 of 37 files** — 13
+      CMYK/4-channel (print work, an ordinary genre) and one wider than
+      16384 px. And the refused files were the *big* ones, 135 MB of 151 MB,
+      so the folder-level saving was **3.47%** despite 23 files packing.
+      Read it as: **~33% on RGB photo folders, ~0% on CMYK print work, and no
+      error either way.** Before B2 this folder compressed by approximately
+      nothing, since JPEGs are high-entropy and were all stored verbatim.
+      Design: `excmp/jpeg.py`'s `pack()` compresses **and immediately
+      decompresses**, returning `None` unless the bytes match the original
+      exactly. That doubles the work per JPEG and buys the ability to *fall
+      back* rather than *fail* — a file lepton would mishandle is caught while
+      storing it raw is still free, instead of at restore time when D9 would
+      refuse the whole archive. Reuses the `stored/` machinery G9 extended
+      (a `codec: "lepton"` ledger entry), so no new route was needed.
 - [ ] B3. **PNG specialist**: `oxipng -o max` default, ECT `-9` under Extreme
 - [ ] B4. **WAV specialist**: FLAC 1.5 `-8 -j N`; TAK/OptimFROG as detected-only
       opt-ins (closed freeware — never bundled)

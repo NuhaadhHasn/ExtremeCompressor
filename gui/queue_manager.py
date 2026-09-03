@@ -260,10 +260,23 @@ class CompressWorker(_EngineWorker):
                     password=self.password)
             # Both of the following run only after the archive is published,
             # so they describe the file that shipped rather than its .tmp twin.
-            if self.recovery:
-                self._add_recovery(result.archive)
-            if self.split:
-                self._split(result.archive)
+            #
+            # And both are caught: at this point the archive is written AND
+            # verified. A split that runs out of disk is a failed *extra*, not
+            # a failed job, and reporting it as one would send somebody to
+            # re-run work that already succeeded - possibly over the archive
+            # they were about to keep.
+            for step, run in (("recovery records", self._add_recovery),
+                              ("split", self._split)):
+                if step == "recovery records" and not self.recovery:
+                    continue
+                if step == "split" and not self.split:
+                    continue
+                try:
+                    run(result.archive)
+                except Exception as exc:      # noqa: BLE001 - reported below
+                    self._note(f"warning: the archive is written and verified "
+                               f"at {result.archive}, but {step} failed: {exc}")
         except BaseException as exc:  # noqa: BLE001 - reported, never swallowed
             self._fail(exc)
             return

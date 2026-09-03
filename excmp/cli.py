@@ -56,6 +56,17 @@ def _post_publish(args, archive, payload: dict, ctx: StageContext) -> None:
     archive has been verified - because protecting or splitting an unverified
     archive just produces several unverified files.
     """
+    try:
+        _post_publish_steps(args, archive, payload, ctx)
+    except Exception as exc:      # noqa: BLE001 - reported, never swallowed
+        # The archive is written and verified by now. A failed extra must not
+        # be reported as a failed job.
+        payload["post_publish_error"] = (
+            f"the archive is written and verified at {archive}, but a "
+            f"post-publication step failed: {exc}")
+
+
+def _post_publish_steps(args, archive, payload: dict, ctx: StageContext) -> None:
     if getattr(args, "recovery", None) is not None:
         from .recovery import available as par2_available, create, default_percent
         if not par2_available():
@@ -77,6 +88,8 @@ def _post_publish(args, archive, payload: dict, ctx: StageContext) -> None:
 
 
 def _report_post_publish(args, payload: dict) -> None:
+    if payload.get("post_publish_error"):
+        print("warning: " + payload["post_publish_error"])
     if payload.get("recovery_warning"):
         print("warning: " + payload["recovery_warning"])
     if payload.get("recovery"):

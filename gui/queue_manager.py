@@ -282,7 +282,29 @@ class CompressWorker(_EngineWorker):
             return
         for warning in result.warnings:
             self._note(f"warning: {warning}")
+        self._calibrate(result)
         self._finish(result)
+
+    def _calibrate(self, result) -> None:
+        """J7: fold this job's real throughput back into the estimator.
+
+        Only the *piped* bytes count. A store-only job is disk-bound and says
+        nothing about how fast a codec runs, and averaging the two together is
+        precisely the "11.6 MB/s" blend that mispredicted every other mix.
+        """
+        from excmp.calibrate import record
+
+        piped = sum(sum(Path(f).stat().st_size for f in r.get("files", [])
+                        if Path(f).is_file())
+                    for r in result.routes if r.get("action") == "pipeline")
+        stages = next((r.get("stages", []) for r in result.routes
+                       if r.get("action") == "pipeline"), [])
+        if not stages or not piped:
+            return
+        factor = (result.final_bytes / result.orig_bytes
+                  if result.orig_bytes else None)
+        record(stages, piped_bytes=piped, elapsed_s=result.elapsed_s,
+               achieved_factor=factor)
 
     def _add_recovery(self, archive) -> None:
         from excmp.recovery import available, create

@@ -1095,26 +1095,51 @@ change how the feature works, and none of them were guessable from the desk:
       then it protects nobody. Needs are also **grouped by volume** (`st_dev`),
       since temp and output are usually the same disk and then compete for the same
       bytes — the extraction check looks at one directory only.
-- [ ] J5. **Remember the last choice per content type** — QSettings map
-      `dominant category -> profile`, so a user who always picks Fast for video
-      folders stops re-picking. **Depends on I1** (the app persists *nothing*
-      today, no QSettings anywhere); either do I1 first or ship the QSettings
-      bootstrap here and let I1 build on it.
-- [ ] J6. **Long-job confirmation** — past a threshold (~45 min estimated), an
-      inline confirm: "this is about 3 hours on this machine — run overnight?".
-      Generalizes the C4 media-specific warning. Inline banner, **not** a modal
-      (I9 is fixing the one existing modal violation — do not add a second).
-- [ ] J7. **Self-calibrating rates** (what makes the estimates actually good).
-      After every completed job, record real `piped_bytes / elapsed` **per resolved
-      chain** (not per profile — a degraded Extreme and a Fast run the same stages
-      and should share calibration) into QSettings and blend into future estimates
-      (exponential moving average, keep the shipped defaults as the cold-start
-      prior). `Rates` is already an injected argument, so this needs no model
-      change. Estimates then converge on *this* machine's true speed instead of a
-      benchmark laptop's — the two corpora measured on 2026-08-01 disagreed by
-      **2.5× on 7-Zip's throughput alone**, purely because one lived on an external
-      HDD. **Also learn `codec_factor`,** which is what would eventually fix the
-      Precomp blind spot in J1 note 3 — the only real fix, since no cheap probe can.
+- [x] J5. ✅ **DONE 2026-09-03** — `gui/prefs.py`. The profile chosen for each
+      dominant content type is remembered in QSettings and offered on the next
+      folder of the same shape. **It suggests; it never overrides** — a
+      remembered choice that silently outranked the analyser would make the
+      recommendation unpredictable, which is worse than an occasional extra
+      click. Once the user picks for themselves, `_profile_touched` stops the
+      re-suggestion for that drop, and `select()` defaults to `emit=False` so
+      offering a profile is not mistaken for choosing one. A hand-edited
+      QSettings value is discarded rather than trusted: it costs the
+      preference, never the app. The I1 dependency was already satisfied —
+      QSettings landed with wave 3c.
+- [x] J6. ✅ **DONE 2026-09-03** — `suggest.long_job_warning()`, shown on the
+      existing inline banner. Past 45 minutes the estimate is stated in words
+      somebody can act on: *"about 3 hours on this machine - worth starting
+      before you step away, or leaving to run overnight."*
+      The comparison table already made the *relative* cost visible, which was
+      J3's job; this makes the absolute one visible, because "about 3 hours"
+      means something to a person that "0.842 MB/s" does not. Phrased in
+      minutes below 90, hours above.
+      `ComparisonRow` gained `time_seconds` so the decision is made on the
+      number rather than by re-parsing the formatted string - a formatting bug
+      waiting to happen otherwise. **Inline, never a modal**: a test parses
+      `mainwindow.py` and fails on any `QMessageBox` call, so the I9 rule
+      cannot be broken again by accident.
+- [x] J7. ✅ **DONE 2026-09-03** — `excmp/calibrate.py`. Every finished job
+      records its real `piped_bytes / elapsed` **per resolved chain**, and
+      future estimates blend that with the shipped defaults as the cold-start
+      prior (EMA, alpha 0.25). Qt-free, so the CLI and the GUI feed one JSON
+      store and `excmp/` keeps its independence from Qt.
+      **Measured convergence** on a machine 2.5x slower than the shipped
+      constant: a 500 MB job is predicted at 2.6 min cold, 3.0 after one job,
+      5.9 after ten, and **6.4 after twenty-five against a true 6.4** —
+      without ever lurching, which is the property the EMA exists for.
+      Also learns `codec_factor`, which is the only real fix for the J1 note-3
+      blind spot: no cheap probe can predict what Precomp will find, so
+      watching what it actually achieved is the only thing that can.
+      Three guards, each about not making the estimate *worse*: samples under
+      8 MiB are ignored (they measure process startup, not throughput), a rate
+      more than 100x from the prior is dropped as a clock artefact or a cached
+      read, and a corrupt or unwritable store costs the learned rates and
+      nothing else.
+      **One thing the implementation corrected:** the first version replaced
+      the rate outright on the first sample. That is not what "cold-start
+      prior" means - it throws away everything the defaults encode on the
+      strength of one job. It now blends from sample one.
 - [x] J8. **Acceptance test — the estimator must be scored, not trusted.**
       Backtest J1/J2 against both recorded benchmark runs
       (`docs/benchmarks/2026-07-18-*`, `2026-08-01-*`): predicted size within

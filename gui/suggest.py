@@ -276,6 +276,38 @@ PROFILE_LABELS: dict[Profile, str] = {
 }
 
 # Short, honest names for the chain column - tool names, not stage ids.
+#: Past this, the wait stops being something you sit through (J6). 45 minutes
+#: is roughly where "I will wait" turns into "I will come back later" - and the
+#: point of saying so is that "3 hours" means something to a person in a way
+#: that "0.842 MB/s" does not.
+LONG_JOB_SECONDS = 45 * 60
+
+
+def long_job_warning(seconds: float) -> str | None:
+    """A sentence for a job worth walking away from, or None.
+
+    Generalises C4's media-specific warning. The measurement that justified
+    the whole Smart Advisor was that Extreme cost 2.7x the time of Normal for
+    0.17 extra percentage points, and nothing said so until after the wait
+    (benchmarks/2026-08-01). The comparison table makes the *relative* cost
+    visible; this makes the absolute one visible.
+
+    The suggestion matters as much as the number. "About 3 hours" is a fact;
+    "about 3 hours - worth starting before you step away" is help.
+    """
+    if seconds < LONG_JOB_SECONDS:
+        return None
+    if seconds >= 90 * 60:
+        hours = seconds / 3600.0
+        amount = (f"about {hours:.0f} hours" if hours >= 1.75
+                  else "about an hour and a half")
+        return (f"This job is {amount} on this machine - worth starting "
+                f"before you step away, or leaving to run overnight.")
+    minutes = int(round(seconds / 60.0))
+    return (f"This job is about {minutes} minutes on this machine - worth "
+            f"starting before you step away.")
+
+
 STAGE_LABELS: dict[str, str] = {
     "tar": "tar",
     "zstd": "Zstandard",
@@ -418,6 +450,10 @@ class ComparisonRow:
     note: str = ""        # the trade-off warning, when a cheaper profile wins
     caveat: str = ""      # missing tools / not-yet-wired backends
     tone: str = ""        # "", "ok", "warn" - always paired with words
+    #: The estimate in raw seconds. `time_text` is already formatted for a
+    #: human, and re-parsing "about 3 hours" to decide whether to warn about
+    #: it would be a formatting bug waiting to happen (J6).
+    time_seconds: float = 0.0
 
 
 def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
@@ -481,6 +517,7 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
             ram_text=ram_text,
             time_text=fmt_eta(est.time.expected),
             time_range=_span(est.time.low, est.time.high, fmt_eta),
+            time_seconds=est.time.expected,
             recommended=is_recommended,
             reason=reason if is_recommended else "",
             note=note,

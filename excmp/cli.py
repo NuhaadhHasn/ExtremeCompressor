@@ -160,8 +160,12 @@ def _compress_standard(args, engine, ctx: StageContext) -> int:
             print(f"\r  [{stage}] {pct:5.1f}%", end="", flush=True)
 
     ctx.progress_cb = show
+    # The password is passed so the engine can REFUSE the combination. Not
+    # passing it is how `--format zip --password` used to write a plain,
+    # unencrypted archive and exit 0 without even prompting.
     result = engine.compress_standard(
-        [Path(p) for p in args.inputs], Path(args.output), args.format, ctx)
+        [Path(p) for p in args.inputs], Path(args.output), args.format, ctx,
+        password=_new_password(args))
     if not args.json:
         print()
     payload = {
@@ -207,17 +211,15 @@ def cmd_extract(args: argparse.Namespace) -> int:
     # concatenation into temp and nothing about the container changes, so
     # everything below - including the verified restore - is the ordinary
     # path. A split archive is not a second format to reason about.
-    archive_path = Path(args.archive)
-    joined_tmp: Path | None = None
-    from .volumes import VolumeError, is_first_part, join_parts, part_paths
-    if is_first_part(archive_path):
-        parts = part_paths(archive_path)
+    # G3 volumes and F1 encryption are both handled by the engine now
+    # (engine.opened_for_reading), which every reading entry point routes
+    # through. The CLI used to join here into a file under --temp that was
+    # never deleted - a 50 GB archive joined and left behind.
+    from .volumes import is_first_part, part_paths
+    if is_first_part(Path(args.archive)):
+        parts = part_paths(Path(args.archive))
         print(f"joining {len(parts)} volumes ({parts[0].name} .. "
               f"{parts[-1].name})...")
-        joined_tmp = Path(args.temp) / (archive_path.with_suffix("").name)
-        joined_tmp.parent.mkdir(parents=True, exist_ok=True)
-        archive_path = join_parts(archive_path, joined_tmp)
-        args.archive = str(archive_path)
 
     password = _ask_password(args)
     if args.only:

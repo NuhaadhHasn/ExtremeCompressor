@@ -266,8 +266,13 @@ def encrypt_file(src: Path, dst: Path, password: str,
 def needs_keyfile(src: Path) -> bool:
     """Does this archive declare a keyfile? False for anything unreadable."""
     try:
-        raw = Path(src).read_bytes()[:_HEADER.size]
-        magic, version = _HEADER.unpack(raw)[:2] if len(raw) >= _HEADER.size             else (None, None)
+        # A bounded read, not read_bytes()[:n] - that pulled a 50 GB archive
+        # into memory to look at 55 bytes of header.
+        with Path(src).open("rb") as fh:
+            raw = fh.read(_HEADER.size)
+        if len(raw) < _HEADER.size:
+            return False
+        magic, version = _HEADER.unpack(raw)[:2]
     except (OSError, struct.error):
         return False
     if magic != MAGIC or version != VERSION:
@@ -346,6 +351,13 @@ def decrypt_file(src: Path, dst: Path, password: str,
     if not (1 <= p <= _MAX_PARALLELISM):
         raise CorruptArchiveError(
             f"{src.name} asks for {p} KDF lanes (limit {_MAX_PARALLELISM})")
+    if m_kib < 8 * p:
+        # argon2 itself requires this, and without the check its HashingError
+        # escapes decrypt_file as a bare library exception rather than the
+        # "this archive is malformed" answer the caller can act on.
+        raise CorruptArchiveError(
+            f"{src.name} asks for {m_kib} KiB across {p} lanes, which argon2 "
+            f"does not accept (needs at least {8 * p} KiB)")
 
     keyfile_hash = keyfile_digest(keyfile) if keyfile is not None else None
     key = _mix(_derive(password, salt, m_kib, t, p), keyfile_hash)

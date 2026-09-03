@@ -518,7 +518,8 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
 def compress(inputs: list[Path], out_path: Path, profile: Profile,
              ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None,
              sidecar: bool = False,
-             options: "StageOptions | None" = None) -> CompressResult:
+             options: "StageOptions | None" = None,
+             password: str | None = None) -> CompressResult:
     t0 = time.monotonic()
     tools = tools if tools is not None else find_tools(with_versions=True)
     out_path = Path(out_path)
@@ -638,6 +639,19 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
 
         # --- verify then atomically publish ---------------------------------
         _verify_before_publish(tmp_out, ctx)
+        if password:
+            # F1: encrypt *after* the D9 gate and *before* the rename, so the
+            # plaintext container never exists at the destination and what
+            # gets encrypted is an archive already proven to restore. The
+            # plaintext does live in temp for the length of the verify, which
+            # is unavoidable: we cannot verify what we cannot read.
+            from .crypto import encrypt_file
+            sealed = tmp_out.with_suffix(tmp_out.suffix + ".enc")
+            try:
+                encrypt_file(tmp_out, sealed, password)
+            finally:
+                tmp_out.unlink(missing_ok=True)
+            tmp_out = sealed
         if out_path.exists():
             out_path.unlink()
         tmp_out.replace(out_path)
@@ -1037,13 +1051,24 @@ def _verify_before_publish(archive: Path, ctx: StageContext) -> int:
     return result.verified
 
 
-def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
+def extract(archive: Path, out_dir: Path, ctx: StageContext,
+            password: str | None = None) -> ExtractResult:
     t0 = time.monotonic()
     archive, out_dir = Path(archive), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     registry = _stage_factory()
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-x-", dir=ctx.temp_dir))
     try:
+        # F1: an encrypted archive is decrypted into the job dir first, and
+        # everything after this line is the ordinary path. Same shape as the
+        # volume join in the CLI - one format concern handled once, at the
+        # edge, rather than threaded through the reader.
+        from .crypto import decrypt_file, is_encrypted
+        if is_encrypted(archive):
+            if not password:
+                raise EncryptedArchiveError(
+                    f"{archive.name} is password-protected; supply the password")
+            archive = decrypt_file(archive, job_dir / "decrypted.excmp", password)
         manifest, payload = read_container(archive, job_dir)
         _check_free_space(out_dir, manifest.inputs)
         stage_budget = max(declared_total(manifest.inputs) * _STAGE_INFLATION_LIMIT,

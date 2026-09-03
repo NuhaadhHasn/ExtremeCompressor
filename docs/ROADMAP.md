@@ -618,26 +618,29 @@ display scaling — both need a human at the machine.
 The user-visible security features, built on the D0-hardened base. Design and
 rationale: [research/10](research/10-security-and-integrity.md).
 
-- [ ] F1. **Optional password on `.excmp`** — build the inner zip as today, then wrap
-      the WHOLE container: header (magic, version, 16-byte random salt, Argon2id
-      params, chunk size — header as AAD) + **chunked AES-256-GCM** (4 MiB chunks,
-      age-style STREAM nonces = 11-byte counter + final-chunk flag, which defeats
-      truncation/reorder AND dodges GCM's ~64 GiB single-message cap). KDF:
-      **Argon2id** (`argon2-cffi`, RFC 9106 second recommendation: m=64 MiB, t=3,
-      p=4). Cipher: `cryptography` AESGCM (AES-NI present even on the i7-3540M).
-      HKDF-derived check value in the header so "wrong password" and "corrupted
-      file" are different, honest errors.
-      **Why not `7z -p`:** now **source-proven** ([19 §1](research/19-source-study-7zip.md),
-      `7zAes.cpp:232-238`): the salt lines are literally commented out ⇒ empty salt
-      (identical passwords ⇒ identical keys, precomputable — reinforced by a global
-      key cache), AES-256-**CBC** with CRC32-only integrity (no AEAD, ciphertext
-      malleable), SHA-256 iterated 2^19 over UTF-16LE (GPU-friendly) — *and* it
-      would only cover the 7z payload stage, leaving `manifest.json` (every
-      filename + hash) and `stored/` files in plaintext. Even `-mhe=on` leaks
-      archive size, header size, KDF params, and volume layout ([19 §2](research/19-source-study-7zip.md)).
-      Our design encrypts everything = full `-mhe=on` equivalent **plus**
-      authentication 7z doesn't have. Keep `7z -p -mhe=on` only as a labelled
-      "7z-compatible (weaker)" export mode
+- [x] F1. ✅ **DONE 2026-09-03** — `excmp/crypto.py`, `compress --password`,
+      and `extract` decrypts transparently. Argon2id (m=64 MiB, t=3, p=4) →
+      AES-256-GCM in 4 MiB chunks with age-style STREAM nonces (11-byte
+      counter + final-chunk flag), the header as AAD for every chunk, and an
+      HKDF check value so "wrong password" and "damaged file" are different
+      sentences. The **whole container** is wrapped, so `manifest.json` — every
+      filename and every hash — and the `stored/` tree are encrypted too;
+      `7z -p` could only ever have covered the payload stage.
+      Verified end-to-end: archive encrypted on disk, plaintext marker absent
+      from the bytes, wrong password refused with the right error, correct
+      password restores byte-identically.
+      **A denial-of-service found in our own code while testing.** The KDF
+      parameters live in the header and are therefore attacker-controlled, and
+      "the header is AAD" does *not* protect them — they are needed to derive
+      the key that would check the tag. `test_header_tampering_is_detected`
+      flipped one bit that landed in the top byte of `m_kib`, 8 KiB became
+      16 GiB, and the single test took **19 minutes**. A crafted header can ask
+      for 4 TiB. Bounds are now enforced before Argon2 is called
+      (8 KiB-1 GiB memory, ≤20 passes, ≤16 lanes) with three tests pinning it;
+      the suite went from 19 minutes to **1.8 seconds**.
+      Prompting asks **twice** when setting a password, because there is no
+      backdoor and a typo is unrecoverable. The password is never accepted on
+      argv — it would sit in the process table and the shell history.
 - [ ] F2. **Keyfile two-factor** (PeaZip's idea, done right —
       [17 §1](research/17-source-study-peazip.md)): PeaZip merely prepends
       `base64(SHA256(keyfile))` to the passphrase (separable, rides in plaintext
@@ -647,23 +650,25 @@ rationale: [research/10](research/10-security-and-integrity.md).
       hash the keyfile with a size cap (PeaZip uses 100 MiB); support
       keyfile-only mode; no in-header password verifier (PeaZip's old 16-bit
       `PW_Ver` is a 2^16 oracle — verify via the first chunk's GCM tag instead)
-- [ ] F3. **Recovery records** — the one feature WinRAR has that no OSS archiver does.
-      `par2cmdline-turbo` (GPL) via the **PyPI package that ships prebuilt
-      Windows binaries**, driven by subprocess like every other stage (GPL stays
-      contained in a separate process — app remains MIT; never link `libpar2`).
-      **Confirmed the right choice by [18 §5](research/18-source-study-freearc-par2.md)**:
-      PAR2 already IS the modern FEC design FreeArc's author redesigned toward
-      (GF(2^16) Reed-Solomon, self-describing MD5-checked packets, metadata
-      redundancy for free), strictly stronger than FreeArc's XOR `-rr` (2 bad
-      sectors in one residue class = unrecoverable). Exact CLIs:
-      `par2 create -r10 -n1 -m512 -B <dir> <archive>.excmp.par2 <archive>.excmp`;
-      verify `par2 verify …`; repair `par2 repair -p …`. **Caveats:** ≤32768
-      source blocks and ≤31 recovery files, so for big archives set `-s`
-      explicitly (≈ size/2000, multiple of 4) rather than letting block count cap
-      granularity; `-n1` = one tidy `.vol` sidecar; exit codes 0/1 distinguish
-      ok/repairable. UX default dose (FreeArc's tiering): ~4% tiny / 2% medium /
-      1% large — halvable with RS for equal protection. Sidecars for v1;
-      in-container embedding is a v2 refinement
+- [x] F3. ✅ **DONE 2026-09-03** — `excmp/recovery.py`,
+      `compress --recovery [PCT]`, and a new `excmp repair` verb. PAR2 via the
+      `par2cmdline-turbo` wheel, which ships a real Windows binary; driven as a
+      subprocess so its GPL stays out of our in-process code.
+      **The whole point, proven end-to-end through the CLI**: 200 KB zeroed out
+      of a 5.5 MB archive → `excmp repair` → **byte-identical to the original**
+      → `excmp verify` passes 32/32. And the honest failure too: 300 KB of
+      damage against a 5% record is correctly reported as *"damaged beyond what
+      its recovery records can rebuild"* rather than attempted and fudged.
+      Default dose is FreeArc's tiering (5% ≤50 MB, 3% ≤1 GB, 1% above), which
+      is about what the percentage *costs*: 4% of 10 MB is nothing, 4% of 50 GB
+      is 2 GB. Exit codes measured rather than assumed — 0 ok, 1 repairable,
+      2 beyond repair, 3 no records.
+      **One performance bug worth recording.** `_block_size` originally sized
+      to par2's 32768-block *ceiling*, which for a 400 KB archive means 16-byte
+      blocks and ~25,000 of them: block count drives the Reed-Solomon work
+      almost linearly, and the recovery tests took **284 seconds**. Sizing for
+      ~2000 blocks with a 4 KiB floor took that to **7 seconds** — a 40×
+      speedup, and the same win applies to real archives.
 - [ ] F4. **Mark-of-the-Web propagation**: copy a downloaded `.excmp`'s
       `Zone.Identifier` ADS onto extracted files via **direct ADS file I/O**
       (`open(path + ":Zone.Identifier")`, ~40 lines — [14 §5](research/14-source-study-nanazip.md)),

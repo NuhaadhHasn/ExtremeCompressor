@@ -40,6 +40,7 @@ from .widgets.banner import Banner
 from .widgets.compare_table import CompareTable
 from .widgets.dropzone import DropZone
 from .widgets.extract_tab import ExtractTab
+from .widgets.history_tab import HistoryTab
 from .widgets.preset_cards import AdvancedPanel, AdvancedToggle
 from .widgets.queue_table import QueueTable
 from .widgets.results import ResultsPanel
@@ -288,6 +289,28 @@ class MainWindow(QMainWindow):
         self.queue_table = QueueTable(self.activity_page)
         column.addWidget(self.queue_table, 1)
 
+        # I3: past jobs live *inside* Activity rather than in a fifth tab.
+        # Four top-level destinations is WinUI's ceiling and the reason this
+        # app has a tab bar rather than a nav rail (research/23 section 2.3);
+        # adding a fifth to hold "the same thing, but finished" would spend
+        # that budget on a distinction the user does not draw. Behind a
+        # disclosure, so the running queue keeps the space by default.
+        self.history_toggle = QToolButton(self.activity_page)
+        self.history_toggle.setText(self.tr("Past jobs"))
+        self.history_toggle.setCheckable(True)
+        self.history_toggle.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.history_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.history_toggle.setAccessibleDescription(
+            self.tr("Show jobs that have already finished"))
+        column.addWidget(self.history_toggle)
+
+        self.history_tab = HistoryTab(self.activity_page)
+        self.history_tab.compressAgain.connect(self._compress_again)
+        self.history_tab.setVisible(False)
+        self.history_toggle.toggled.connect(self._toggle_history)
+        column.addWidget(self.history_tab, 1)
+
         self._activity_index = self.tabs.addTab(self.activity_page,
                                                 self.tr("Activity"))
 
@@ -309,6 +332,8 @@ class MainWindow(QMainWindow):
             self.actions[key] = action
             return action
 
+        act("command-palette", self.tr("Find a command…"),
+            self._open_palette, "Ctrl+K")
         act("add-files", self.tr("Add files…"), self.drop_zone._pick_files, "Ctrl+O")
         act("add-folder", self.tr("Add folder…"), self.drop_zone._pick_folder,
             "Ctrl+Shift+O")
@@ -1006,8 +1031,60 @@ class MainWindow(QMainWindow):
             line += " --password"
         return line
 
+    def _toggle_history(self, open_: bool) -> None:
+        self.history_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if open_ else Qt.ArrowType.RightArrow)
+        if open_:
+            self.history_tab.refresh()
+        self.history_tab.setVisible(open_)
+
+    def _open_palette(self) -> None:
+        """I10: every action in the app behind one search box.
+
+        Built over `self.actions` rather than a second list, so a new action
+        appears here the moment it is registered and the two can never drift.
+        """
+        from .widgets.palette import CommandPalette
+
+        if getattr(self, "_palette", None) is None:
+            self._palette = CommandPalette(self.actions, self)
+        self._palette.open_over(self)
+
+    def _compress_again(self, entry) -> None:
+        """I3: re-queue a past job with the settings it actually used.
+
+        Missing inputs are reported rather than skipped - silently compressing
+        three of the four folders somebody asked for is the kind of helpfulness
+        nobody wants. An encrypted job re-prompts, because the password was
+        never written down.
+        """
+        inputs = [Path(p) for p in entry.inputs]
+        missing = [p for p in inputs if not p.exists()]
+        if missing:
+            self.banner.show_message(
+                self.tr("Cannot repeat that job: %s is no longer there.")
+                % missing[0].name, tone="warn")
+            return
+        self.tabs.setCurrentIndex(0)
+        try:
+            self.presets.select(Profile(entry.profile))
+        except ValueError:
+            pass
+        self.advanced_panel.split.setText(
+            str(entry.split) if entry.split else "")
+        if entry.encrypted:
+            self.banner.show_message(
+                self.tr("That job was encrypted. Type the password again in "
+                        "Advanced - it was never saved."), tone="info")
+        # add_paths is the one entry point that analyses, refreshes the
+        # pending view and the action bar together - re-implementing any of
+        # that here would drift from it.
+        self._pending = []
+        self.add_paths(inputs)
+
     def _clear_finished(self) -> None:
         self.queue.clear_finished()
+        self.history_tab.refresh()
         self.queue_table.clear_jobs({j.id for j in self.queue.jobs})
         self._refresh_actions()
 

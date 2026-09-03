@@ -711,6 +711,10 @@ class MainWindow(QMainWindow):
         expensive part and nothing about the input changed."""
         if not self._infos or not isinstance(profile, Profile):
             return
+        # J5: once the user picks for themselves, stop re-suggesting. `select()`
+        # defaults to emit=False precisely so offering a remembered profile
+        # does not look like a manual choice.
+        self._profile_touched = True
         self._resummarize(profile)
 
     def _resummarize(self, profile: Profile | None = None) -> None:
@@ -732,9 +736,64 @@ class MainWindow(QMainWindow):
         if not self._infos or self._summary is None:
             self.compare_table.clear()
             return []
-        rows = profile_comparison(self._infos, self.tools, self._summary)
+        # J7: whatever this machine has taught us, with the shipped defaults
+        # as the cold-start prior. The two corpora behind those defaults
+        # disagreed by 2.5x on 7-Zip alone, purely because one was on an
+        # external drive - no constant is right for every machine.
+        from excmp.calibrate import blended_rates
+        rows = profile_comparison(self._infos, self.tools, self._summary,
+                                  rates=blended_rates())
         self.compare_table.set_rows(rows)
+        self._offer_remembered_profile()
+        self._warn_if_long(rows)
         return rows
+
+    def _dominant_category(self):
+        """The category holding the most bytes, which is the judgement a
+        person actually repeats ("this is a folder of video")."""
+        if self._summary is None or not self._summary.by_category:
+            return None
+        return max(self._summary.by_category.items(), key=lambda kv: kv[1])[0]
+
+    def _offer_remembered_profile(self) -> None:
+        """J5: pre-select what was chosen last time for this kind of content.
+
+        It **suggests**; it never overrides. Applied once per drop, and only
+        while the user has not touched the chooser - a remembered choice that
+        silently outranked the analyser would make the recommendation
+        unpredictable, which is worse than the occasional extra click.
+        """
+        from .prefs import remembered_profile
+
+        category = self._dominant_category()
+        if category is None or getattr(self, '_profile_touched', False):
+            return
+        remembered = remembered_profile(category)
+        if remembered is None or remembered == self.compare_table.current_profile():
+            return
+        self.compare_table.select(remembered)
+        self.banner.show_message(
+            self.tr("Using %s, which you picked last time for mostly %s "
+                    "files.") % (remembered.value, category.value),
+            tone="info")
+
+    def _warn_if_long(self, rows) -> None:
+        """J6: say how long this will take before it is paid for.
+
+        Inline, never a dialog - see the no-modal rule. The comparison table
+        already shows the *relative* cost; this is the absolute one, because
+        "about 3 hours" means something to a person that "0.842 MB/s" does not.
+        """
+        from .suggest import long_job_warning
+
+        chosen = self.compare_table.current_profile()
+        row = next((r for r in rows if r.profile == chosen), None)
+        seconds = getattr(row, "time_seconds", None) if row else None
+        if seconds is None:
+            return
+        warning = long_job_warning(seconds)
+        if warning:
+            self.banner.show_message(warning, tone="warn")
 
 
     # -- running -----------------------------------------------------------
@@ -801,7 +860,14 @@ class MainWindow(QMainWindow):
                                 options=options, extras=extras)
         # The password belongs to the job that just started, not to the next
         # folder somebody drops. Cleared here, beside the other per-job state.
+        # J5: remember what was chosen for this kind of content, so the next
+        # folder of the same shape starts on it.
+        category = self._dominant_category()
+        if category is not None:
+            from .prefs import remember_profile
+            remember_profile(category, self.presets.current_profile())
         self.advanced_panel.forget_password()
+        self._profile_touched = False
         self._pending = []
         self.analysis_card.clear()
         self.compare_table.clear()

@@ -226,6 +226,8 @@ class MainWindow(QMainWindow):
         # (Not a Qt.Popup: its Browse buttons open QFileDialogs, which would
         # dismiss a popup, returning the user to a vanished panel.)
         self.advanced_panel = AdvancedPanel(DEFAULT_TEMP, self)
+        self.advanced_panel.format_box.currentIndexChanged.connect(
+            lambda _i: self._sync_suffix_label())
         self._build_action_bar()
         central = QWidget(self)
         shell = QVBoxLayout(central)
@@ -407,8 +409,11 @@ class MainWindow(QMainWindow):
         self.name_edit.setClearButtonEnabled(True)
         self.name_edit.setMaximumWidth(220)
         self.name_edit.textChanged.connect(lambda _t: self._refresh_actions())
-        suffix = QLabel(".excmp", self.action_bar)
-        suffix.setObjectName("Muted")
+        # Kept in sync with the Format box below. A fixed ".excmp" here would
+        # promise one extension while `_output_path_for` wrote another.
+        self._suffix_label = QLabel(".excmp", self.action_bar)
+        self._suffix_label.setObjectName("Muted")
+        suffix = self._suffix_label
         self._name_error = QLabel(self.tr("invalid name"), self.action_bar)
         self._name_error.setProperty("tone", "danger")
         self._name_error.setVisible(False)
@@ -741,7 +746,21 @@ class MainWindow(QMainWindow):
         first = inputs[0]
         stem = self.name_edit.text().strip() if self._output_name_ok() else ""
         stem = stem or first.stem or first.name
-        return unique_path(self._output_folder_for(inputs) / f"{stem}.excmp")
+        # The extension follows the Format box. Hard-coding .excmp meant
+        # choosing "plain .zip" wrote a zip called holiday.excmp - a file
+        # Explorer would not open and no other tool would recognise.
+        return unique_path(
+            self._output_folder_for(inputs) / f"{stem}{self._output_suffix()}")
+
+    def _output_suffix(self) -> str:
+        """The extension the chosen format actually produces."""
+        return {"excmp": ".excmp", "7z": ".7z", "zip": ".zip"}.get(
+            self.advanced_panel.archive_format(), ".excmp")
+
+    def _sync_suffix_label(self) -> None:
+        label = getattr(self, "_suffix_label", None)
+        if label is not None:
+            label.setText(self._output_suffix())
 
     def start_compression(self) -> None:
         if not self._pending:
@@ -780,6 +799,9 @@ class MainWindow(QMainWindow):
                                 self.presets.current_profile(), self._summary,
                                 sidecar=self.settings_tab.sidecar_toggle.isChecked(),
                                 options=options, extras=extras)
+        # The password belongs to the job that just started, not to the next
+        # folder somebody drops. Cleared here, beside the other per-job state.
+        self.advanced_panel.forget_password()
         self._pending = []
         self.analysis_card.clear()
         self.compare_table.clear()
@@ -899,8 +921,24 @@ class MainWindow(QMainWindow):
         """The CLI line that reproduces this job - the cheapest 'this tool is
         scriptable' signal there is. The CLI has existed all along."""
         quoted = " ".join(f'"{p}"' for p in job.inputs)
-        return (f'python -m excmp compress {quoted} -o "{job.out_path}" '
+        line = (f'python -m excmp compress {quoted} -o "{job.out_path}" '
                 f"-p {job.profile.value}")
+        # Only the non-defaults, so an ordinary job still yields a line
+        # somebody can read - which is the entire point of the feature.
+        if getattr(job, "archive_format", "excmp") != "excmp":
+            line += f" --format {job.archive_format}"
+        if getattr(job, "recovery", None):
+            line += f" --recovery {job.recovery}"
+        if getattr(job, "split", None):
+            line += f" --split {job.split}"
+        if getattr(job, "password", None):
+            # The switch, never the value. `--password` takes no argument
+            # precisely because argv is visible in the process table and lands
+            # in shell history; pasting the secret here would undo that. And
+            # omitting the switch entirely would hand somebody a line that
+            # quietly produces an UNENCRYPTED archive.
+            line += " --password"
+        return line
 
     def _clear_finished(self) -> None:
         self.queue.clear_finished()

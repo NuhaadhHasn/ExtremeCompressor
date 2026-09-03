@@ -258,6 +258,18 @@ class AdvancedPanel(QFrame):
                 "the two passwords do not match - type the same one twice")
         return first
 
+    def forget_password(self) -> None:
+        """Clear the secret, keep the preferences.
+
+        A password is per-job; recovery, split size and format are settings
+        somebody may well want again. Until this existed, typing one password
+        silently encrypted every later archive with it - and since the field
+        renders as dots there was nothing on screen to notice.
+        """
+        self.password.clear()
+        self.password_confirm.clear()
+        self.protect_note.setText("")
+
     def recovery_percent(self) -> int | None:
         return self.recovery.currentData()
 

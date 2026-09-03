@@ -641,15 +641,22 @@ rationale: [research/10](research/10-security-and-integrity.md).
       Prompting asks **twice** when setting a password, because there is no
       backdoor and a typo is unrecoverable. The password is never accepted on
       argv — it would sit in the process table and the shell history.
-- [ ] F2. **Keyfile two-factor** (PeaZip's idea, done right —
-      [17 §1](research/17-source-study-peazip.md)): PeaZip merely prepends
-      `base64(SHA256(keyfile))` to the passphrase (separable, rides in plaintext
-      through the backend arg). Ours must keep Argon2id in the loop:
-      `key = HKDF-Extract(salt=SHA-256(keyfile), ikm=Argon2id(password,
-      random_salt))` — HKDF alone would make password brute-force cheap. Stream-
-      hash the keyfile with a size cap (PeaZip uses 100 MiB); support
-      keyfile-only mode; no in-header password verifier (PeaZip's old 16-bit
-      `PW_Ver` is a 2^16 oracle — verify via the first chunk's GCM tag instead)
+- [x] F2. ✅ **DONE 2026-09-03** — a keyfile as a real second factor.
+      `key = HKDF(ikm=Argon2id(password, salt), salt=SHA-256(keyfile))`. The
+      ordering is the point: HKDF is fast by design, so folding the keyfile in
+      *instead of* Argon2id would leave an attacker who steals the keyfile
+      facing only a cheap password guess — the flaw in PeaZip's
+      prepend-the-hash approach. Argon2id runs first and stays memory-hard;
+      HKDF only mixes. Two tests pin that: one times the KDF directly, one
+      asserts the Argon2 output is HKDF's *ikm* and not its salt.
+      Format bumped to **v2** with a flags byte; v1 archives still read. The
+      flag exists so a missing keyfile raises `KeyfileRequired` rather than
+      "wrong password" — otherwise a user with the correct password hunts for
+      one that is already right and concludes the archive is broken. The mirror
+      case (a keyfile supplied where none was used) is refused too.
+      Keyfile-only works; an empty keyfile is refused rather than silently
+      reducing two factors to one; the keyfile is stream-hashed with a 100 MiB
+      cap, because somebody will eventually point this at a 40 GB video.
 - [x] F3. ✅ **DONE 2026-09-03** — `excmp/recovery.py`,
       `compress --recovery [PCT]`, and a new `excmp repair` verb. PAR2 via the
       `par2cmdline-turbo` wheel, which ships a real Windows binary; driven as a
@@ -669,18 +676,23 @@ rationale: [research/10](research/10-security-and-integrity.md).
       almost linearly, and the recovery tests took **284 seconds**. Sizing for
       ~2000 blocks with a 4 KiB floor took that to **7 seconds** — a 40×
       speedup, and the same win applies to real archives.
-- [ ] F4. **Mark-of-the-Web propagation**: copy a downloaded `.excmp`'s
-      `Zone.Identifier` ADS onto extracted files via **direct ADS file I/O**
-      (`open(path + ":Zone.Identifier")`, ~40 lines — [14 §5](research/14-source-study-nanazip.md)),
-      **never via PowerShell** (PeaZip shipped a PowerShell-injection CVE doing
-      exactly this — [17 §5](research/17-source-study-peazip.md)). Cap the read
-      at 32 KB; skip directories; ignore write failures on FAT/exFAT; and **skip
-      any archive-embedded `Zone.Identifier` / `:$DATA` entry** so a malicious
-      archive can't overwrite the propagated zone — this is 7-Zip's own
-      CVE-2025-0411 fix ([14 §5](research/14-source-study-nanazip.md),
-      [19 §8](research/19-source-study-7zip.md)). Default = mark all files
-      (7z.exe's CLI default is OFF — `-snz` needed — so we must do this
-      ourselves to be safe-by-default on downloads)
+- [x] F4. ✅ **DONE 2026-09-03** — `excmp/motw.py`, wired into `extract()`.
+      The archive's `Zone.Identifier` is copied onto every file extracted from
+      it, so an executable that arrived from the internet does not land looking
+      like one the user wrote themselves. **Default on**, where 7-Zip's CLI
+      needs `-snz`: a downloaded archive is the ordinary case, and the safe
+      behaviour should not be the one you have to know a switch for.
+      Direct ADS file I/O, never a shell — PeaZip shipped a
+      PowerShell-injection CVE doing this exact job by shelling out, and the
+      filename here is attacker-controlled. A test **parses the module** and
+      fails if it imports `subprocess`/`os` or calls anything that spawns a
+      process. (A first version grepped for the word and flagged the docstring
+      explaining why it is absent.)
+      Propagation always overwrites, which is the CVE-2025-0411 case: an
+      archive that smuggles its own `Zone.Identifier` must not downgrade the
+      file to "local". Read capped at 32 KB, directories skipped, and a write
+      failure is ignored — FAT32 has no streams and a USB stick is not an
+      error condition.
 - [ ] F5. Honest UI copy throughout: "protects confidentiality; lost password = lost
       data, no backdoor"
 
@@ -792,9 +804,23 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       path, and nothing is written if that fails. `StandardResult.has_ledger`
       and `.note` exist so the caller says which half of the guarantee it has
       rather than implying both.
-- [ ] G5. **"Convert & shrink"** (zip/rar/7z/iso → `.excmp`) — extract to temp →
-      analyze → pipeline → report *why* it did or didn't help. Parity feature
-      elsewhere; a **signature feature** with our analyzer attached
+- [x] G5. ✅ **DONE 2026-09-03** — `excmp/convert.py` and `excmp convert`.
+      Extracts any archive 7-Zip can open, analyses the *contents*, runs the
+      pipeline, and reports. Measured on a real 8.9 MB zip of executables:
+      **8.5 MB → 5.5 MB, 35.2% smaller**, source untouched.
+      The signature part is the verdict. Recompressing archives is not new; our
+      planner already knows *why* each file was stored, so a conversion that
+      gained nothing says so in a sentence instead of leaving two numbers to
+      compare. Reasons collapse by cause ("31 files: already compressed")
+      rather than listing every file.
+      **The source archive is never touched** — not moved, not deleted, not on
+      success. The staging copy is the size of the whole archive and is removed
+      in a `finally`, because leaving it would cost the user that space twice.
+      **One thing measuring corrected:** a 940-byte zip converts *larger*,
+      because the per-file SHA-256 ledger is fixed overhead. The tool correctly
+      says "no smaller, keep the original" — the first version of that test
+      asserted an improvement and was wrong about small archives, not about the
+      feature.
 - [ ] G6. **Transport-integrity sidecar** — emit a `.sha256` for the container itself
       (and per split volume) + `excmp verify --transport`. This is the maintained
       equivalent of the one verification habit repack users already have

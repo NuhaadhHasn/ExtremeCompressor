@@ -15,6 +15,7 @@ import shutil
 import tempfile
 import time
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -438,7 +439,8 @@ def _hash_tree(root: Path) -> dict[str, str]:
 def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
                       ctx: StageContext,
                       tools: dict[str, ToolInfo | None] | None = None,
-                      level: int = 9) -> StandardResult:
+                      level: int = 9,
+                      password: str | None = None) -> StandardResult:
     """Write a plain `.7z` or `.zip` — one anybody can open (G4).
 
     The lock-in objection is fair and this is the answer: no container, no
@@ -455,6 +457,21 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
     restore, no file appears at the destination. So this archive has been
     proven to restore once, on this machine; we simply cannot prove it again.
     """
+    if password:
+        # Refused rather than ignored, and refused rather than quietly
+        # substituting 7-Zip's own encryption.
+        #
+        # Wrapping the output in our AES-256-GCM container would make it stop
+        # being a plain .7z/.zip, which is the only reason this function
+        # exists. And 7z -p is what F1 was built to replace: its salt lines
+        # are commented out, so identical passwords give identical keys
+        # (research/19 section 1). Silently doing either would hand the user
+        # an archive whose protection is not what they think it is.
+        raise ValueError(
+            "a plain .7z/.zip cannot carry our encryption - it would stop "
+            "being readable by other tools, which is the whole point of the "
+            "format. Use the .excmp format for a password-protected archive, "
+            "or write the plain archive without one")
     fmt = str(fmt).lower()
     if fmt not in {"7z", "zip"}:
         raise ValueError(
@@ -472,27 +489,54 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-std-", dir=ctx.temp_dir))
     tmp_out = out_path.with_suffix(out_path.suffix + ".tmp")
     try:
+        # Stage every input into one tree first.
+        #
+        # This used to pass `roots[0]` straight to the stage, which takes ONE
+        # path - so `compress a.txt b.txt c.txt --format 7z` archived a.txt,
+        # discarded the rest, and reported the original size of all three as a
+        # 99% saving. Reusing `_collect`'s relmap gives the same
+        # archive-relative names the .excmp route uses and rejects duplicates
+        # the same way.
+        staged = job_dir / "staged"
+        staged.mkdir(parents=True, exist_ok=True)
+        for info in infos:
+            rel = _relmap[info.path]
+            target = resolve_within(staged, rel)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(info.path, target)
+
         # Same stage the .excmp route uses - the output path staying last, the
         # password redaction, the progress parsing all come for free. Only the
         # container type differs.
         stage = SevenZipStage(level=level, archive_type=fmt)
-        roots = [Path(p) for p in inputs]
-        source = roots[0] if len(roots) == 1 and roots[0].is_dir() else None
-        stage.compress(source if source is not None else roots[0], tmp_out, ctx)
+        stage.compress(staged, tmp_out, ctx)
 
         # Prove it restores, right now, the only moment we can.
         check_dir = job_dir / "check"
         stage.extract(tmp_out, check_dir, ctx)
-        want = _hash_tree(source) if source is not None else {}
+        want = _hash_tree(staged)
         got = _hash_tree(check_dir)
-        verified = 0
+        # Compared as whole sets, not by filename suffix. Suffix matching
+        # false-passes a missing file whose name happens to end another's.
+        if set(got) != set(want):
+            missing = sorted(set(want) - set(got))
+            extra = sorted(set(got) - set(want))
+            raise StageError(
+                f"{fmt} export did not round-trip: "
+                f"{len(missing)} missing {missing[:3]}, "
+                f"{len(extra)} unexpected {extra[:3]} - refusing to publish it")
         for rel, digest in want.items():
-            match = [v for k, v in got.items() if k.endswith(rel)]
-            if not match or match[0] != digest:
+            if got[rel] != digest:
                 raise StageError(
                     f"{fmt} export did not restore {rel!r} identically - "
                     f"refusing to publish it")
-            verified += 1
+        verified = len(want)
+        # A gate that can pass having checked nothing is not a gate. This is
+        # what let the multi-input loss above ship in silence.
+        if not verified:
+            raise StageError(
+                f"{fmt} export verified no files at all - refusing to publish "
+                f"an archive nothing has vouched for")
 
         tmp_out.replace(out_path)
         tmp_out = None
@@ -519,7 +563,8 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
              ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None,
              sidecar: bool = False,
              options: "StageOptions | None" = None,
-             password: str | None = None) -> CompressResult:
+             password: str | None = None,
+             keyfile: Path | None = None) -> CompressResult:
     t0 = time.monotonic()
     tools = tools if tools is not None else find_tools(with_versions=True)
     out_path = Path(out_path)
@@ -541,6 +586,13 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         options, bcj2=_wants_bcj2([i for i in infos if i.path in _piped_set]))
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-", dir=ctx.temp_dir))
     tmp_out: Path | None = None
+    # F1: with a password, the container is built and verified inside temp and
+    # only the ciphertext is ever written beside the user's output. Building it
+    # at `<out>.tmp` as the plaintext path does would leave the complete
+    # unencrypted archive sitting in the destination folder for the whole
+    # pre-publish restore - which is the one place the user is least likely to
+    # expect it, and contradicted the comment beside it.
+    stage_dir = job_dir if password else None
     try:
         # --- split routes -------------------------------------------------
         pipe_route = next((r for r in the_plan.routes if r.action == "pipeline"), None)
@@ -555,19 +607,11 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 "sha256": hash_file(info.path),
                 "route": route,
             }
-            # B2: a stored JPEG is the one case where "store" is leaving money
-            # on the table. Lepton reproduces the file bit-for-bit and measured
-            # 33.4% on real photos here. `pack()` round-trips before answering,
-            # so a `codec` claim is one we have already honoured once; if it
-            # declines - CMYK and >16384px are both common and both refused -
-            # the file is simply stored raw as before.
-            if route == "store" and jpeg.available():
-                try:
-                    if jpeg.pack(info.path.read_bytes()) is not None:
-                        entry["codec"] = "lepton"
-                except OSError:
-                    pass    # unreadable here means unreadable later; let the
-                            # normal store path produce the error
+            # B2 (JPEG packing) is decided in `write_container`, not here.
+            # Deciding it here meant packing every JPEG once as a predicate,
+            # discarding the bytes, and packing it again at write time - and
+            # the two calls could disagree, leaving the ledger claiming a
+            # codec the bytes did not honour.
             ledger[relmap[info.path]] = entry
 
         # --- run the pipeline chain on a staging copy ----------------------
@@ -630,7 +674,11 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                      "files": [relmap[f] for f in r.files]} for r in the_plan.routes],
         )
         stored_map = {relmap[f]: f for f in (store_route.files if store_route else [])}
-        tmp_out = out_path.with_suffix(out_path.suffix + ".tmp")
+        # With a password the plaintext container is built inside temp; without
+        # one it is the usual `<out>.tmp` twin beside the destination. See the
+        # `stage_dir` note above.
+        tmp_out = (stage_dir / (out_path.name + ".plain") if stage_dir is not None
+                   else out_path.with_suffix(out_path.suffix + ".tmp"))
         if payload_path is not None:
             renamed = payload_path.with_name(payload_name)
             payload_path.rename(renamed)
@@ -646,9 +694,11 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             # plaintext does live in temp for the length of the verify, which
             # is unavoidable: we cannot verify what we cannot read.
             from .crypto import encrypt_file
-            sealed = tmp_out.with_suffix(tmp_out.suffix + ".enc")
+            # The ciphertext is the only thing that ever lands beside the
+            # user's output, and even that as a .tmp until the rename.
+            sealed = out_path.with_suffix(out_path.suffix + ".tmp")
             try:
-                encrypt_file(tmp_out, sealed, password)
+                encrypt_file(tmp_out, sealed, password, keyfile=keyfile)
             finally:
                 tmp_out.unlink(missing_ok=True)
             tmp_out = sealed
@@ -676,6 +726,62 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         warnings=the_plan.warnings,
         elapsed_s=time.monotonic() - t0,
     )
+
+
+@contextmanager
+def opened_for_reading(archive: Path, ctx: StageContext,
+                       password: str | None = None):
+    """Yield a plain, readable archive path, whatever shape it arrived in.
+
+    An ``.excmp`` can reach a reader wearing two disguises, and both defeated
+    every entry point until 2026-09-03:
+
+    **Split into volumes.** ``big.excmp.001`` is not a zip, so ``is_excmp``
+    said no and the caller fell through to the foreign-archive branch. 7-Zip
+    then joined the set generically and extracted the *container* - writing
+    ``manifest.json`` into the user's destination and returning
+    ``verified=0``, while reporting success. The ledger guarantee silently
+    evaporated for every split archive.
+
+    **Encrypted.** Ciphertext is not a zip either, so the same fall-through
+    happened, and ``list_any`` announced that the archive "appears damaged" -
+    the precise lie ``crypto.py``'s docstring warns is how archives get
+    deleted.
+
+    Handling both here, once, is the point. Each surface used to decide for
+    itself and three of them decided differently. Volumes are joined first and
+    decryption second, because that is the order they were applied.
+    """
+    from .crypto import (WrongPasswordError, decrypt_file,
+                         is_encrypted as _is_encrypted)
+    from .volumes import is_first_part, join_parts
+
+    archive = Path(archive)
+    scratch: Path | None = None
+    current = archive
+    try:
+        if is_first_part(current):
+            scratch = Path(tempfile.mkdtemp(prefix="excmp-join-", dir=ctx.temp_dir))
+            current = join_parts(current, scratch / current.with_suffix("").name)
+
+        if _is_encrypted(current):
+            if not password:
+                raise EncryptedArchiveError(
+                    f"{archive.name} is password-protected; supply the password")
+            if scratch is None:
+                scratch = Path(tempfile.mkdtemp(prefix="excmp-dec-",
+                                                dir=ctx.temp_dir))
+            plain = scratch / "decrypted.excmp"
+            try:
+                current = decrypt_file(current, plain, password)
+            except WrongPasswordError as exc:
+                # Re-raised as the archive-level error the surfaces already
+                # know how to turn into a password prompt.
+                raise EncryptedArchiveError(str(exc)) from exc
+        yield current
+    finally:
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 def is_excmp(path: Path) -> bool:
@@ -763,8 +869,17 @@ def list_any(archive: Path, ctx: StageContext,
     :class:`ContainerError` when it simply cannot be read.
     """
     archive = Path(archive)
-    if is_excmp(archive):
-        return list_archive(archive)
+    with opened_for_reading(archive, ctx, password) as opened:
+        if is_excmp(opened):
+            return list_archive(opened)
+        return _list_foreign(opened, ctx, password)
+
+
+def _list_foreign(archive: Path, ctx: StageContext,
+                  password: str | None = None) -> ArchiveListing:
+    """The 7-Zip half of :func:`list_any`, split out so the shared
+    volume/decryption handling in `opened_for_reading` has somewhere to
+    hand a plain path."""
     if not archive.is_file():
         raise ContainerError(f"{archive} does not exist")
 
@@ -821,9 +936,10 @@ def extract_any(archive: Path, out_dir: Path, ctx: StageContext,
     is the entire value proposition.
     """
     archive = Path(archive)
-    if is_excmp(archive):
-        return extract(archive, out_dir, ctx)
-    return _extract_foreign(archive, out_dir, ctx, password)
+    with opened_for_reading(archive, ctx, password) as opened:
+        if is_excmp(opened):
+            return extract(opened, out_dir, ctx)
+        return _extract_foreign(opened, out_dir, ctx, password)
 
 
 def _extract_foreign(archive: Path, out_dir: Path, ctx: StageContext,
@@ -913,6 +1029,18 @@ def extract_selected(archive: Path, names: list[str], out_dir: Path,
     hash-checked against the ledger exactly as a full restore would check all
     of them.
     """
+    with opened_for_reading(Path(archive), ctx, password) as _opened:
+        return _extract_selected(_opened, names, out_dir, ctx, password)
+
+
+def _extract_selected(archive: Path, names: list[str], out_dir: Path,
+                      ctx: StageContext,
+                      password: str | None = None) -> ExtractResult:
+    """The real work, once `archive` is a plain readable file.
+
+    Split from the public name so a split or encrypted archive is resolved
+    exactly once, in one place, the way every other reader now does it.
+    """
     t0 = time.monotonic()
     archive, out_dir = Path(archive), Path(out_dir)
     if not names:
@@ -993,7 +1121,8 @@ def _extract_foreign_selected(archive: Path, wanted: list[str], out_dir: Path,
                          elapsed_s=time.monotonic() - t0, ledger_backed=False)
 
 
-def verify_archive(archive: Path, ctx: StageContext) -> VerifyResult:
+def verify_archive(archive: Path, ctx: StageContext,
+                   password: str | None = None) -> VerifyResult:
     """Prove an archive still restores byte-for-byte. Read-only, produces
     nothing, raises :class:`~excmp.verify.VerifyError` if it does not.
 
@@ -1020,7 +1149,8 @@ def verify_archive(archive: Path, ctx: StageContext) -> VerifyResult:
     ctx.temp_dir.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="excmp-verify-", dir=ctx.temp_dir))
     try:
-        result = extract(archive, work / "restore", ctx)
+        with opened_for_reading(Path(archive), ctx, password) as opened:
+            result = extract(opened, work / "restore", ctx, password=password)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     return VerifyResult(
@@ -1058,6 +1188,9 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
     out_dir.mkdir(parents=True, exist_ok=True)
     registry = _stage_factory()
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-x-", dir=ctx.temp_dir))
+    # The zone lives on the file the user actually downloaded. `archive` is
+    # rebound below when the archive is encrypted, so keep the original.
+    source_archive = archive
     try:
         # F1: an encrypted archive is decrypted into the job dir first, and
         # everything after this line is the ordinary path. Same shape as the
@@ -1111,6 +1244,12 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
         stored = extract_stored(archive, out_dir, manifest.inputs)
         restored += len(stored)
         verified = verify_restore(out_dir, manifest.inputs)
+        # F4: carry the archive's Mark of the Web onto what came out of it.
+        # After verification, never before: a file that failed its hash is not
+        # one we want to have touched, and a mark is cosmetic beside that.
+        # Never raises - see motw.propagate.
+        from .motw import propagate as _propagate_zone
+        _propagate_zone(source_archive, out_dir)
     finally:
         shutil.rmtree(job_dir, ignore_errors=True)
     return ExtractResult(out_dir=out_dir, files_restored=restored,

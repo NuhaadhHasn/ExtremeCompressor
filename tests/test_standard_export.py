@@ -159,3 +159,43 @@ def test_an_unknown_format_is_refused(tmp_path):
     with pytest.raises(ValueError, match="rar|format"):
         compress_standard([src], tmp_path / "x.rar", "rar",
                           StageContext(temp_dir=tmp_path / "t", threads=2))
+
+
+# ---------------------------------------------------------------------------
+# The combination that used to fail silently
+# ---------------------------------------------------------------------------
+
+@needs_7z
+def test_a_password_with_a_plain_format_is_refused_not_ignored(tmp_path):
+    """The worst bug of its kind: the user asks for protection and gets an
+    archive with none, believing otherwise.
+
+    Until 2026-09-03 the GUI called compress_standard() without the password
+    at all, so picking .zip and typing a password wrote a plain, unencrypted
+    archive and said nothing. Refusing is the only honest answer: wrapping the
+    output in our container would stop it being a plain .zip, which is the
+    only reason the format exists, and quietly substituting `7z -p` would hand
+    them the very scheme F1 was built to replace.
+    """
+    src, _ = _corpus(tmp_path)
+    out = tmp_path / "plain.zip"
+    with pytest.raises(ValueError, match="excmp|password|encryption"):
+        compress_standard([src], out, "zip",
+                          StageContext(temp_dir=tmp_path / "t", threads=2),
+                          password="hunter2")
+    assert not out.exists(), "a refused job still wrote a file"
+
+
+@needs_7z
+def test_the_refusal_names_the_way_out(tmp_path):
+    """An error that only says "no" makes the user guess. This one has to name
+    the format that *does* support a password."""
+    src, _ = _corpus(tmp_path)
+    try:
+        compress_standard([src], tmp_path / "p.7z", "7z",
+                          StageContext(temp_dir=tmp_path / "t", threads=2),
+                          password="pw")
+    except ValueError as exc:
+        assert "excmp" in str(exc).lower()
+    else:
+        pytest.fail("the combination was accepted")

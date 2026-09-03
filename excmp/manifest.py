@@ -99,6 +99,11 @@ class Manifest:
         return cls(**data)
 
 
+#: A lepton member is always smaller than the JPEG it restores to, but a
+#: very small file can still carry framing overhead, so the bound is the
+#: larger of the declared size and this floor.
+_LEPTON_MEMBER_FLOOR = 64 * 1024
+
 STORED_PREFIX = "stored/"
 
 
@@ -180,10 +185,38 @@ def write_container(archive_path: Path, manifest: Manifest,
         else:
             first_by_hash[digest] = rel
 
+    # B2: settle the JPEG packing BEFORE the manifest is serialised.
+    #
+    # This used to happen inside the write loop, i.e. after the manifest JSON
+    # was already in the zip, which made the fallback `meta.pop("codec")` dead
+    # code: an entry that failed to pack the second time shipped carrying a
+    # `codec: lepton` its bytes did not honour. Doing it here also means each
+    # JPEG is compressed **once** - the engine used to pack every one merely to
+    # decide, throw the bytes away, and pack it again down here.
+    packed_bytes: dict[str, bytes] = {}
+    if jpeg.available():
+        for rel, src in stored_norm.items():
+            meta = manifest.inputs.get(rel, {})
+            if "same_as" in meta:
+                continue
+            try:
+                packed = jpeg.pack(Path(src).read_bytes())
+            except OSError:
+                packed = None
+            if packed is not None:
+                packed_bytes[rel] = packed
+                meta["codec"] = "lepton"
+            else:
+                meta.pop("codec", None)
+    else:
+        for rel in stored_norm:
+            manifest.inputs.get(rel, {}).pop("codec", None)
+
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED,
                          allowZip64=True) as zf:
-        # The manifest goes in first and now carries the `same_as` pointers,
-        # so the dedup pass above has to run before this line.
+        # The manifest goes in first and now carries both the `same_as`
+        # pointers and the settled `codec` keys, so both passes above have to
+        # run before this line.
         zf.writestr(MANIFEST_NAME, manifest.to_json())
         if payload_path is not None:
             zf.write(payload_path, arcname=manifest.payload_name)
@@ -191,18 +224,10 @@ def write_container(archive_path: Path, manifest: Manifest,
             meta = manifest.inputs.get(rel, {})
             if "same_as" in meta:
                 continue
-            if meta.get("codec") == "lepton":
-                # B2: the entry holds lepton bytes, not JPEG bytes. `pack()`
-                # has already round-tripped them, so this is a file we have
-                # restored once before writing it down.
-                packed = jpeg.pack(Path(src).read_bytes())
-                if packed is not None:
-                    zf.writestr(STORED_PREFIX + rel, packed)
-                    continue
-                # It packed during planning and refuses now. Store it raw and
-                # drop the claim rather than write an entry we cannot honour.
-                meta.pop("codec", None)
-            zf.write(src, arcname=STORED_PREFIX + rel)
+            if rel in packed_bytes:
+                zf.writestr(STORED_PREFIX + rel, packed_bytes[rel])
+            else:
+                zf.write(src, arcname=STORED_PREFIX + rel)
 
 
 def _read_manifest(zf: zipfile.ZipFile, archive_path: Path) -> Manifest:
@@ -331,13 +356,8 @@ def extract_stored(archive_path: Path, out_dir: Path,
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if meta.get("codec") == "lepton":
-                    restored_bytes = jpeg.unpack(zf.read(info))
-                    if len(restored_bytes) != declared:
-                        raise ContainerError(
-                            f"stored entry {key!r} restored to "
-                            f"{len(restored_bytes)} bytes, the ledger declares "
-                            f"{declared}")
-                    target.write_bytes(restored_bytes)
+                    target.write_bytes(
+                        _read_lepton_member(zf, info, declared, key))
                 else:
                     with zf.open(info) as src, target.open("wb") as dst:
                         got = _copy_bounded(src, dst, declared,
@@ -396,15 +416,60 @@ def extract_stored(archive_path: Path, out_dir: Path,
             target = resolve_within(out_dir, key)
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                with zf.open(info) as src, target.open("wb") as dst:
-                    got = _copy_bounded(src, dst, declared,
-                                        f"stored entry {key!r}")
-                if got != declared:
-                    raise ContainerError(
-                        f"stored entry {key!r} holds {got} bytes, the ledger "
-                        f"declares {declared}")
+                if source_meta.get("codec") == "lepton":
+                    # The member holds the SOURCE entry's lepton bytes, which
+                    # are smaller than the JPEG they restore to. Copying them
+                    # across verbatim produced "holds 20162 bytes, the ledger
+                    # declares 23906" and failed the entire compress - two
+                    # identical photos in one folder was all it took.
+                    target.write_bytes(
+                        _read_lepton_member(zf, info, declared, key))
+                else:
+                    with zf.open(info) as src, target.open("wb") as dst:
+                        got = _copy_bounded(src, dst, declared,
+                                            f"stored entry {key!r}")
+                    if got != declared:
+                        raise ContainerError(
+                            f"stored entry {key!r} holds {got} bytes, the "
+                            f"ledger declares {declared}")
             except BaseException:
                 target.unlink(missing_ok=True)
                 raise
             written.append(target)
     return written
+
+
+def _read_lepton_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo,
+                        declared: int, key: str) -> bytes:
+    """Unpack one lepton member, bounded at both ends.
+
+    Two amplification steps live here and both used to be unbounded: a plain
+    ``zf.read()`` of an archive-supplied member, and then ``jpeg.unpack()`` of
+    whatever that produced. The ledger already declares what the file restores
+    to, so both are checked against that number - the lepton branch previously
+    skipped the member-size check every other stored entry gets.
+    """
+    if info.file_size > max(declared, _LEPTON_MEMBER_FLOOR):
+        raise ContainerError(
+            f"stored entry {key!r} holds {info.file_size} packed bytes for a "
+            f"file the ledger says is {declared} - refusing to expand it")
+    with zf.open(info) as fh:
+        packed = fh.read(info.file_size + 1)
+    if len(packed) > info.file_size:
+        raise ContainerError(f"stored entry {key!r} is larger than it declares")
+    if not jpeg.available():
+        raise ContainerError(
+            f"stored entry {key!r} needs the 'lepton-jpeg-python' package to "
+            f"restore, and it is not installed")
+    try:
+        restored = jpeg.unpack(packed)
+    except RuntimeError as exc:
+        # lepton's own error text carries the Rust build machine's paths, which
+        # is not something to show somebody about their own photo.
+        raise ContainerError(
+            f"stored entry {key!r} is not valid lepton data") from exc
+    if len(restored) != declared:
+        raise ContainerError(
+            f"stored entry {key!r} restored to {len(restored)} bytes, the "
+            f"ledger declares {declared}")
+    return restored

@@ -225,6 +225,10 @@ class CompressWorker(_EngineWorker):
         self.tools = tools
         self.sidecar = job.sidecar
         self.options = job.options
+        self.password = job.password
+        self.recovery = job.recovery
+        self.split = job.split
+        self.archive_format = job.archive_format
 
     def run(self) -> None:
         from excmp import engine  # deferred: importing the engine is not free
@@ -234,15 +238,52 @@ class CompressWorker(_EngineWorker):
         self._note(f"profile '{self.profile.value}' → chain: "
                    f"{' → '.join(self._chain.chain)}")
         try:
-            result = engine.compress(self.inputs, self.out_path, self.profile,
-                                     self.ctx, self.tools, sidecar=self.sidecar,
-                                     options=self.options)
+            if self.archive_format != "excmp":
+                # G4: a plain .7z/.zip has no container and no ledger, so it
+                # takes a different engine entry point. It is still extracted
+                # and hashed before publication.
+                std = engine.compress_standard(
+                    self.inputs, self.out_path, self.archive_format, self.ctx,
+                    self.tools)
+                self._note(std.note)
+                result = engine.CompressResult(
+                    archive=std.archive, orig_bytes=std.orig_bytes,
+                    final_bytes=std.final_bytes, routes=[], warnings=[],
+                    elapsed_s=std.elapsed_s)
+            else:
+                result = engine.compress(
+                    self.inputs, self.out_path, self.profile, self.ctx,
+                    self.tools, sidecar=self.sidecar, options=self.options,
+                    password=self.password)
+            # Both of the following run only after the archive is published,
+            # so they describe the file that shipped rather than its .tmp twin.
+            if self.recovery:
+                self._add_recovery(result.archive)
+            if self.split:
+                self._split(result.archive)
         except BaseException as exc:  # noqa: BLE001 - reported, never swallowed
             self._fail(exc)
             return
         for warning in result.warnings:
             self._note(f"warning: {warning}")
         self._finish(result)
+
+    def _add_recovery(self, archive) -> None:
+        from excmp.recovery import available, create
+
+        if not available():
+            self._note("par2 is not installed - no recovery records written")
+            return
+        made = create(archive, self.recovery, self.ctx)
+        self._note(f"wrote {len(made)} recovery file(s) at {self.recovery}%")
+
+    def _split(self, archive) -> None:
+        from excmp.volumes import split_file, write_parts_sidecar
+
+        parts = split_file(archive, self.split)
+        write_parts_sidecar(parts)
+        self._note(f"split into {len(parts)} volume(s): {parts[0].name} .. "
+                   f"{parts[-1].name}")
 
 
 class ExtractWorker(_EngineWorker):
@@ -380,10 +421,11 @@ class QueueManager(QObject):
 
     def add_compress(self, inputs: list[Path], out_path: Path, profile: Profile,
                      summary: AnalysisSummary | None = None,
-                     sidecar: bool = False, options: object | None = None) -> Job:
+                     sidecar: bool = False, options: object | None = None,
+                     extras: dict | None = None) -> Job:
         job = Job(inputs=list(inputs), out_path=Path(out_path), profile=profile,
                   kind=JobKind.COMPRESS, summary=summary, sidecar=sidecar,
-                  options=options)
+                  options=options, **(extras or {}))
         if summary is not None:
             job.orig_bytes = summary.total_bytes
         return self.add_job(job)

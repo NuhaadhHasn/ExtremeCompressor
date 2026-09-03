@@ -79,8 +79,20 @@ def base_of(first_part: Path) -> Path:
     return first_part.with_suffix("")
 
 
+#: The volume digests go in `<archive>.volumes.sha256`, **not**
+#: `<archive>.sha256`.
+#:
+#: The latter is G6's whole-archive transport sidecar, and using it here was a
+#: silent collision: the CLI writes G6's file immediately after publication and
+#: then splits, so `write_parts_sidecar` overwrote it. A user who asked for a
+#: checksum of the archive got a checksum of its parts instead, with nothing
+#: saying so. Both are useful and they describe different files, so they get
+#: different names.
+VOLUMES_SIDECAR_SUFFIX = ".volumes.sha256"
+
+
 def sidecar_for(first_part: Path) -> Path:
-    return Path(str(base_of(first_part)) + ".sha256")
+    return Path(str(base_of(first_part)) + VOLUMES_SIDECAR_SUFFIX)
 
 
 def part_paths(first_part: Path) -> list[Path]:

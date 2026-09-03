@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFrame,
+                               QHBoxLayout,
                                QGridLayout, QLabel, QLineEdit, QPushButton,
                                QSpinBox, QToolButton, QWidget)
 
@@ -123,6 +124,59 @@ class AdvancedPanel(QFrame):
         self.ram_note.setObjectName("Subtitle")
         self.ram_note.setWordWrap(True)
 
+        # --- F1/F3/G3/G4: everything below shipped CLI-only first ----------
+        # All four belong in Advanced because each has a sane default and none
+        # is needed for the ordinary job. The password is deliberately two
+        # inline fields rather than a dialog: this app has a no-modal rule, and
+        # a mistyped password is unrecoverable, so it gets confirmed here.
+        self.password = QLineEdit(self)
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password.setPlaceholderText(self.tr("leave empty for no password"))
+        self.password.setAccessibleName(self.tr("Archive password"))
+        self.password.setToolTip(self.tr(
+            "Encrypts the whole archive - filenames and hashes included - with "
+            "Argon2id and AES-256-GCM. There is no backdoor and no reset: if "
+            "you lose this password the data is gone."))
+        self.password_confirm = QLineEdit(self)
+        self.password_confirm.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_confirm.setPlaceholderText(self.tr("type it again"))
+        self.password_confirm.setAccessibleName(self.tr("Confirm archive password"))
+
+        self.protect_note = QLabel("", self)
+        self.protect_note.setObjectName("Subtitle")
+        self.protect_note.setWordWrap(True)
+        self.password.textChanged.connect(self._show_protect)
+        self.password_confirm.textChanged.connect(self._show_protect)
+
+        self.recovery = QComboBox(self)
+        self.recovery.addItem(self.tr("none"), None)
+        for pct in (1, 3, 5, 10):
+            self.recovery.addItem(self.tr("%d%% of the archive") % pct, pct)
+        self.recovery.setAccessibleName(self.tr("Recovery records"))
+        self.recovery.setToolTip(self.tr(
+            "Extra PAR2 data stored beside the archive so a bad sector or a "
+            "truncated download can be repaired, not just detected. Costs that "
+            "percentage in disk space."))
+
+        self.split = QLineEdit("", self)
+        self.split.setPlaceholderText(self.tr("one file"))
+        self.split.setAccessibleName(self.tr("Split into volumes of"))
+        self.split.setToolTip(self.tr(
+            "Break the finished archive into numbered parts, e.g. 100m or 4g. "
+            "Useful for FAT32 drives and flaky uploads. Extraction only needs "
+            "the .001 - it finds the rest."))
+
+        self.format_box = QComboBox(self)
+        self.format_box.addItem(self.tr(".excmp (verified)"), "excmp")
+        self.format_box.addItem(self.tr(".7z (compatible)"), "7z")
+        self.format_box.addItem(self.tr(".zip (compatible)"), "zip")
+        self.format_box.setAccessibleName(self.tr("Archive format"))
+        self.format_box.setToolTip(self.tr(
+            "Our .excmp keeps a per-file SHA-256 ledger, so the restore can be "
+            "re-verified any time. A plain .7z or .zip opens in any tool but "
+            "carries no ledger, so it cannot be re-checked later - it is still "
+            "extracted and hashed before we hand it over."))
+
         self.output_dir = QLineEdit("", self)
         self.output_dir.setPlaceholderText(self.tr("next to the first input"))
         self.output_dir.setAccessibleName(self.tr("Output folder"))
@@ -150,6 +204,20 @@ class AdvancedPanel(QFrame):
         grid.addWidget(QLabel(self.tr("Parameters"), self), 5, 0)
         grid.addWidget(self.params, 5, 1, 1, 2)
         grid.addWidget(self.ram_note, 6, 1, 1, 2)
+        grid.addWidget(QLabel(self.tr("Format"), self), 7, 0)
+        grid.addWidget(self.format_box, 7, 1, 1, 2)
+        grid.addWidget(QLabel(self.tr("Password"), self), 8, 0)
+        pw_row = QHBoxLayout()
+        pw_row.setContentsMargins(0, 0, 0, 0)
+        pw_row.setSpacing(8)
+        pw_row.addWidget(self.password)
+        pw_row.addWidget(self.password_confirm)
+        grid.addLayout(pw_row, 8, 1, 1, 2)
+        grid.addWidget(self.protect_note, 9, 1, 1, 2)
+        grid.addWidget(QLabel(self.tr("Recovery"), self), 10, 0)
+        grid.addWidget(self.recovery, 10, 1, 1, 2)
+        grid.addWidget(QLabel(self.tr("Split into"), self), 11, 0)
+        grid.addWidget(self.split, 11, 1, 1, 2)
         grid.setColumnStretch(1, 1)
 
     def _show_ram(self) -> None:
@@ -164,6 +232,68 @@ class AdvancedPanel(QFrame):
             "About %s of memory while compressing, %s to extract.")
             % (fmt_size(lzma2_compress_ram(size, threads)),
                fmt_size(lzma2_decompress_ram(size))))
+
+    def _show_protect(self) -> None:
+        """Say the unrecoverable part while they are still typing it."""
+        first = self.password.text()
+        if not first:
+            self.protect_note.setText("")
+            return
+        if self.password_confirm.text() != first:
+            self.protect_note.setText(self.tr("The two entries do not match yet."))
+            return
+        self.protect_note.setText(self.tr(
+            "This archive will need this password to open. There is no "
+            "backdoor and no reset - if it is lost, so is the data."))
+
+    def password_value(self) -> str | None:
+        """The password for this job, or None. Raises ValueError if the two
+        fields disagree, because writing an archive whose password the user
+        did not intend is the one mistake that cannot be undone."""
+        first = self.password.text()
+        if not first:
+            return None
+        if self.password_confirm.text() != first:
+            raise ValueError(
+                "the two passwords do not match - type the same one twice")
+        return first
+
+    def recovery_percent(self) -> int | None:
+        return self.recovery.currentData()
+
+    def split_size(self) -> int | None:
+        """Bytes per volume, or None. Raises ValueError with a readable
+        reason, which the caller shows the way it shows a bad Parameters line."""
+        text = self.split.text().strip()
+        if not text:
+            return None
+        from excmp.volumes import VolumeError, parse_size
+        try:
+            return parse_size(text)
+        except VolumeError as exc:
+            # This panel's contract with the window is ValueError-with-a-reason
+            # - the same one `stage_options()` uses for a bad Parameters line,
+            # and what the inline error banner already knows how to show.
+            # Translating here keeps that promise in one place instead of
+            # teaching the caller about a second exception type.
+            raise ValueError(str(exc)) from exc
+
+    def archive_format(self) -> str:
+        return self.format_box.currentData() or "excmp"
+
+    def job_extras(self) -> dict:
+        """Everything the queue needs from this panel beyond StageOptions.
+
+        One accessor rather than four scattered reads, so a caller cannot
+        quietly forget the password and write an unencrypted archive the user
+        asked to protect.
+        """
+        return {
+            "password": self.password_value(),
+            "recovery": self.recovery_percent(),
+            "split": self.split_size(),
+            "archive_format": self.archive_format(),
+        }
 
     def stage_options(self):
         """The engine's StageOptions for this panel, or raise ValueError with

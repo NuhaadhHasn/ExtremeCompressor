@@ -764,11 +764,22 @@ class MainWindow(QMainWindow):
                 tone="warn",
                 actions=[(self.tr("Edit it"), self._focus_params)])
             return
+        # The same treatment for the protect/split/format controls: a
+        # mismatched password or an unreadable volume size stops the job here,
+        # in the banner, rather than three minutes into a chain.
+        try:
+            extras = self.advanced_panel.job_extras()
+        except ValueError as exc:
+            self.banner.show_message(
+                self.tr("That job could not be started: %s") % exc,
+                tone="warn",
+                actions=[(self.tr("Open Advanced"), self._focus_params)])
+            return
         self.results.hide_panel()
         self.queue.add_compress(inputs, self._output_path_for(inputs),
                                 self.presets.current_profile(), self._summary,
                                 sidecar=self.settings_tab.sidecar_toggle.isChecked(),
-                                options=options)
+                                options=options, extras=extras)
         self._pending = []
         self.analysis_card.clear()
         self.compare_table.clear()

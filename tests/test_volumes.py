@@ -216,3 +216,27 @@ def test_the_whole_archive_sidecar_is_also_lf(tmp_path):
     target.write_bytes(b"pretend archive")
     side = _write_sidecar(target)
     assert b"\r\n" not in side.read_bytes()
+
+
+def test_the_parts_sidecar_does_not_collide_with_the_archive_one(tmp_path):
+    """A shipped collision until 2026-09-03.
+
+    G6 writes `<archive>.sha256` for the whole archive, and this used to write
+    the *same* path for the volume digests. The CLI writes G6's file right
+    after publication and splits afterwards, so the parts sidecar overwrote
+    it: a user who asked for a checksum of the archive silently got a checksum
+    of its parts. They describe different files and now have different names.
+    """
+    from excmp.engine import _write_sidecar
+
+    archive = _make(tmp_path, 6_000, name="a.excmp")
+    whole = _write_sidecar(archive)
+    parts = split_file(archive, part_size=2_000)
+    volumes = write_parts_sidecar(parts)
+
+    assert whole != volumes, "the two sidecars still share a path"
+    assert whole.exists() and volumes.exists()
+    # And the whole-archive one still says what it said before the split.
+    assert archive.name in whole.read_text(encoding="utf-8")
+    assert parts[0].name in volumes.read_text(encoding="utf-8")
+    assert archive.name + "\n" not in volumes.read_text(encoding="utf-8")

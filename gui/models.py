@@ -70,6 +70,13 @@ class Job:
     # job so the preference at commit time is what runs, even if the user
     # changes it while the job waits in the queue.
     sidecar: bool = False
+    #: F1/F3/G3/G4, all optional and all defaulting to "off" so the ordinary
+    #: job is unchanged. Grouped rather than added as four more fields because
+    #: they arrive together from one panel accessor.
+    password: str | None = None
+    recovery: int | None = None
+    split: int | None = None
+    archive_format: str = "excmp"
     # Level/dictionary/extra switches chosen in Advanced, resolved at commit
     # time so a later change cannot rewrite a job already queued.
     options: object | None = None

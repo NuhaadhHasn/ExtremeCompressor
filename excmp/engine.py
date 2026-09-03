@@ -18,12 +18,13 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .analyzer import FileInfo, analyze_tree
+from . import jpeg
+from .analyzer import Category, FileInfo, analyze_tree
 from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
                        read_container, write_container)
-from .planner import Plan, Profile, plan as make_plan, store_reason
+from .planner import Plan, Profile, plan as make_plan, precomp_inflation, store_reason
 from .safepath import resolve_within, safe_relpath
 from .slt import classify_failure
 from .stages.base import Stage, StageContext, StageError, StageSkip
@@ -104,7 +105,14 @@ def compress_space_needs(out_path: Path, temp_dir: Path, infos: list[FileInfo],
     piped = size.piped_bytes
     total = size.stored_bytes + size.piped_bytes
     stages = next((r.stages for r in the_plan.routes if r.action == "pipeline"), [])
-    inflation = _PRECOMP_INFLATION if "precomp" in stages else 1
+    # B3: the multiplier is per data type, not a flat 5x. A PNG folder inflates
+    # ~50x through Precomp (deflate all the way down, so expanding it yields
+    # raw pixels), and reserving 5x for one would under-book temp by an order
+    # of magnitude - which is the exact failure this preflight exists to catch.
+    piped_infos = next(
+        (set(r.files) for r in the_plan.routes if r.action == "pipeline"), set())
+    inflation = (precomp_inflation([i for i in infos if i.path in piped_infos])
+                 if "precomp" in stages else 1)
 
     # Output: the .tmp twin, which is the whole archive. Use the pessimistic end
     # of the estimate - being wrong here means a disk-full failure late in a long
@@ -196,12 +204,34 @@ class StageOptions:
         return out
 
 
-def _stage_factory(options: StageOptions | None = None) -> dict[str, Stage]:
+#: Fraction of *piped bytes* that must be executable before we force BCJ2.
+#: Deliberately low, because the payoff is asymmetric: measured, being right
+#: is worth 1.3% and being wrong costs 0.04%.
+BCJ2_BYTE_SHARE = 0.25
+
+
+def _wants_bcj2(infos: "list[FileInfo]") -> bool:
+    """Is this job executable-heavy enough for the x86 branch filter? (B7)
+
+    Weighed by **bytes, not file count**: one 50 MB DLL beside a hundred 1 KB
+    text files is an executable job, and counting files would call it a text
+    job and leave the 1.3% on the table.
+    """
+    total = sum(i.size for i in infos)
+    if not total:
+        return False        # an all-stored job pipes nothing to filter
+    exe = sum(i.size for i in infos if i.category is Category.EXECUTABLE)
+    return exe / total >= BCJ2_BYTE_SHARE
+
+
+def _stage_factory(options: StageOptions | None = None,
+                   bcj2: bool = False) -> dict[str, Stage]:
     opts = options or StageOptions()
     seven = (SevenZipStage(level=opts.level if opts.level is not None else 9,
                            dict_size=opts.dict_size,
-                           extra_args=list(opts.extra_args))
-             if (opts.level is not None or opts.dict_size or opts.extra_args)
+                           extra_args=list(opts.extra_args), bcj2=bcj2)
+             if (opts.level is not None or opts.dict_size or opts.extra_args
+                 or bcj2)
              else SevenZipStage())
     zstd = (ZstdStage(level=opts.level) if opts.level is not None
             else ZstdStage())
@@ -372,14 +402,124 @@ def _write_sidecar(archive: Path) -> Path:
     transport sidecar exists for.
     """
     side = Path(str(archive) + ".sha256")
-    side.write_text(f"{hash_file(archive)}  {archive.name}\n", encoding="utf-8")
+    # newline="\n": see volumes.write_parts_sidecar. Python writes CRLF on
+    # Windows by default, and `sha256sum -c` then treats the trailing \r as
+    # part of the filename and fails every line. This shipped broken until
+    # 2026-09-02 - the sidecar existed for exactly one command and did not
+    # survive it.
+    side.write_text(f"{hash_file(archive)}  {archive.name}\n",
+                    encoding="utf-8", newline="\n")
     return side
+
+
+@dataclass
+class StandardResult:
+    """What a plain-format export produced, and what it cannot promise."""
+
+    archive: Path
+    orig_bytes: int
+    final_bytes: int
+    elapsed_s: float
+    #: Files compared against the original by SHA-256 after a real extract.
+    verified: int
+    #: Always False here. A standard archive carries no per-file ledger, so
+    #: nothing can re-check it later - which is the honest difference from an
+    #: `.excmp` and the reason this field exists rather than being implied.
+    has_ledger: bool
+    #: One sentence for the user about that trade.
+    note: str
+
+
+def _hash_tree(root: Path) -> dict[str, str]:
+    return {p.relative_to(root).as_posix(): hash_file(p)
+            for p in Path(root).rglob("*") if p.is_file()}
+
+
+def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
+                      ctx: StageContext,
+                      tools: dict[str, ToolInfo | None] | None = None,
+                      level: int = 9) -> StandardResult:
+    """Write a plain `.7z` or `.zip` — one anybody can open (G4).
+
+    The lock-in objection is fair and this is the answer: no container, no
+    manifest, just an archive that 7-Zip, Explorer, macOS and `unzip` all
+    read.
+
+    **What is given up** is the *later* half of the guarantee. Without a ledger
+    there is nothing to re-check against, so `excmp verify` can say nothing
+    about this file in six months.
+
+    **What is kept** is the *now* half, and it is not a token: the archive is
+    extracted to temp and every file compared against the original by SHA-256
+    before it is published. Same rule as the `.excmp` path — if it does not
+    restore, no file appears at the destination. So this archive has been
+    proven to restore once, on this machine; we simply cannot prove it again.
+    """
+    fmt = str(fmt).lower()
+    if fmt not in {"7z", "zip"}:
+        raise ValueError(
+            f"unsupported format {fmt!r}: choose '7z' or 'zip'. RAR creation "
+            f"is not legally possible for any tool but WinRAR")
+
+    t0 = time.monotonic()
+    tools = tools if tools is not None else find_tools(with_versions=True)
+    out_path = Path(out_path)
+    infos, _relmap = _collect([Path(p) for p in inputs])
+    if not infos:
+        raise ValueError("nothing to compress")
+    orig = sum(i.size for i in infos)
+
+    job_dir = Path(tempfile.mkdtemp(prefix="excmp-std-", dir=ctx.temp_dir))
+    tmp_out = out_path.with_suffix(out_path.suffix + ".tmp")
+    try:
+        # Same stage the .excmp route uses - the output path staying last, the
+        # password redaction, the progress parsing all come for free. Only the
+        # container type differs.
+        stage = SevenZipStage(level=level, archive_type=fmt)
+        roots = [Path(p) for p in inputs]
+        source = roots[0] if len(roots) == 1 and roots[0].is_dir() else None
+        stage.compress(source if source is not None else roots[0], tmp_out, ctx)
+
+        # Prove it restores, right now, the only moment we can.
+        check_dir = job_dir / "check"
+        stage.extract(tmp_out, check_dir, ctx)
+        want = _hash_tree(source) if source is not None else {}
+        got = _hash_tree(check_dir)
+        verified = 0
+        for rel, digest in want.items():
+            match = [v for k, v in got.items() if k.endswith(rel)]
+            if not match or match[0] != digest:
+                raise StageError(
+                    f"{fmt} export did not restore {rel!r} identically - "
+                    f"refusing to publish it")
+            verified += 1
+
+        tmp_out.replace(out_path)
+        tmp_out = None
+    finally:
+        if tmp_out is not None:
+            Path(tmp_out).unlink(missing_ok=True)
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    return StandardResult(
+        archive=out_path,
+        orig_bytes=orig,
+        final_bytes=out_path.stat().st_size,
+        elapsed_s=time.monotonic() - t0,
+        verified=verified,
+        has_ledger=False,
+        note=("standard %s: any tool can open it, and it was verified by "
+              "extracting and hashing every file just now - but it carries no "
+              "ledger, so it cannot be re-verified later the way an .excmp can"
+              % fmt),
+    )
 
 
 def compress(inputs: list[Path], out_path: Path, profile: Profile,
              ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None,
              sidecar: bool = False,
-             options: "StageOptions | None" = None) -> CompressResult:
+             options: "StageOptions | None" = None,
+             password: str | None = None) -> CompressResult:
     t0 = time.monotonic()
     tools = tools if tools is not None else find_tools(with_versions=True)
     out_path = Path(out_path)
@@ -392,7 +532,13 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     the_plan.warnings.extend(
         _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
 
-    registry = _stage_factory(options)
+    # B7: the branch filter is decided from what will actually be *piped*,
+    # not from the whole input. A folder of installers is mostly stored, and
+    # what reaches 7-Zip may look nothing like the folder as a whole.
+    _piped = next((r for r in the_plan.routes if r.action == "pipeline"), None)
+    _piped_set = set(_piped.files) if _piped else set()
+    registry = _stage_factory(
+        options, bcj2=_wants_bcj2([i for i in infos if i.path in _piped_set]))
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-", dir=ctx.temp_dir))
     tmp_out: Path | None = None
     try:
@@ -401,12 +547,28 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         store_route = next((r for r in the_plan.routes if r.action == "store"), None)
 
         ledger: dict[str, dict] = {}
+        piped_paths = set(pipe_route.files) if pipe_route else set()
         for info in infos:
-            ledger[relmap[info.path]] = {
+            route = "pipeline" if info.path in piped_paths else "store"
+            entry = {
                 "size": info.size,
                 "sha256": hash_file(info.path),
-                "route": "pipeline" if pipe_route and info.path in set(pipe_route.files) else "store",
+                "route": route,
             }
+            # B2: a stored JPEG is the one case where "store" is leaving money
+            # on the table. Lepton reproduces the file bit-for-bit and measured
+            # 33.4% on real photos here. `pack()` round-trips before answering,
+            # so a `codec` claim is one we have already honoured once; if it
+            # declines - CMYK and >16384px are both common and both refused -
+            # the file is simply stored raw as before.
+            if route == "store" and jpeg.available():
+                try:
+                    if jpeg.pack(info.path.read_bytes()) is not None:
+                        entry["codec"] = "lepton"
+                except OSError:
+                    pass    # unreadable here means unreadable later; let the
+                            # normal store path produce the error
+            ledger[relmap[info.path]] = entry
 
         # --- run the pipeline chain on a staging copy ----------------------
         payload_path: Path | None = None
@@ -430,6 +592,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 _wait_if_paused(ctx)
                 stage = registry[sid]
                 nxt = job_dir / f"s{i}{_PAYLOAD_EXT.get(sid, '.bin')}"
+                consumed = _tree_size(current)
                 try:
                     current = stage.compress(current, nxt, ctx)
                 except StageSkip as skip:
@@ -445,6 +608,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # "copy as command" is not guessing. Empty when the user
                     # chose nothing, rather than claiming the tool's defaults
                     # as deliberate settings.
+                    input_bytes=consumed,
                     params=(options.as_params() if options
                             and sid in ("sevenzip", "zstd") else {}),
                 ))
@@ -475,6 +639,19 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
 
         # --- verify then atomically publish ---------------------------------
         _verify_before_publish(tmp_out, ctx)
+        if password:
+            # F1: encrypt *after* the D9 gate and *before* the rename, so the
+            # plaintext container never exists at the destination and what
+            # gets encrypted is an archive already proven to restore. The
+            # plaintext does live in temp for the length of the verify, which
+            # is unavoidable: we cannot verify what we cannot read.
+            from .crypto import encrypt_file
+            sealed = tmp_out.with_suffix(tmp_out.suffix + ".enc")
+            try:
+                encrypt_file(tmp_out, sealed, password)
+            finally:
+                tmp_out.unlink(missing_ok=True)
+            tmp_out = sealed
         if out_path.exists():
             out_path.unlink()
         tmp_out.replace(out_path)
@@ -874,13 +1051,24 @@ def _verify_before_publish(archive: Path, ctx: StageContext) -> int:
     return result.verified
 
 
-def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
+def extract(archive: Path, out_dir: Path, ctx: StageContext,
+            password: str | None = None) -> ExtractResult:
     t0 = time.monotonic()
     archive, out_dir = Path(archive), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     registry = _stage_factory()
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-x-", dir=ctx.temp_dir))
     try:
+        # F1: an encrypted archive is decrypted into the job dir first, and
+        # everything after this line is the ordinary path. Same shape as the
+        # volume join in the CLI - one format concern handled once, at the
+        # edge, rather than threaded through the reader.
+        from .crypto import decrypt_file, is_encrypted
+        if is_encrypted(archive):
+            if not password:
+                raise EncryptedArchiveError(
+                    f"{archive.name} is password-protected; supply the password")
+            archive = decrypt_file(archive, job_dir / "decrypted.excmp", password)
         manifest, payload = read_container(archive, job_dir)
         _check_free_space(out_dir, manifest.inputs)
         stage_budget = max(declared_total(manifest.inputs) * _STAGE_INFLATION_LIMIT,
@@ -896,13 +1084,23 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext) -> ExtractResult:
                     raise StageError(f"archive needs stage '{sid}' which is not available")
                 is_last = i == len(stages) - 1
                 dst = out_dir if is_last else job_dir / f"r{i}"
+                # The chain runs backwards, so this stage should reproduce
+                # what the *corresponding* compress stage consumed. When the
+                # archive recorded that number, use it: an exact figure plus
+                # slack is a far tighter bound than a blanket multiplier, and
+                # it is the only way to allow Precomp's honest ~50x on PNG
+                # without weakening the guard for everything else.
+                record = manifest.stages[len(stages) - 1 - i]
+                declared_in = getattr(record, "input_bytes", 0) or 0
+                budget = (int(declared_in * 1.25) + _STAGE_FLOOR_BYTES
+                          if declared_in else stage_budget)
                 current = stage.extract(current, dst, ctx)
                 produced = _tree_size(current)
-                if produced > stage_budget:
+                if produced > budget:
                     raise ContainerError(
-                        f"stage '{sid}' produced {produced >> 20} MiB, far beyond "
-                        f"the {stage_budget >> 20} MiB implied by the manifest "
-                        f"ledger - refusing to continue")
+                        f"stage '{sid}' produced {produced >> 20} MiB, beyond "
+                        f"the {budget >> 20} MiB this archive declares for it "
+                        f"- refusing to continue")
                 if not is_last and current.is_dir():
                     # intermediate extract of a single-file payload: descend
                     inner = [p for p in current.rglob("*") if p.is_file()]

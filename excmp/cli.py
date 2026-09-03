@@ -52,6 +52,9 @@ def cmd_compress(args: argparse.Namespace) -> int:
     from . import engine  # deferred: keeps analyze fast
     ctx = StageContext(temp_dir=Path(args.temp))
 
+    if getattr(args, "format", "excmp") != "excmp":
+        return _compress_standard(args, engine, ctx)
+
     def show(stage: str, pct: float) -> None:
         if not args.json:
             print(f"\r  [{stage}] {pct:5.1f}%", end="", flush=True)
@@ -68,7 +71,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
     )
     result = engine.compress([Path(p) for p in args.inputs], out,
                              Profile(args.profile), ctx, sidecar=args.sha256,
-                             options=options)
+                             options=options, password=_new_password(args))
     if not args.json:
         print()
     payload = {
@@ -81,9 +84,42 @@ def cmd_compress(args: argparse.Namespace) -> int:
         "warnings": result.warnings,
         "sidecar": str(result.sidecar) if result.sidecar else None,
     }
+    # G3: split only after compress() has published, which means only after
+    # the D9 gate has restored and hashed the whole archive. Splitting an
+    # unverified archive would just produce several unverified files.
+    # F3: after publication, so the records describe the archive that shipped
+    # rather than the .tmp twin that existed a moment earlier - the same
+    # reasoning as the .sha256 sidecar.
+    if getattr(args, "recovery", None) is not None:
+        from .recovery import available as par2_available, create, default_percent
+        if not par2_available():
+            print("warning: par2 is not installed, so no recovery records "
+                  "were written")
+        else:
+            pct = (default_percent(result.archive.stat().st_size)
+                   if args.recovery == -1 else args.recovery)
+            made = create(result.archive, pct, ctx)
+            payload["recovery"] = [str(m) for m in made]
+            if not args.json:
+                extra = sum(m.stat().st_size for m in made)
+                print(f"wrote {len(made)} recovery file(s) at {pct}% "
+                      f"(+{_fmt_size(extra)}); repair with "
+                      f"`excmp repair {result.archive.name}`")
+
+    parts: list[Path] = []
+    if getattr(args, "split", None):
+        from .volumes import parse_size, split_file, write_parts_sidecar
+        parts = split_file(result.archive, parse_size(args.split))
+        write_parts_sidecar(parts)
+        payload["volumes"] = [str(p) for p in parts]
+
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
+        if parts:
+            print(f"split into {len(parts)} volumes: {parts[0].name} .. "
+                  f"{parts[-1].name}")
+            print(f"extract with: excmp extract {parts[0].name}")
         print(f"done: {_fmt_size(result.orig_bytes)} -> {_fmt_size(result.final_bytes)} "
               f"({payload['saved_percent']}% saved) in {payload['elapsed_s']}s")
         for r in result.routes:
@@ -97,8 +133,42 @@ def cmd_compress(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compress_standard(args, engine, ctx: StageContext) -> int:
+    """G4: a plain .7z/.zip. Reports what it can and cannot promise."""
+    def show(stage: str, pct: float) -> None:
+        if not args.json:
+            print(f"\r  [{stage}] {pct:5.1f}%", end="", flush=True)
+
+    ctx.progress_cb = show
+    result = engine.compress_standard(
+        [Path(p) for p in args.inputs], Path(args.output), args.format, ctx)
+    if not args.json:
+        print()
+    payload = {
+        "archive": str(result.archive),
+        "format": args.format,
+        "original": result.orig_bytes,
+        "final": result.final_bytes,
+        "saved_percent": round((1 - result.final_bytes / result.orig_bytes) * 100, 2)
+        if result.orig_bytes else 0.0,
+        "elapsed_s": round(result.elapsed_s, 1),
+        "verified": result.verified,
+        "has_ledger": result.has_ledger,
+        "note": result.note,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"done: {_fmt_size(result.orig_bytes)} -> "
+              f"{_fmt_size(result.final_bytes)} "
+              f"({payload['saved_percent']}% saved) in {payload['elapsed_s']}s")
+        print(f"verified {result.verified} file(s) by extracting and hashing")
+        print(f"note: {result.note}")
+    return 0
+
+
 def cmd_extract(args: argparse.Namespace) -> int:
-    """Extract ours or somebody else's (G1).
+    """Extract ours or somebody else's (G1), joining volumes first (G3).
 
     The two cases report differently on purpose. A foreign zip has no SHA-256
     ledger, so "restored 2 files" is the whole truth about it - borrowing the
@@ -106,6 +176,23 @@ def cmd_extract(args: argparse.Namespace) -> int:
     """
     from . import engine
     ctx = StageContext(temp_dir=Path(args.temp))
+
+    # G3: handed a `.001`, rejoin the set first. The join is a plain
+    # concatenation into temp and nothing about the container changes, so
+    # everything below - including the verified restore - is the ordinary
+    # path. A split archive is not a second format to reason about.
+    archive_path = Path(args.archive)
+    joined_tmp: Path | None = None
+    from .volumes import VolumeError, is_first_part, join_parts, part_paths
+    if is_first_part(archive_path):
+        parts = part_paths(archive_path)
+        print(f"joining {len(parts)} volumes ({parts[0].name} .. "
+              f"{parts[-1].name})...")
+        joined_tmp = Path(args.temp) / (archive_path.with_suffix("").name)
+        joined_tmp.parent.mkdir(parents=True, exist_ok=True)
+        archive_path = join_parts(archive_path, joined_tmp)
+        args.archive = str(archive_path)
+
     password = _ask_password(args)
     if args.only:
         result = engine.extract_selected(Path(args.archive), args.only,
@@ -147,6 +234,57 @@ def _ask_password(args: argparse.Namespace) -> str | None:
         return None
     import getpass
     return getpass.getpass("Archive password: ")
+
+
+def _new_password(args: argparse.Namespace) -> str | None:
+    """Prompt twice when *setting* a password.
+
+    Reading one asks once — a typo just fails. Setting one asks twice, because
+    a typo here is not recoverable by anybody: there is no backdoor, no
+    recovery key and no reset. That is the honest consequence of Argon2id plus
+    AES-GCM, and confirming is the only protection we can offer against it.
+    """
+    if not getattr(args, "password", False):
+        return None
+    import getpass
+    first = getpass.getpass("Password for the new archive: ")
+    if not first:
+        raise ValueError("empty password - nothing was written")
+    if getpass.getpass("Type it again: ") != first:
+        raise ValueError("the two passwords did not match - nothing was written")
+    return first
+
+
+def cmd_repair(args: argparse.Namespace) -> int:
+    """F3: put a damaged archive back together from its recovery records."""
+    from .recovery import RecoveryStatus, available, repair, verify
+
+    ctx = StageContext(temp_dir=Path(args.temp))
+    archive = Path(args.archive)
+    if not available():
+        print("par2 is not installed, so recovery records cannot be read")
+        return 2
+
+    status = verify(archive, ctx)
+    if status is RecoveryStatus.OK:
+        print(f"{archive.name} is intact - nothing to repair")
+        return 0
+    if status is RecoveryStatus.NO_RECORDS:
+        print(f"no recovery records found beside {archive.name}")
+        print("they have to be created up front: excmp compress ... --recovery")
+        return 2
+    if status is RecoveryStatus.UNREPAIRABLE:
+        print(f"{archive.name} is damaged beyond what its recovery records "
+              f"can rebuild")
+        return 2
+
+    print(f"{archive.name} is damaged but repairable - rebuilding...")
+    if repair(archive, ctx):
+        print("repaired; the archive now matches its recovery records")
+        print(f"confirm the contents too with: excmp verify {archive.name}")
+        return 0
+    print("repair failed")
+    return 2
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -305,6 +443,30 @@ def build_parser() -> argparse.ArgumentParser:
     # option, so it must be spelled --params=-mqs. Saying so in the help is
     # cheaper than the "expected one argument" people would otherwise hit on
     # their first try.
+    pc.add_argument("--password", action="store_true",
+                    help="encrypt the archive (Argon2id + AES-256-GCM over the "
+                         "whole container, filenames and hashes included). You "
+                         "are prompted twice; the password is never taken on "
+                         "the command line. There is no recovery if you lose it")
+    pc.add_argument("--recovery", nargs="?", type=int, const=-1, default=None,
+                    metavar="PCT",
+                    help="write PAR2 recovery records beside the archive so a "
+                         "bad sector or a truncated download can be repaired "
+                         "rather than merely detected. Omit the number for a "
+                         "size-appropriate default (5%% small, 3%% medium, "
+                         "1%% large)")
+    pc.add_argument("--format", default="excmp", choices=["excmp", "7z", "zip"],
+                    help="'excmp' (default) is our container: per-file SHA-256 "
+                         "and a restore we can re-verify any time. '7z' or "
+                         "'zip' write a plain archive any tool can open - "
+                         "still checked by extracting and hashing before it is "
+                         "published, but with no ledger to re-check later")
+    pc.add_argument("--split", default=None, metavar="SIZE",
+                    help="split the finished archive into volumes of this "
+                         "size, e.g. 100m or 4g. Parts are named .001, .002 "
+                         "and a .sha256 lists them so a bad transfer can name "
+                         "the part to re-fetch. The whole archive is written "
+                         "and verified first, then split")
     pc.add_argument("--params", default=None, metavar="SWITCHES",
                     help='extra 7-Zip method switches - use an equals sign, '
                          'e.g. --params="-mqs -myx=9". Method switches only; '
@@ -313,6 +475,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also write <archive>.sha256 so a recipient can check "
                          "the transfer with sha256sum -c")
     pc.set_defaults(func=cmd_compress)
+
+    pr = sub.add_parser("repair", help="rebuild a damaged archive from its "
+                                      "PAR2 recovery records (F3)")
+    pr.add_argument("archive")
+    pr.add_argument("--temp", default=default_tmp)
+    pr.set_defaults(func=cmd_repair)
 
     px = sub.add_parser("extract", help="extract an .excmp (verified) or any "
                                         "archive 7-Zip can open (unverified)")

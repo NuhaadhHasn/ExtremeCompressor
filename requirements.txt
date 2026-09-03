@@ -10,3 +10,7 @@ zstandard>=0.22        # BSD-3; bundles libzstd, so Fast needs no external exe
 PySide6>=6.6           # LGPL-3.0; Qt bindings, dynamically linked and unmodified
 comtypes>=1.4          # MIT; ITaskbarList3 for taskbar progress (Qt6 dropped it)
 windows-toasts>=1.1    # Apache-2.0; completion notifications
+lepton-jpeg-python>=0.5.8  # Apache-2.0; bit-exact JPEG recompression (B2)
+cryptography>=42        # Apache-2.0/BSD; AES-256-GCM for F1
+argon2-cffi>=23         # MIT; Argon2id KDF for F1
+par2cmdline-turbo>=1.4  # GPL binary, driven as a subprocess only (F3)

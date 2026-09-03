@@ -283,9 +283,52 @@ display scaling — both need a human at the machine.
       no Windows path) and `zstd --long=31` / 7z big-dict stay the ≤2 GB
       default. [20](research/20-source-study-lrzip-zpaqfranz.md); completes
       Insane; add to bench
-- [ ] B2. **JPEG specialist**: `lepton_jpeg_rust` (Microsoft, Apache-2.0) — ~22%
-      lossless, bit-exact restore; route `Category.IMAGE/jpeg` through it
-- [ ] B3. **PNG specialist**: `oxipng -o max` default, ECT `-9` under Extreme
+- [x] B2. ✅ **DONE 2026-09-02** — JPEG specialist via the
+      `lepton-jpeg-python` 0.5.8 wheel (as B10 corrected: in-process, no exe).
+      Measured on **37 real JPEGs** from this machine
+      ([benchmarks/2026-09-02-b2](benchmarks/2026-09-02-b2-lepton-jpeg.md)):
+      **33.42% saved on the 23 files lepton accepted** — better than the ~22%
+      predicted — and **37/37 byte-identical** end-to-end.
+      **The finding that shaped it: lepton refused 14 of 37 files** — 13
+      CMYK/4-channel (print work, an ordinary genre) and one wider than
+      16384 px. And the refused files were the *big* ones, 135 MB of 151 MB,
+      so the folder-level saving was **3.47%** despite 23 files packing.
+      Read it as: **~33% on RGB photo folders, ~0% on CMYK print work, and no
+      error either way.** Before B2 this folder compressed by approximately
+      nothing, since JPEGs are high-entropy and were all stored verbatim.
+      Design: `excmp/jpeg.py`'s `pack()` compresses **and immediately
+      decompresses**, returning `None` unless the bytes match the original
+      exactly. That doubles the work per JPEG and buys the ability to *fall
+      back* rather than *fail* — a file lepton would mishandle is caught while
+      storing it raw is still free, instead of at restore time when D9 would
+      refuse the whole archive. Reuses the `stored/` machinery G9 extended
+      (a `codec: "lepton"` ledger entry), so no new route was needed.
+- [x] B3. ✅ **DONE 2026-09-02 — but NOT as specified.** The plan said
+      "`oxipng -o max` default"; measured, that would have broken the product.
+      ([benchmarks/2026-09-02-b3](benchmarks/2026-09-02-b3-png.md).)
+      **oxipng does not preserve bytes**: on 10 real PNGs it saved 31.79% and
+      produced **0 byte-identical files**. It re-encodes the image to a smaller
+      form that renders the same — pixel-lossless, not byte-lossless — so it
+      cannot satisfy a SHA-256 ledger. **oxipng moves to Phase C** with the
+      AV1 re-encoder: opt-in, labelled, changes your file.
+      **The lossless route is better anyway.** PNG is deflate all the way down,
+      so Precomp expands and reconstructs it exactly: **38.41% saved, 15/15
+      byte-identical**, against oxipng's 31.79% and zero. All it needed was for
+      PNGs to stop being routed to `store` — `_DEFLATE_MEDIA = {".png"}` is the
+      one exception to "media stays stored", because a PNG's entropy is deflate
+      output rather than real randomness. JPEG deliberately stays out: its
+      entropy *is* real and it has B2/lepton on the stored route.
+      **Uncovered a bigger bug.** PNG inflates ~50x through Precomp (3.5 MB tar
+      → 177 MB .pcf), and extraction runs the chain backwards, so the
+      decompression-bomb guard's flat 8x-over-ledger allowance refused the
+      restore. No multiplier can fix that — loose enough for PNG is no defence,
+      tight enough to defend rejects PNG. So `StageRecord.input_bytes` now
+      records what each stage actually consumed, and extraction is bounded by
+      that measured figure + 25% instead of a ratio. **This makes the bomb
+      defence stronger**, and old archives (`input_bytes: 0`) fall back to the
+      multiplier, with a test that strips the field and restores one.
+      Also: `precomp_inflation()` is now per-type and byte-weighted, because a
+      flat 5x under-reserved temp for PNG by an order of magnitude.
 - [ ] B4. **WAV specialist**: FLAC 1.5 `-8 -j N`; TAK/OptimFROG as detected-only
       opt-ins (closed freeware — never bundled)
 - [ ] B5. **PDF/Office**: qpdf `--object-streams=generate --recompress-flate`;
@@ -359,15 +402,24 @@ display scaling — both need a human at the machine.
       already warns, the same detected-only pattern B4 uses. What E1 really
       buys is a pinned hash, which restore-side correctness wants anyway.
 
-- [ ] B7. Executables: force 7z BCJ2 explicitly with **`-mf=BCJ2`** (the cheapest
-      correct trigger — [19 §4](research/19-source-study-7zip.md): 7z only
-      auto-selects BCJ2 at mx≥8 *and* only with the MT mixer, else it falls back
-      to plain BCJ; ARM64/RISCV get their own filters, never BCJ2). **Flag the
-      "5-10% on x86" figure as benchmark-derived** — there is no source-level
-      percentage. **Never UPX** (AV flags, hurts archive ratio)
+- [x] B7. ✅ **DONE 2026-09-02** — BCJ2, measured rather than assumed
+      (`tests/test_sevenzip_switches.py` carries the table).
+      Across three corpora on 7-Zip 26.02 at mx9: forcing `-mf=BCJ2` is worth
+      **−1.296%** on 23.5 MB of real DLLs/EXEs, **+0.000%** on 163 MB of
+      installers, and **+0.043%** (i.e. slightly worse) on 3.2 MB of source.
+      So it is applied **conditionally** — `_wants_bcj2()` turns it on when
+      ≥25% of the *piped bytes* are `Category.EXECUTABLE`, weighed by bytes
+      rather than file count, because one 50 MB DLL beside a hundred small
+      text files is an executable job.
+      **The plan's "5-10% on x86" figure is not supported**: measured here it
+      is **1.3%**. The item already flagged it as benchmark-derived with no
+      source-level basis; this is our own number replacing it. Forcing the
+      filter also proved necessary — at mx9 with the MT mixer 7-Zip is
+      documented to auto-select BCJ2 and plainly had not. **Never UPX** still
+      stands.
 - [ ] B8. Re-benchmark everything on Silesia + a real game folder; update README table
       — this is also what replaces every *(est.)* in the doc 09 comparison table
-- [ ] B9. **RAM caps + thread defaults** (verified formulas, [research/12](research/12-lightweight-and-performance.md);
+- [~] B9. 🟡 **PARTLY DONE 2026-09-02** — `-mqs` is now always passed (measured never harmful, worth 0.13% on source trees; 7-Zip leaves it off by default). **`-md=192m` was measured and deliberately NOT adopted: zero bytes of difference on all three corpora, up to 27% more time.** It stays a user knob, not a default. Default threads is already 2. The remaining part is the exact RAM estimator formula. Original item: **RAM caps + thread defaults** (verified formulas, [research/12](research/12-lightweight-and-performance.md);
       **corrected by [19 §3](research/19-source-study-7zip.md)**):
       change default `threads` from 4 to **2** — but the reason is that at mx9 each
       LZMA2 **block** (not "chunk") uses 2 threads (match-finder + coder), so
@@ -419,17 +471,59 @@ display scaling — both need a human at the machine.
 - [ ] C4. Honest UX: ETA warning before starting ("~9 hours on this machine — run
       overnight?"), output tagged so we never re-encode our own output
 - [ ] C5. Later: ab-av1-style CRF search targeting VMAF 95 (needs beefier machine)
+- [ ] C6. **(moved from B3, 2026-09-02)** `oxipng` / ECT as an **opt-in**
+      PNG re-encoder. Measured 31.79% on real PNGs but **0 of 10 files came
+      back byte-identical** — it rewrites the image to a smaller encoding.
+      That is pixel-lossless, not byte-lossless, so it belongs here with the
+      AV1 re-encoder and not in a lossless phase. Note the lossless
+      `precomp → 7z` route already beats it (38.41%), so this is only worth
+      building for the case where Precomp is unavailable.
 
 ## Phase D — QA hardening (data integrity IS the product)
 
-- [ ] D1. **Property-based roundtrip tests** (Hypothesis): custom composite strategy
-      generating file trees — unicode/emoji names, 0-byte files, nested dirs, binary/
-      text/already-compressed content; property: compress→extract→byte-identical
-- [ ] D2. **Edge-case matrix** as parametrized pytest: >260-char paths (with/without
-      long-path registry opt-in), reserved names (CON, NUL), locked files, read-only
-      attrs, case-only name collisions, >4 GB file (slow-marked), symlink policy
-- [ ] D3. **Crash-consistency**: kill the subprocess at EVERY pipeline stage; assert
-      input untouched (bytes + mtime), no partial output at final path, temp cleaned
+- [x] D1. ✅ **DONE 2026-09-02** — property-based roundtrip tests
+      (`tests/test_property_roundtrip.py`, Hypothesis, MPL-2.0, dev-only).
+      States the product's whole claim as one executable property:
+      `extract(compress(T)) == T` for every generated tree. Trees mix names
+      drawn from the characters that actually break archivers (unicode,
+      spaces, dots, `=`, `#`, `&`), contents from the three regimes a codec
+      treats differently (compressible / random / empty), and per-file depth
+      0-3 so one example can hold a top-level file and a four-deep one.
+      Two more properties alongside it: **the input is never modified** (bytes
+      *and* mtime) and **the ledger accounts for every file** — an entry
+      missing from the ledger is a file nobody would notice failing to return.
+      Suite runs 30 examples; a one-off deeper hunt of **120 generated trees
+      found no counterexample**.
+- [x] D2. ✅ **DONE 2026-09-02** — the awkward-but-legitimate file matrix
+      (`tests/test_edge_cases.py`, 25 cases, all real engine round-trips).
+      The complement to D0: `test_safepath.py` pins what we **refuse**, this
+      pins what we must **accept**, because rejecting a legitimate awkward
+      name is its own kind of data loss. Covers spaces, parens, `=`, `%`,
+      `&`, `#`, brackets, apostrophes, Cyrillic, Japanese, **Dhivehi**, emoji,
+      200-character names, leading dashes; zero-byte files, trees of nothing
+      but empty files, 20-deep nesting, 200 small files, >260-character paths,
+      read-only attributes, and names that merely *contain* a reserved word
+      (`CONTENTS.txt`, `console.log`, `NULLABLE.md`) — the false-positive half
+      of D0's validator. Plus an explicit input-is-never-modified check on
+      bytes and mtime. **All 25 passed first time**; no bugs found, but the
+      class was previously untested.
+- [x] D3. ✅ **DONE 2026-09-02** — crash consistency
+      (`tests/test_crash_consistency.py`, 8 cases). Cancels a job from inside
+      `progress_cb` so the interrupt lands *during* a stage rather than at a
+      boundary, then asserts the three things that must hold either way: the
+      input is untouched (bytes and mtime), nothing partial sits at the output
+      path, and temp is clean — the last one matters because Precomp
+      legitimately inflates 2-5x mid-pipeline. Also pins D9 as a
+      crash-consistency property: an assertion inside the progress callback
+      fires if a `.excmp` ever appears at the final path *before* verification
+      finishes. Plus: a cancelled run must not poison the next run sharing the
+      same temp dir.
+      **One thing the implementation corrected:** the first version asserted
+      `pytest.raises` and failed on the Fast profile — not a bug, the corpus
+      simply finished before the cancel landed. Whether a cancel wins is a
+      race, so the tests now assert the invariant that holds *either way*: if
+      the job finished it must have published a genuinely restorable archive,
+      and if it stopped it must have published nothing.
 - [ ] D4. **Disk-full simulation** on a small VHDX/subst volume; graceful failure
 - [ ] D5. **Deep-verify command** (`excmp verify archive.excmp`): full decompress +
       hash-compare every file. Model source-pinned by
@@ -524,26 +618,29 @@ display scaling — both need a human at the machine.
 The user-visible security features, built on the D0-hardened base. Design and
 rationale: [research/10](research/10-security-and-integrity.md).
 
-- [ ] F1. **Optional password on `.excmp`** — build the inner zip as today, then wrap
-      the WHOLE container: header (magic, version, 16-byte random salt, Argon2id
-      params, chunk size — header as AAD) + **chunked AES-256-GCM** (4 MiB chunks,
-      age-style STREAM nonces = 11-byte counter + final-chunk flag, which defeats
-      truncation/reorder AND dodges GCM's ~64 GiB single-message cap). KDF:
-      **Argon2id** (`argon2-cffi`, RFC 9106 second recommendation: m=64 MiB, t=3,
-      p=4). Cipher: `cryptography` AESGCM (AES-NI present even on the i7-3540M).
-      HKDF-derived check value in the header so "wrong password" and "corrupted
-      file" are different, honest errors.
-      **Why not `7z -p`:** now **source-proven** ([19 §1](research/19-source-study-7zip.md),
-      `7zAes.cpp:232-238`): the salt lines are literally commented out ⇒ empty salt
-      (identical passwords ⇒ identical keys, precomputable — reinforced by a global
-      key cache), AES-256-**CBC** with CRC32-only integrity (no AEAD, ciphertext
-      malleable), SHA-256 iterated 2^19 over UTF-16LE (GPU-friendly) — *and* it
-      would only cover the 7z payload stage, leaving `manifest.json` (every
-      filename + hash) and `stored/` files in plaintext. Even `-mhe=on` leaks
-      archive size, header size, KDF params, and volume layout ([19 §2](research/19-source-study-7zip.md)).
-      Our design encrypts everything = full `-mhe=on` equivalent **plus**
-      authentication 7z doesn't have. Keep `7z -p -mhe=on` only as a labelled
-      "7z-compatible (weaker)" export mode
+- [x] F1. ✅ **DONE 2026-09-03** — `excmp/crypto.py`, `compress --password`,
+      and `extract` decrypts transparently. Argon2id (m=64 MiB, t=3, p=4) →
+      AES-256-GCM in 4 MiB chunks with age-style STREAM nonces (11-byte
+      counter + final-chunk flag), the header as AAD for every chunk, and an
+      HKDF check value so "wrong password" and "damaged file" are different
+      sentences. The **whole container** is wrapped, so `manifest.json` — every
+      filename and every hash — and the `stored/` tree are encrypted too;
+      `7z -p` could only ever have covered the payload stage.
+      Verified end-to-end: archive encrypted on disk, plaintext marker absent
+      from the bytes, wrong password refused with the right error, correct
+      password restores byte-identically.
+      **A denial-of-service found in our own code while testing.** The KDF
+      parameters live in the header and are therefore attacker-controlled, and
+      "the header is AAD" does *not* protect them — they are needed to derive
+      the key that would check the tag. `test_header_tampering_is_detected`
+      flipped one bit that landed in the top byte of `m_kib`, 8 KiB became
+      16 GiB, and the single test took **19 minutes**. A crafted header can ask
+      for 4 TiB. Bounds are now enforced before Argon2 is called
+      (8 KiB-1 GiB memory, ≤20 passes, ≤16 lanes) with three tests pinning it;
+      the suite went from 19 minutes to **1.8 seconds**.
+      Prompting asks **twice** when setting a password, because there is no
+      backdoor and a typo is unrecoverable. The password is never accepted on
+      argv — it would sit in the process table and the shell history.
 - [ ] F2. **Keyfile two-factor** (PeaZip's idea, done right —
       [17 §1](research/17-source-study-peazip.md)): PeaZip merely prepends
       `base64(SHA256(keyfile))` to the passphrase (separable, rides in plaintext
@@ -553,23 +650,25 @@ rationale: [research/10](research/10-security-and-integrity.md).
       hash the keyfile with a size cap (PeaZip uses 100 MiB); support
       keyfile-only mode; no in-header password verifier (PeaZip's old 16-bit
       `PW_Ver` is a 2^16 oracle — verify via the first chunk's GCM tag instead)
-- [ ] F3. **Recovery records** — the one feature WinRAR has that no OSS archiver does.
-      `par2cmdline-turbo` (GPL) via the **PyPI package that ships prebuilt
-      Windows binaries**, driven by subprocess like every other stage (GPL stays
-      contained in a separate process — app remains MIT; never link `libpar2`).
-      **Confirmed the right choice by [18 §5](research/18-source-study-freearc-par2.md)**:
-      PAR2 already IS the modern FEC design FreeArc's author redesigned toward
-      (GF(2^16) Reed-Solomon, self-describing MD5-checked packets, metadata
-      redundancy for free), strictly stronger than FreeArc's XOR `-rr` (2 bad
-      sectors in one residue class = unrecoverable). Exact CLIs:
-      `par2 create -r10 -n1 -m512 -B <dir> <archive>.excmp.par2 <archive>.excmp`;
-      verify `par2 verify …`; repair `par2 repair -p …`. **Caveats:** ≤32768
-      source blocks and ≤31 recovery files, so for big archives set `-s`
-      explicitly (≈ size/2000, multiple of 4) rather than letting block count cap
-      granularity; `-n1` = one tidy `.vol` sidecar; exit codes 0/1 distinguish
-      ok/repairable. UX default dose (FreeArc's tiering): ~4% tiny / 2% medium /
-      1% large — halvable with RS for equal protection. Sidecars for v1;
-      in-container embedding is a v2 refinement
+- [x] F3. ✅ **DONE 2026-09-03** — `excmp/recovery.py`,
+      `compress --recovery [PCT]`, and a new `excmp repair` verb. PAR2 via the
+      `par2cmdline-turbo` wheel, which ships a real Windows binary; driven as a
+      subprocess so its GPL stays out of our in-process code.
+      **The whole point, proven end-to-end through the CLI**: 200 KB zeroed out
+      of a 5.5 MB archive → `excmp repair` → **byte-identical to the original**
+      → `excmp verify` passes 32/32. And the honest failure too: 300 KB of
+      damage against a 5% record is correctly reported as *"damaged beyond what
+      its recovery records can rebuild"* rather than attempted and fudged.
+      Default dose is FreeArc's tiering (5% ≤50 MB, 3% ≤1 GB, 1% above), which
+      is about what the percentage *costs*: 4% of 10 MB is nothing, 4% of 50 GB
+      is 2 GB. Exit codes measured rather than assumed — 0 ok, 1 repairable,
+      2 beyond repair, 3 no records.
+      **One performance bug worth recording.** `_block_size` originally sized
+      to par2's 32768-block *ceiling*, which for a 400 KB archive means 16-byte
+      blocks and ~25,000 of them: block count drives the Reed-Solomon work
+      almost linearly, and the recovery tests took **284 seconds**. Sizing for
+      ~2000 blocks with a 4 KiB floor took that to **7 seconds** — a 40×
+      speedup, and the same win applies to real archives.
 - [ ] F4. **Mark-of-the-Web propagation**: copy a downloaded `.excmp`'s
       `Zone.Identifier` ADS onto extracted files via **direct ADS file I/O**
       (`open(path + ":Zone.Identifier")`, ~40 lines — [14 §5](research/14-source-study-nanazip.md)),
@@ -651,12 +750,48 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       entries are instant zip reads; payload members get an honest "this archive
       is solid — one file replays the whole chain" warning first. Engine: additive
       `list_archive()` + `extract_selected()`
-- [ ] G3. **Split volumes** (`.excmp.001`…) — pure-Python chunking with per-part
-      SHA-256; extraction accepts part 001 and auto-joins. Simpler and format-safer
-      than `7z -v` because `.excmp` isn't a bare `.7z`
-- [ ] G4. **Standard-format export** — a "plain .7z/.zip (compatible)" checkbox that
-      runs only the 7z stage and skips the container. Kills the lock-in objection;
-      nearly free given the existing stage
+- [x] G3. ✅ **DONE 2026-09-02** — split volumes (`excmp/volumes.py`,
+      `compress --split 100m`, and `extract` auto-joins when handed a `.001`).
+      Pure-Python chunking as planned: parts are `<archive>.001`, `.002`, …,
+      zero-padded so a lexical sort *is* the join order, capped at 999 because
+      `.1000` would sort before `.101` and silently reorder the archive. The
+      container is untouched — join first, then the ordinary reader runs — so
+      a split archive is not a second format to reason about, and the split
+      happens only **after** the D9 gate has published, because splitting an
+      unverified archive just produces several unverified files.
+      Per-part SHA-256 goes in a `.sha256` sidecar in `sha256sum` layout. It is
+      a convenience, not a correctness requirement: joining works without it,
+      and it exists so a failed transfer can name *which* part to re-fetch.
+      Verified end-to-end: 22.5 MB of executables split into 2 volumes, whole
+      archive deleted, rejoined from the parts alone — **32/32 byte-identical**.
+      **Two bugs found while building it.** (1) `part_paths` originally stopped
+      at the first gap, so a missing middle volume looked identical to a set
+      that simply ended there and we would have joined a truncated archive; it
+      now scans to the highest number present and names the hole. (2) **The G6
+      sidecar had never been checkable with `sha256sum -c`** — `write_text`
+      emits CRLF on Windows, so the trailing `
+` became part of the filename
+      and every line failed with "No such file or directory". A feature whose
+      entire purpose was that one command, shipped broken. Both sidecars now
+      pass `newline="
+"`, with a test asserting no CRLF.
+- [x] G4. ✅ **DONE 2026-09-02** — `compress --format 7z|zip` writes a plain
+      archive with no container (`engine.compress_standard`). Verified for real:
+      a `.zip` opened by Python's own `zipfile` (15 entries, `testzip()` clean)
+      and a `.7z` that `7z t` accepts, 75.22% on executables.
+      **It reuses `SevenZipStage`** rather than reimplementing anything, so the
+      output path staying last, the password redaction and the progress parsing
+      all come free; only the container type differs. That needed a real
+      `archive_type` parameter — appending `-tzip` to `extra_args` beside the
+      baked-in `-t7z` makes 7-Zip exit 7 with "Multiple instances for switch",
+      and `-mqs`/`-mf` are 7z-format concepts that make it refuse a zip outright
+      with "The parameter is incorrect", so both are now gated on the type.
+      **The honesty is the feature.** A standard archive has no ledger, so
+      nothing can re-verify it later — but it is still extracted and hashed
+      against the originals *before* publication, exactly like the `.excmp`
+      path, and nothing is written if that fails. `StandardResult.has_ledger`
+      and `.note` exist so the caller says which half of the guarantee it has
+      rather than implying both.
 - [ ] G5. **"Convert & shrink"** (zip/rar/7z/iso → `.excmp`) — extract to temp →
       analyze → pipeline → report *why* it did or didn't help. Parity feature
       elsewhere; a **signature feature** with our analyzer attached

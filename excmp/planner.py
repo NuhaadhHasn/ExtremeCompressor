@@ -129,6 +129,47 @@ def store_reason(info: FileInfo) -> str | None:
 # Archive types whose inner streams precomp can expand and thus beat "store".
 _PRECOMP_EXPANDABLE = {".zip", ".gz", ".jar", ".apk", ".docx", ".xlsx", ".pptx", ".pdf"}
 
+#: Media formats whose high entropy is **deflate output**, not real randomness
+#: (B3). These are the one exception to the "media stays stored" rule, because
+#: expanding a deflate stream is precisely what Precomp does and it
+#: reconstructs the original bytes exactly.
+#:
+#: Measured on 15 real PNGs: stored 3,522,560 bytes; `precomp -> 7z`
+#: **2,152,650**, a 38.9% saving with a byte-identical restore. For comparison
+#: `oxipng` — which the roadmap originally specified — managed 31.8% and
+#: produced **zero** byte-identical files, because it rewrites the image to a
+#: smaller encoding. That is pixel-lossless, not byte-lossless, so it cannot
+#: satisfy a SHA-256 ledger and belongs in Phase C beside the AV1 re-encoder.
+#:
+#: Kept deliberately tiny. JPEG must NOT be here: its entropy is real, and it
+#: has its own specialist on the stored route (B2/lepton).
+_DEFLATE_MEDIA = {".png"}
+
+#: How far Precomp inflates its output mid-pipeline, per data type. The
+#: generic figure is 5x (research/10 C-3), but **PNG measured ~50x** — 15 PNGs
+#: took a 3.5 MB tar to a 177 MB .pcf — because a PNG is deflate all the way
+#: down and expanding it yields raw pixels. Budgeting 5x for a PNG folder
+#: under-reserves temp by an order of magnitude, and running out of temp
+#: mid-pipeline is exactly what the preflight exists to prevent.
+_INFLATION_BY_EXT = {".png": 50}
+_INFLATION_DEFAULT = 5
+
+
+def precomp_inflation(infos: list[FileInfo]) -> int:
+    """Worst-case temp multiplier for this input, weighted by bytes.
+
+    Byte-weighted rather than worst-file, so a folder that is 1% PNG does not
+    reserve as though it were all PNG - a preflight that refuses jobs which
+    would have succeeded gets switched off, and then it protects nobody.
+    """
+    total = sum(i.size for i in infos)
+    if not total:
+        return _INFLATION_DEFAULT
+    weighted = sum(
+        i.size * _INFLATION_BY_EXT.get(i.path.suffix.lower(), _INFLATION_DEFAULT)
+        for i in infos)
+    return max(_INFLATION_DEFAULT, round(weighted / total))
+
 
 def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | None],
          shrink_media: bool = False) -> Plan:
@@ -145,8 +186,13 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
         # looks on the surface - exactly the shape of game pak files. Media
         # stays stored (its entropy is real), known non-deflate archives
         # (.rar/.7z/.zst) stay stored too.
-        if reason is not None and has_precomp and info.category not in _MEDIA:
-            if (info.zlib_stream
+        # PNG is the one media format whose entropy is deflate rather than
+        # real, so it gets the override the rest of _MEDIA is denied (B3).
+        deflate_media = info.path.suffix.lower() in _DEFLATE_MEDIA
+        if reason is not None and has_precomp and (
+                info.category not in _MEDIA or deflate_media):
+            if (deflate_media
+                    or info.zlib_stream
                     or info.category is Category.BINARY
                     or info.path.suffix.lower() in _PRECOMP_EXPANDABLE):
                 reason = None

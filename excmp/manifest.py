@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import jpeg
 from .safepath import UnsafePathError, resolve_within, safe_relpath
 
 SCHEMA_VERSION = 1
@@ -40,6 +41,18 @@ class StageRecord:
     tool_name: str
     tool_version: str
     params: dict
+    #: Bytes this stage **consumed** at compress time.
+    #:
+    #: On extraction the chain runs backwards, so this is exactly what the
+    #: stage should produce - which turns the decompression-bomb guard from a
+    #: blanket multiplier into a number we actually measured. That matters
+    #: because Precomp's legitimate inflation is wildly data-dependent: 2-5x
+    #: on installers, but ~50x on PNG, where expanding deflate yields raw
+    #: pixels. A multiplier loose enough for PNG would be no defence at all.
+    #:
+    #: ``0`` means "not recorded" - every archive written before this field
+    #: existed - and the reader falls back to the old multiplier for those.
+    input_bytes: int = 0
 
 
 @dataclass
@@ -175,8 +188,20 @@ def write_container(archive_path: Path, manifest: Manifest,
         if payload_path is not None:
             zf.write(payload_path, arcname=manifest.payload_name)
         for rel, src in stored_norm.items():
-            if "same_as" in manifest.inputs.get(rel, {}):
+            meta = manifest.inputs.get(rel, {})
+            if "same_as" in meta:
                 continue
+            if meta.get("codec") == "lepton":
+                # B2: the entry holds lepton bytes, not JPEG bytes. `pack()`
+                # has already round-tripped them, so this is a file we have
+                # restored once before writing it down.
+                packed = jpeg.pack(Path(src).read_bytes())
+                if packed is not None:
+                    zf.writestr(STORED_PREFIX + rel, packed)
+                    continue
+                # It packed during planning and refuses now. Store it raw and
+                # drop the claim rather than write an entry we cannot honour.
+                meta.pop("codec", None)
             zf.write(src, arcname=STORED_PREFIX + rel)
 
 
@@ -285,7 +310,11 @@ def extract_stored(archive_path: Path, out_dir: Path,
                 raise ContainerError(
                     f"stored entry {key!r} is not declared in the manifest ledger")
             declared = int(meta.get("size", 0))
-            if info.file_size > declared:
+            # A lepton entry is *smaller* on disk than the file it restores to,
+            # so the raw-size comparison below would be meaningless for it.
+            # The ledger's size still bounds the restored bytes, which is what
+            # the bomb defence actually cares about.
+            if meta.get("codec") != "lepton" and info.file_size > declared:
                 raise ContainerError(
                     f"stored entry {key!r} declares {info.file_size} bytes but "
                     f"the ledger says {declared}")
@@ -301,13 +330,22 @@ def extract_stored(archive_path: Path, out_dir: Path,
             target = resolve_within(out_dir, key)
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                with zf.open(info) as src, target.open("wb") as dst:
-                    got = _copy_bounded(src, dst, declared,
-                                        f"stored entry {key!r}")
-                if got != declared:
-                    raise ContainerError(
-                        f"stored entry {key!r} holds {got} bytes, the ledger "
-                        f"declares {declared}")
+                if meta.get("codec") == "lepton":
+                    restored_bytes = jpeg.unpack(zf.read(info))
+                    if len(restored_bytes) != declared:
+                        raise ContainerError(
+                            f"stored entry {key!r} restored to "
+                            f"{len(restored_bytes)} bytes, the ledger declares "
+                            f"{declared}")
+                    target.write_bytes(restored_bytes)
+                else:
+                    with zf.open(info) as src, target.open("wb") as dst:
+                        got = _copy_bounded(src, dst, declared,
+                                            f"stored entry {key!r}")
+                    if got != declared:
+                        raise ContainerError(
+                            f"stored entry {key!r} holds {got} bytes, the "
+                            f"ledger declares {declared}")
             except BaseException:
                 # Never leave a truncated file behind on refusal.
                 target.unlink(missing_ok=True)

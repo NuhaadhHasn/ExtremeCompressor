@@ -438,7 +438,8 @@ def _hash_tree(root: Path) -> dict[str, str]:
 def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
                       ctx: StageContext,
                       tools: dict[str, ToolInfo | None] | None = None,
-                      level: int = 9) -> StandardResult:
+                      level: int = 9,
+                      password: str | None = None) -> StandardResult:
     """Write a plain `.7z` or `.zip` — one anybody can open (G4).
 
     The lock-in objection is fair and this is the answer: no container, no
@@ -455,6 +456,21 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
     restore, no file appears at the destination. So this archive has been
     proven to restore once, on this machine; we simply cannot prove it again.
     """
+    if password:
+        # Refused rather than ignored, and refused rather than quietly
+        # substituting 7-Zip's own encryption.
+        #
+        # Wrapping the output in our AES-256-GCM container would make it stop
+        # being a plain .7z/.zip, which is the only reason this function
+        # exists. And 7z -p is what F1 was built to replace: its salt lines
+        # are commented out, so identical passwords give identical keys
+        # (research/19 section 1). Silently doing either would hand the user
+        # an archive whose protection is not what they think it is.
+        raise ValueError(
+            "a plain .7z/.zip cannot carry our encryption - it would stop "
+            "being readable by other tools, which is the whole point of the "
+            "format. Use the .excmp format for a password-protected archive, "
+            "or write the plain archive without one")
     fmt = str(fmt).lower()
     if fmt not in {"7z", "zip"}:
         raise ValueError(
@@ -1058,6 +1074,9 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
     out_dir.mkdir(parents=True, exist_ok=True)
     registry = _stage_factory()
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-x-", dir=ctx.temp_dir))
+    # The zone lives on the file the user actually downloaded. `archive` is
+    # rebound below when the archive is encrypted, so keep the original.
+    source_archive = archive
     try:
         # F1: an encrypted archive is decrypted into the job dir first, and
         # everything after this line is the ordinary path. Same shape as the
@@ -1111,6 +1130,12 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
         stored = extract_stored(archive, out_dir, manifest.inputs)
         restored += len(stored)
         verified = verify_restore(out_dir, manifest.inputs)
+        # F4: carry the archive's Mark of the Web onto what came out of it.
+        # After verification, never before: a file that failed its hash is not
+        # one we want to have touched, and a mark is cosmetic beside that.
+        # Never raises - see motw.propagate.
+        from .motw import propagate as _propagate_zone
+        _propagate_zone(source_archive, out_dir)
     finally:
         shutil.rmtree(job_dir, ignore_errors=True)
     return ExtractResult(out_dir=out_dir, files_restored=restored,

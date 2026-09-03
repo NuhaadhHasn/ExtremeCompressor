@@ -42,6 +42,7 @@ expensive. (PeaZip's 16-bit `PW_Ver` was a genuine oracle because it was
 
 from __future__ import annotations
 
+import hashlib
 import os
 import struct
 from pathlib import Path
@@ -54,7 +55,24 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 MAGIC = b"EXCMPENC"
-VERSION = 1
+
+#: Format 2 adds a flags byte (F2 keyfiles). Format 1 is still read: it has no
+#: flags field and therefore never needs a keyfile.
+VERSION = 2
+VERSION_NO_FLAGS = 1
+
+#: Bit 0 of the flags byte: this archive was written with a keyfile.
+#:
+#: Recorded because without it a user holding the right password and no keyfile
+#: is told "wrong password", hunts for a password that is already correct, and
+#: concludes the archive is broken. It leaks only that a keyfile exists, which
+#: an attacker learns anyway the moment their password guesses all fail.
+FLAG_KEYFILE = 0x01
+
+#: A keyfile is hashed up to this much. Somebody will eventually point this at
+#: a 40 GB video; a bounded prefix is still a perfectly good factor and does
+#: not take the machine with it. PeaZip caps at the same 100 MiB.
+MAX_KEYFILE_BYTES = 100 << 20
 
 SALT_BYTES = 16
 CHECK_BYTES = 16
@@ -88,7 +106,8 @@ _MAX_MEMORY_KIB = 1 << 20      # 1 GiB
 _MAX_TIME_COST = 20
 _MAX_PARALLELISM = 16
 
-_HEADER = struct.Struct(f"<{len(MAGIC)}sB{SALT_BYTES}sIIBI{CHECK_BYTES}s")
+_HEADER_V1 = struct.Struct(f"<{len(MAGIC)}sB{SALT_BYTES}sIIBI{CHECK_BYTES}s")
+_HEADER = struct.Struct(f"<{len(MAGIC)}sB{SALT_BYTES}sIIBIB{CHECK_BYTES}s")
 
 
 class Argon2Params(NamedTuple):
@@ -123,6 +142,15 @@ class CorruptArchiveError(CryptoError):
     """The password was right (or unreadable) and the bytes are damaged."""
 
 
+class KeyfileRequired(CryptoError):
+    """This archive was written with a keyfile and none was supplied.
+
+    Deliberately *not* WrongPasswordError: the password may be perfectly
+    correct, and sending someone to re-check it would waste their time and end
+    with them believing the archive is broken.
+    """
+
+
 def _derive(password: str, salt: bytes, m_kib: int, t: int, p: int) -> bytes:
     return hash_secret_raw(
         secret=password.encode("utf-8"),
@@ -133,6 +161,44 @@ def _derive(password: str, salt: bytes, m_kib: int, t: int, p: int) -> bytes:
         hash_len=32,                 # AES-256
         type=Type.ID,                # Argon2id
     )
+
+
+def keyfile_digest(path: Path) -> bytes:
+    """SHA-256 over (a bounded prefix of) the keyfile.
+
+    Streamed rather than read whole, and capped at :data:`MAX_KEYFILE_BYTES`.
+    An empty file is refused: it would contribute nothing while letting the
+    archive claim two factors.
+    """
+    digest = hashlib.sha256()
+    seen = 0
+    with Path(path).open("rb") as fh:
+        while seen < MAX_KEYFILE_BYTES:
+            block = fh.read(min(1 << 20, MAX_KEYFILE_BYTES - seen))
+            if not block:
+                break
+            digest.update(block)
+            seen += len(block)
+    if not seen:
+        raise ValueError(
+            f"{Path(path).name} is empty - an empty keyfile adds no second "
+            f"factor, so it is refused rather than silently ignored")
+    return digest.digest()
+
+
+def _mix(argon_key: bytes, keyfile_hash: bytes | None) -> bytes:
+    """Fold the keyfile into the Argon2id output.
+
+    HKDF *mixes*; it does not slow anything down, and that is exactly why the
+    keyfile goes here rather than into the KDF's own inputs. Argon2id has
+    already run on the password and is still the expensive step, so an
+    attacker who steals the keyfile is not handed a cheap password guess -
+    which is the flaw in PeaZip's prepend-the-hash approach (research/17 §1).
+    """
+    if keyfile_hash is None:
+        return argon_key
+    return HKDF(algorithm=hashes.SHA256(), length=32,
+                salt=keyfile_hash, info=b"excmp-keyfile-v2").derive(argon_key)
 
 
 def _check_value(key: bytes) -> bytes:
@@ -156,15 +222,25 @@ def is_encrypted(path: Path) -> bool:
 
 
 def encrypt_file(src: Path, dst: Path, password: str,
-                 params: Argon2Params = DEFAULT_PARAMS) -> Path:
-    """Encrypt ``src`` to ``dst``. The source is left untouched."""
+                 params: Argon2Params = DEFAULT_PARAMS,
+                 keyfile: Path | None = None) -> Path:
+    """Encrypt ``src`` to ``dst``. The source is left untouched.
+
+    ``keyfile`` adds a second factor (F2). Either factor may be empty but not
+    both — an archive protected by nothing is not an outcome anyone asked for.
+    """
     src, dst = Path(src), Path(dst)
+    keyfile_hash = keyfile_digest(keyfile) if keyfile is not None else None
+    if not password and keyfile_hash is None:
+        raise ValueError(
+            "an encrypted archive needs a password, a keyfile, or both")
     salt = os.urandom(SALT_BYTES)
-    key = _derive(password, salt, params.memory_kib, params.time_cost,
-                  params.parallelism)
+    key = _mix(_derive(password, salt, params.memory_kib, params.time_cost,
+                       params.parallelism), keyfile_hash)
+    flags = FLAG_KEYFILE if keyfile_hash is not None else 0
     header = _HEADER.pack(MAGIC, VERSION, salt, params.memory_kib,
                           params.time_cost, params.parallelism, CHUNK_SIZE,
-                          _check_value(key))
+                          flags, _check_value(key))
     aead = AESGCM(key)
 
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +263,20 @@ def encrypt_file(src: Path, dst: Path, password: str,
     return dst
 
 
-def decrypt_file(src: Path, dst: Path, password: str) -> Path:
+def needs_keyfile(src: Path) -> bool:
+    """Does this archive declare a keyfile? False for anything unreadable."""
+    try:
+        raw = Path(src).read_bytes()[:_HEADER.size]
+        magic, version = _HEADER.unpack(raw)[:2] if len(raw) >= _HEADER.size             else (None, None)
+    except (OSError, struct.error):
+        return False
+    if magic != MAGIC or version != VERSION:
+        return False
+    return bool(_HEADER.unpack(raw)[7] & FLAG_KEYFILE)
+
+
+def decrypt_file(src: Path, dst: Path, password: str,
+                 keyfile: Path | None = None) -> Path:
     """Decrypt ``src`` to ``dst``.
 
     Raises :class:`WrongPasswordError` or :class:`CorruptArchiveError` — never
@@ -196,18 +285,44 @@ def decrypt_file(src: Path, dst: Path, password: str) -> Path:
     is left at ``dst`` on failure.
     """
     src, dst = Path(src), Path(dst)
-    raw_header = src.read_bytes()[:_HEADER.size] if src.exists() else b""
-    if len(raw_header) < _HEADER.size:
+    # Read enough for the larger of the two header layouts, then dispatch on
+    # the version byte - format 1 has no flags field and so is shorter.
+    with src.open("rb") as fh:
+        probe = fh.read(_HEADER.size)
+    if len(probe) < _HEADER_V1.size:
         raise CorruptArchiveError(
             f"{src.name} is too short to be an encrypted archive")
-    magic, version, salt, m_kib, t, p, chunk_size, check = _HEADER.unpack(raw_header)
-    if magic != MAGIC:
+    if probe[:len(MAGIC)] != MAGIC:
         raise CorruptArchiveError(
             f"{src.name} is not an encrypted ExtremeCompressor archive")
-    if version != VERSION:
+    version = probe[len(MAGIC)]
+    if version == VERSION_NO_FLAGS:
+        layout, flags = _HEADER_V1, 0
+        (_magic, _v, salt, m_kib, t, p, chunk_size,
+         check) = layout.unpack(probe[:layout.size])
+    elif version == VERSION:
+        layout = _HEADER
+        if len(probe) < layout.size:
+            raise CorruptArchiveError(
+                f"{src.name} is too short to be an encrypted archive")
+        (_magic, _v, salt, m_kib, t, p, chunk_size, flags,
+         check) = layout.unpack(probe[:layout.size])
+    else:
         raise CorruptArchiveError(
             f"{src.name} was written by a newer version (format {version}); "
-            f"this build understands format {VERSION}")
+            f"this build understands formats {VERSION_NO_FLAGS}-{VERSION}")
+    raw_header = probe[:layout.size]
+
+    # Say which factor is missing rather than blaming the password for it.
+    wants_keyfile = bool(flags & FLAG_KEYFILE)
+    if wants_keyfile and keyfile is None:
+        raise KeyfileRequired(
+            f"{src.name} was created with a keyfile; supply the same file "
+            f"as well as the password")
+    if keyfile is not None and not wants_keyfile:
+        raise CorruptArchiveError(
+            f"{src.name} was not created with a keyfile - supplying one would "
+            f"derive the wrong key")
     if not (0 < chunk_size <= (64 << 20)):
         raise CorruptArchiveError(f"{src.name} declares an implausible chunk size")
     # The KDF parameters come out of the file, so they are attacker-controlled
@@ -232,7 +347,8 @@ def decrypt_file(src: Path, dst: Path, password: str) -> Path:
         raise CorruptArchiveError(
             f"{src.name} asks for {p} KDF lanes (limit {_MAX_PARALLELISM})")
 
-    key = _derive(password, salt, m_kib, t, p)
+    keyfile_hash = keyfile_digest(keyfile) if keyfile is not None else None
+    key = _mix(_derive(password, salt, m_kib, t, p), keyfile_hash)
     if _check_value(key) != check:
         # Checked before touching the ciphertext, so this answer never depends
         # on whether the body happens to be damaged as well.
@@ -243,7 +359,7 @@ def decrypt_file(src: Path, dst: Path, password: str) -> Path:
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
         with src.open("rb") as fin, dst.open("wb") as fout:
-            fin.seek(_HEADER.size)
+            fin.seek(layout.size)
             index = 0
             block = fin.read(stride)
             if not block:

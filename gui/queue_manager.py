@@ -242,9 +242,12 @@ class CompressWorker(_EngineWorker):
                 # G4: a plain .7z/.zip has no container and no ledger, so it
                 # takes a different engine entry point. It is still extracted
                 # and hashed before publication.
+                # The password goes through so the engine can REFUSE the
+                # combination. Omitting it here is how this silently wrote an
+                # unencrypted archive to a user who had typed one in.
                 std = engine.compress_standard(
                     self.inputs, self.out_path, self.archive_format, self.ctx,
-                    self.tools)
+                    self.tools, password=self.password)
                 self._note(std.note)
                 result = engine.CompressResult(
                     archive=std.archive, orig_bytes=std.orig_bytes,

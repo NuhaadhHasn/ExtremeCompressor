@@ -48,11 +48,58 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _post_publish(args, archive, payload: dict, ctx: StageContext) -> None:
+    """Recovery records and volume splitting, for any output format.
+
+    Both act on the finished file, so they are format-agnostic and belong in
+    one place. They run only after publication - which means only after the
+    archive has been verified - because protecting or splitting an unverified
+    archive just produces several unverified files.
+    """
+    if getattr(args, "recovery", None) is not None:
+        from .recovery import available as par2_available, create, default_percent
+        if not par2_available():
+            payload["recovery_warning"] = ("par2 is not installed, so no "
+                                           "recovery records were written")
+        else:
+            pct = (default_percent(archive.stat().st_size)
+                   if args.recovery == -1 else args.recovery)
+            made = create(archive, pct, ctx)
+            payload["recovery"] = [str(m) for m in made]
+            payload["recovery_percent"] = pct
+            payload["recovery_bytes"] = sum(m.stat().st_size for m in made)
+
+    if getattr(args, "split", None):
+        from .volumes import parse_size, split_file, write_parts_sidecar
+        parts = split_file(archive, parse_size(args.split))
+        write_parts_sidecar(parts)
+        payload["volumes"] = [str(p) for p in parts]
+
+
+def _report_post_publish(args, payload: dict) -> None:
+    if payload.get("recovery_warning"):
+        print("warning: " + payload["recovery_warning"])
+    if payload.get("recovery"):
+        print("wrote %d recovery file(s) at %d%% (+%s); repair with "
+              "`excmp repair %s`"
+              % (len(payload["recovery"]), payload["recovery_percent"],
+                 _fmt_size(payload["recovery_bytes"]),
+                 Path(payload["archive"]).name))
+    if payload.get("volumes"):
+        names = [Path(v).name for v in payload["volumes"]]
+        print(f"split into {len(names)} volumes: {names[0]} .. {names[-1]}")
+        print(f"extract with: excmp extract {names[0]}")
+
+
 def cmd_compress(args: argparse.Namespace) -> int:
     from . import engine  # deferred: keeps analyze fast
     ctx = StageContext(temp_dir=Path(args.temp))
 
     if getattr(args, "format", "excmp") != "excmp":
+        # Note this does NOT return - the post-publication steps below
+        # (recovery records, splitting) are format-agnostic: they operate on
+        # the finished file. Returning here silently ignored --recovery and
+        # --split for every plain archive.
         return _compress_standard(args, engine, ctx)
 
     def show(stage: str, pct: float) -> None:
@@ -87,39 +134,12 @@ def cmd_compress(args: argparse.Namespace) -> int:
     # G3: split only after compress() has published, which means only after
     # the D9 gate has restored and hashed the whole archive. Splitting an
     # unverified archive would just produce several unverified files.
-    # F3: after publication, so the records describe the archive that shipped
-    # rather than the .tmp twin that existed a moment earlier - the same
-    # reasoning as the .sha256 sidecar.
-    if getattr(args, "recovery", None) is not None:
-        from .recovery import available as par2_available, create, default_percent
-        if not par2_available():
-            print("warning: par2 is not installed, so no recovery records "
-                  "were written")
-        else:
-            pct = (default_percent(result.archive.stat().st_size)
-                   if args.recovery == -1 else args.recovery)
-            made = create(result.archive, pct, ctx)
-            payload["recovery"] = [str(m) for m in made]
-            if not args.json:
-                extra = sum(m.stat().st_size for m in made)
-                print(f"wrote {len(made)} recovery file(s) at {pct}% "
-                      f"(+{_fmt_size(extra)}); repair with "
-                      f"`excmp repair {result.archive.name}`")
-
-    parts: list[Path] = []
-    if getattr(args, "split", None):
-        from .volumes import parse_size, split_file, write_parts_sidecar
-        parts = split_file(result.archive, parse_size(args.split))
-        write_parts_sidecar(parts)
-        payload["volumes"] = [str(p) for p in parts]
+    _post_publish(args, result.archive, payload, ctx)
 
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        if parts:
-            print(f"split into {len(parts)} volumes: {parts[0].name} .. "
-                  f"{parts[-1].name}")
-            print(f"extract with: excmp extract {parts[0].name}")
+        _report_post_publish(args, payload)
         print(f"done: {_fmt_size(result.orig_bytes)} -> {_fmt_size(result.final_bytes)} "
               f"({payload['saved_percent']}% saved) in {payload['elapsed_s']}s")
         for r in result.routes:
@@ -156,6 +176,11 @@ def _compress_standard(args, engine, ctx: StageContext) -> int:
         "has_ledger": result.has_ledger,
         "note": result.note,
     }
+    # Format-agnostic post-publication steps. These act on the finished file,
+    # so a plain .7z/.zip gets them exactly as an .excmp does; an earlier
+    # version returned before this point and silently ignored both flags.
+    _post_publish(args, result.archive, payload, ctx)
+
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
@@ -164,6 +189,7 @@ def _compress_standard(args, engine, ctx: StageContext) -> int:
               f"({payload['saved_percent']}% saved) in {payload['elapsed_s']}s")
         print(f"verified {result.verified} file(s) by extracting and hashing")
         print(f"note: {result.note}")
+        _report_post_publish(args, payload)
     return 0
 
 
@@ -253,6 +279,44 @@ def _new_password(args: argparse.Namespace) -> str | None:
     if getpass.getpass("Type it again: ") != first:
         raise ValueError("the two passwords did not match - nothing was written")
     return first
+
+
+def cmd_convert(args: argparse.Namespace) -> int:
+    """G5: take somebody else's archive and make it smaller, honestly."""
+    from .convert import convert_archive
+
+    ctx = StageContext(temp_dir=Path(args.temp))
+
+    def show(stage: str, pct: float) -> None:
+        if not args.json:
+            print("\r  [%s] %5.1f%%" % (stage, pct), end="", flush=True)
+
+    ctx.progress_cb = show
+    result = convert_archive(Path(args.archive), Path(args.output),
+                             Profile(args.profile), ctx,
+                             password=_ask_password(args))
+    if not args.json:
+        print()
+    payload = {
+        "source": str(result.source),
+        "archive": str(result.archive),
+        "source_bytes": result.source_bytes,
+        "archive_bytes": result.archive_bytes,
+        "files": result.files,
+        "improved": result.improved,
+        "verdict": result.verdict,
+        "reasons": result.reasons,
+        "elapsed_s": round(result.elapsed_s, 1),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(result.verdict)
+        for reason in result.reasons:
+            print(f"  {reason}")
+        if not result.improved:
+            print("the original is still there - nothing was deleted")
+    return 0
 
 
 def cmd_repair(args: argparse.Namespace) -> int:
@@ -475,6 +539,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also write <archive>.sha256 so a recipient can check "
                          "the transfer with sha256sum -c")
     pc.set_defaults(func=cmd_compress)
+
+    pv = sub.add_parser("convert", help="repack any archive 7-Zip can open as "
+                                       "an .excmp, and say whether it helped")
+    pv.add_argument("archive")
+    pv.add_argument("-o", "--output", required=True)
+    pv.add_argument("-p", "--profile", default="normal",
+                    choices=[pr_.value for pr_ in Profile])
+    pv.add_argument("--temp", default=default_tmp)
+    pv.add_argument("--json", action="store_true")
+    pv.add_argument("--password", action="store_true",
+                    help="prompt for the SOURCE archive's password")
+    pv.set_defaults(func=cmd_convert)
 
     pr = sub.add_parser("repair", help="rebuild a damaged archive from its "
                                       "PAR2 recovery records (F3)")

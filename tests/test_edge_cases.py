@@ -29,6 +29,7 @@ import pytest
 from excmp.engine import compress, extract
 from excmp.planner import Profile
 from excmp.stages.base import StageContext
+from restored import assert_all_present, hash_tree
 
 
 def _roundtrip(tmp_path: Path, src: Path) -> dict[str, str]:
@@ -49,11 +50,13 @@ def _expected(src: Path) -> dict[str, str]:
 
 def _assert_survives(tmp_path: Path, src: Path) -> None:
     want = _expected(src)
-    got = _roundtrip(tmp_path, src)
-    for rel, digest in want.items():
-        match = [v for k, v in got.items() if k.endswith(rel)]
-        assert match, f"{rel!r} did not come back. Got: {sorted(got)}"
-        assert match[0] == digest, f"{rel!r} came back with different bytes"
+    archive = tmp_path / "a.excmp"
+    ctx = StageContext(temp_dir=tmp_path / "t", threads=2)
+    compress([src], archive, Profile.FAST, ctx)
+    out = tmp_path / "out"
+    extract(archive, out, StageContext(temp_dir=tmp_path / "xt", threads=2))
+    # Exact names - see tests/restored.py for why a suffix match is wrong.
+    assert_all_present(out, want)
 
 
 # ---------------------------------------------------------------------------

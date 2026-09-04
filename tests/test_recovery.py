@@ -37,6 +37,7 @@ import pytest
 from excmp.recovery import (RecoveryStatus, available, create, default_percent,
                             recovery_files, repair, verify)
 from excmp.stages.base import StageContext
+from restored import assert_all_present, hash_tree
 
 needs_par2 = pytest.mark.skipif(not available(), reason="par2 not installed")
 
@@ -226,9 +227,5 @@ def test_a_real_excmp_survives_damage_and_still_restores(tmp_path):
 
     out = tmp_path / "out"
     extract(archive, out, StageContext(temp_dir=tmp_path / "xt", threads=2))
-    got = {p.relative_to(out).as_posix():
-           hashlib.sha256(p.read_bytes()).hexdigest()
-           for p in out.rglob("*") if p.is_file()}
-    for rel, digest in want.items():
-        match = [v for k, v in got.items() if k.endswith(rel)]
-        assert match and match[0] == digest, f"{rel} did not survive the repair"
+    # Exact names - see tests/restored.py for why a suffix match is wrong.
+    assert_all_present(out, want)

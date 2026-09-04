@@ -3,12 +3,18 @@
 Two unrelated-looking facts share this file because both are about the gap
 between *what is installed* and *what we will actually do with it*.
 
-**The floor.** E1 wants a minimum version per tool, not just a pinned hash:
-7-Zip below **24.09** carries CVE-2025-0411, a Mark-of-the-Web bypass. We do
-not depend on 7-Zip's own sanitizer — `excmp/safepath.py` validates every
-archive-supplied name ourselves — so this is not an exploit path *for us*.
-It is still the wrong binary to be feeding untrusted archives to, and a user
-running it deserves to be told rather than to find out from a CVE feed.
+**The floor.** E1 wants a minimum version per tool, not just a pinned hash.
+It sits at **7-Zip 26.02**, for **CVE-2026-14266** (CVSS 7.0): a heap buffer
+overflow in the XZ decoder that a crafted `.xz` turns into code execution in
+whatever process is extracting. Present from 21.07 through 26.01 — five years
+— and fixed in 26.02.
+
+That is a genuine exploit path *for us*, which the previous floor was not. It
+sat at 24.09 for CVE-2025-0411, a Mark-of-the-Web bypass that `excmp/safepath`
+and our own MotW propagation already covered — so the floor was both too low
+and pointed at the wrong risk. `safepath` guards against hostile *names*; it
+can do nothing about memory corruption inside 7-Zip mid-decompression, and the
+Extract tab hands it arbitrary user archives by design.
 
 **The legacy tool.** B11 removed SREP from every compression chain (not
 OSI-licensed, and `srep64.exe` once failed its own decompression checksum on
@@ -75,7 +81,7 @@ def test_versions_compare_as_numbers_not_as_text():
     strings, so a lexical comparison clears the floor for a 2010 binary —
     exactly the one the floor is meant to catch."""
     assert parse_tool_version("7-Zip 9.20 Copyright") < SECURITY_FLOOR["7z"]
-    assert parse_tool_version("7-Zip 24.09 Copyright") >= SECURITY_FLOOR["7z"]
+    assert parse_tool_version("7-Zip 26.02 Copyright") >= SECURITY_FLOOR["7z"]
     assert parse_tool_version("7-Zip 24.07 Copyright") < SECURITY_FLOOR["7z"]
 
 
@@ -91,7 +97,7 @@ def test_below_floor_names_what_was_found_and_what_is_needed():
     (name, found, needed), = below_floor(old)
     assert name == "7z"
     assert "24.07" in found
-    assert "24.09" in needed
+    assert "26.02" in needed
 
 
 def test_a_current_tool_is_not_reported():
@@ -203,8 +209,8 @@ def test_a_stale_tool_is_named_with_its_two_versions_and_the_reason(qtbot):
                       Path(tempfile.gettempdir()))
     qtbot.addWidget(tab)
     text = tab.tools_text()
-    assert "24.07" in text and "24.09" in text
-    assert "CVE-2025-0411" in text
+    assert "24.07" in text and "26.02" in text
+    assert "CVE-2026-14266" in text
 
 
 def test_a_current_tool_gets_no_scolding(qtbot):
@@ -216,3 +222,29 @@ def test_a_current_tool_gets_no_scolding(qtbot):
                       Path(tempfile.gettempdir()))
     qtbot.addWidget(tab)
     assert "update it" not in tab.tools_text().lower()
+
+
+def test_the_floor_covers_the_xz_decoder_overflow():
+    """CVE-2026-14266 (CVSS 7.0): a crafted .xz turns a heap overflow in
+    7-Zip's XZ decoder into code execution. Present 21.07 through 26.01, fixed
+    in 26.02.
+
+    Unlike the Mark-of-the-Web bypass the floor previously named, this one **is**
+    an exploit path for us: `safepath` guards against hostile *names* and can do
+    nothing about memory corruption inside 7-Zip while it decompresses - and the
+    Extract tab hands it arbitrary user archives by design.
+    """
+    from excmp.tools import ToolInfo
+
+    assert SECURITY_FLOOR["7z"] >= (26, 2)
+    for vulnerable in ("21.07", "24.09", "25.00", "26.01"):
+        tools = {"7z": ToolInfo("7z", "x", f"7-Zip {vulnerable} (x64) : Copyright")}
+        assert below_floor(tools), f"{vulnerable} was not flagged"
+    ok = {"7z": ToolInfo("7z", "x", "7-Zip 26.02 (x64) : Copyright")}
+    assert not below_floor(ok)
+
+
+def test_the_reason_names_the_cve_the_floor_is_actually_for():
+    from excmp.tools import floor_reason
+
+    assert "2026-14266" in floor_reason("7z")

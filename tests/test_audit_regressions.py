@@ -138,6 +138,7 @@ def test_an_encrypted_archive_extracts_through_the_shipped_entry_point(tmp_path)
         match = [p for p in out.rglob("*") if p.is_file() and p.name == name]
         assert match, f"{name} did not come back"
         assert hashlib.sha256(match[0].read_bytes()).hexdigest() == digest
+        assert len(match) == 1, f"{name} came back more than once"
 
 
 @needs_7z
@@ -285,6 +286,7 @@ def test_two_identical_packable_jpegs_do_not_break_compression(tmp_path):
         match = [p for p in out.rglob("*") if p.is_file() and p.name == name]
         assert match, f"{name} did not come back"
         assert hashlib.sha256(match[0].read_bytes()).hexdigest() == digest
+        assert len(match) == 1, f"{name} came back more than once"
 
 
 def test_the_plaintext_container_never_appears_beside_the_output(tmp_path):

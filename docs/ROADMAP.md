@@ -109,6 +109,93 @@ OSI rule comes back before anything ships.
 
 ---
 
+## 🔴 2026-09-04 — four confirmed defects, every one reproduced on this machine
+
+Found by an adversarial tool-landscape survey, then **reproduced by hand
+before being believed**. None of these is a hypothesis; each line below is a
+measurement taken on this laptop against the real corpora. They are listed
+before every remaining feature because three of them affect data the user
+already has.
+
+### K1. A real folder cannot be archived at all ⛔ **do this first**
+
+`MAX_MANIFEST_BYTES = 8 << 20` (`excmp/manifest.py:27`). Measured against the
+live tree:
+
+| folder | files | manifest | outcome |
+|---|---:|---:|---|
+| `5React, ReactNative` | **57,020** | **~29 MiB** | ⛔ **refused** |
+| `7Python` | 12,701 | 5.4 MiB | ok |
+| `Mosh Hamedani - All Courses Pack` | 2,272 | 1.1 MiB | ok |
+
+**1 of the 21 tutorial folders is un-archivable today**, and `node_modules` is
+exactly the shape that does it. Worse, the refusal lands *after* the whole job
+has run: `_verify_before_publish` → `verify_archive` → `_read_manifest`, where
+the cap is checked. The user waits through a full compress and then loses it.
+Three things inflate the manifest and all three are avoidable: `routes[].files`
+duplicates every relative path, `store_reasons` stores a whole English sentence
+per file, and the container is written `ZIP_STORED` so the JSON costs its full
+uncompressed size. Needs `SCHEMA_VERSION = 2` and a pre-check *before* the work
+starts, not after.
+
+### K2. Stored files come back dated today
+
+Reproduced: two files given an mtime of 2023-07-31, compressed, restored.
+
+```
+text.txt  (pipeline route)  ->  2023-07-31   ✅ tar carries mtime
+rand.bin  (store route)     ->  2026-09-04   ❌ today
+```
+
+The two routes disagree. `write_container` uses `zf.write`, which keeps a
+zip timestamp the reader never applies. **Empty directories are lost
+entirely** (`emptydir` did not come back). The bytes *are* identical, so the
+lossless claim holds literally — but restore a photo archive and every file is
+dated today, which breaks sort-by-date and looks like data loss to anyone who
+did not read the fine print.
+
+### K3. One locked file kills the whole job
+
+Reproduced with `CreateFileW(dwShareMode=0)`, the way Outlook and Excel hold a
+file open. Six files, one locked:
+
+```
+>>> PermissionError: [Errno 13] Permission denied
+>>> the five readable files were NOT archived
+```
+
+Every other archiver skips it, carries on, and reports it at the end. This
+fails the whole job and writes nothing.
+
+### K4. zstd's window is costing 50% on this corpus 🎁 **free win**
+
+Measured here, three runs, bit-identical, round-trip verified both ways —
+300 MiB whose duplicate half sits 150 MiB away:
+
+| `window_log` | output | time |
+|---|---:|---:|
+| 27 (today) | 314,580,010 | 114.6 s |
+| **31** | **157,699,992** | **53.5 s** |
+
+**Half the size and 2.1× faster**, because there is half as much left to
+entropy-code. Peak working set *fell* (1,707 → 1,644 MiB). The Programs corpus
+averages ~143 MB per installer, so any runtime shared between two of them is
+guaranteed to sit beyond the current 128 MiB window and is invisible today.
+
+⚠️ **Not a one-line change.** `ZstdStage.extract` hardcodes
+`max_window_size = 1 << self.long_log`, so raising only the compress default
+produces archives that an older build cannot read. Raise the **decompress**
+cap first and unconditionally (it is a ceiling; existing 27-window archives
+still read), then raise the compress default separately. Then both directions
+interoperate.
+
+- [ ] K1. Manifest schema v2 + a pre-flight cap check **(do first — blocks real data)**
+- [ ] K2. Preserve mtimes on the store route; restore empty directories
+- [ ] K3. Skip an unreadable file, record it, finish the job, report at the end
+- [ ] K4. zstd `window_log` 27→31, decompress cap first
+
+---
+
 ## Phase D0 — Security hotfix ✅ DONE (2026-07-31, D0.1-D0.5)
 
 Research on 2026-07-31 audited our own code and found an **exploitable
@@ -922,9 +1009,21 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       (unblocks every user whose tools aren't in `C:\Program Files`), remembered preset
 - [ ] I2. **Archive browser tab** (pairs with G2) — also a trust feature: it makes the
       SHA-256 ledger visible
-- [ ] I3. Queue upgrades: Up/Down reorder + "Run next" + **persisted History tab**
-      with "Compress again" (today `clear_finished()` deletes history forever)
-- [ ] I4. First-run onboarding card: what was found, what each missing tool unlocks,
+- [x] I3. ✅ **DONE 2026-09-03** — persisted history + queue reordering.
+      `clear_finished()` used to delete the record forever; finished jobs now
+      move to `gui/history.py` (bounded JSON, newest first) and "Compress
+      again" re-queues with the *settings*, not only the paths. Failed jobs are
+      kept with their reason — a history that drops the failures flatters the
+      tool. **No secret is ever written**: `HistoryEntry` has no field for a
+      password, which is the only reliable way to be sure. Queue gained
+      `order()` / `move_job()` / `run_next()`.
+      **One correction the implementation forced:** it began as a fifth tab,
+      and the fit test's own docstring stopped that — "four destinations is
+      exactly WinUI's ceiling for top navigation, which is why the tab bar was
+      chosen over a nav rail". History lives *inside* Activity behind a
+      disclosure instead, and the ceiling holds.
+- [x] I4. ✅ **ALREADY DONE** (wave 3c, `_maybe_first_run` on the W2-9 Banner) — verified 2026-09-03, not re-implemented. Original item:
+- [ ] ~~I4.~~ First-run onboarding card: what was found, what each missing tool unlocks,
       links to downloads. Upgrades to one-click when E1 lands — don't block on it
 - [ ] I5. Explorer context menu, Win10 path: HKCU registry verbs (no admin) + argv
       intake in `gui/app.py`. Win11 top-level cascade needs signed sparse MSIX →
@@ -947,111 +1046,23 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       combo ("takes effect after restart"). Every string is already in `self.tr()` and
       the loader already exists — this is the cheapest remaining step. Unlocks
       Dhivehi/Sinhala/Tamil
-- [ ] I8. Input treemap "What's inside?" via `squarify` (Apache-2.0, pure Python) +
-      labeled legend (never color-only). Zero engine changes; great README material
-- [ ] I9. Fix the one design-rule violation: `closeEvent`'s modal `QMessageBox` →
+- [x] I8. ✅ **DONE 2026-09-03** — `gui/widgets/treemap.py` via squarify
+      (Apache-2.0). Behind the same disclosure as the breakdown bar, which it
+      complements rather than replaces: a bar 2% wide is invisible whatever it
+      is labelled. Never colour alone — every block is labelled where it fits,
+      the legend returns **selectable text** (category, share, size) rather
+      than being painted, and the whole thing is available as one sentence for
+      a screen reader. Slivers below 2% collapse into an honest "other".
+- [x] I9. ✅ **ALREADY DONE** (wave 2a) — verified 2026-09-03: `grep -c 'QMessageBox('` over `gui/` returns zero constructions, and a test parses the AST to keep it that way. Original item:
+- [ ] ~~I9.~~ Fix the one design-rule violation: `closeEvent`'s modal `QMessageBox` →
       inline confirm banner
-- [ ] I10. Nice-to-have: command palette (Ctrl+K) + **settings search from a single
-      action registry** — PeaZip's F12 picker and Options search field are both
-      fed by one caption→action dispatcher ([17 §6](research/17-source-study-peazip.md)),
-      so build `ActionSpec{id, title, callback, context}` once and feed both a
-      `QSortFilterProxy` palette and the settings search. Drag-out extract
-      (`stored/` entries only), jump list (raw COM `ICustomDestinationList`; Qt 6
-      removed `QWinJumpList`)
-
-## Phase J — Smart Advisor: recommend + preview + estimates 🟡 J1-J4 + J8 DONE (2026-08-01)
-
-The user's ask: *"add a recommend option so the user can just pick the
-recommended one, and a preview before compression with estimated time and
-estimated size."* Scope agreed 2026-08-01: **estimates + the extra smart
-features** (J1-J8), ~2 sessions.
-
-**Start by reading what already exists** — this is an extension, not a new build:
-`gui/suggest.py` already has `recommend_profile()` (returns profile + the reason
-string shown on the card), `summarize()`, `headline()`, `gain_note()`,
-`store_explanations()` and `strongest_profile()`, all Qt-free and unit-tested in
-`tests/test_gui_suggest.py`. **Do not rewrite them.** The genuinely missing
-pieces are *estimated output size*, *estimated time*, and surfacing all profiles
-side by side.
-
-**Why this matters, measured not guessed**
-([benchmarks/2026-08-01](benchmarks/2026-08-01-real-programs-folder.md)): on a real
-721 MB installer corpus, Extreme cost **2.7× the time of Normal (166s vs 62s) for
-0.17 extra percentage points**. Today nothing tells the user that until after they
-have waited. That single fact is the feature's whole justification — so the
-comparison view must make a bad trade *visible before it is paid for*.
-
-**Shipped 2026-08-01 (J1-J4, J8; J5-J7 remain):** `excmp/estimate.py` (Qt-free,
-injectable `Rates`), `analyzer.sample_stats()` measuring compressibility in the
-read pass that already samples for entropy, `gui/suggest.profile_comparison()` +
-`recommend_with_estimates()`, `gui/widgets/compare_table.py`, a compression-side
-free-disk preflight, and `tools/estimate_report.py`. **290 tests pass** (was 223).
-Full scoring: [benchmarks/2026-08-01-estimator-backtest.md](benchmarks/2026-08-01-estimator-backtest.md).
-
-Nine things the implementation corrected against the plan below — the first four
-change how the feature works, and none of them were guessable from the desk:
-
-1. **The handoff's Extreme rate was wrong.** It divided Extreme's *time* by
-   Normal's *bytes*. With Precomp installed, Extreme's override moves the `.zip`
-   and `.msi` into the pipeline, so it pipes **431.7 MB, not 148.3 MB**. Corrected,
-   Extreme's throughput is **2.642 MB/s — the same as Normal's 2.616**. Extreme was
-   never slower per byte here; its extra 104 s is entirely 283 MB of extra routing.
-2. **Estimate from the *worst* sample, not the mean.** The analyzer already reads
-   head/middle/tail; an installer is a compressible stub in front of an
-   incompressible payload, so the mean over-promises. Predicting from the mean
-   needed a 1.28x fudge that disagreed between profiles; predicting from the worst
-   sample needs 0.947, stable. Out-of-sample size error then came in at **+0.07%
-   and −0.60%** on the zstd and 7-Zip chains.
-3. **Sampling cannot predict Precomp, and this is a limitation, not a bug.** Two
-   installers with near-identical probe readings (entropy 7.78 / 7.52, worst ratio
-   1.00 / 0.96): Precomp found nothing in one and a further ~33 points in the
-   other. So for Precomp chains `expected` is a **conservative ceiling** that
-   assumes Precomp fails (`SizeEstimate.upper_bound`; the UI prints "≤ 142.6 MB"
-   and "8% or better"), and `low` reaches to 0.30 so the range still contains the
-   case where it works. Before that fix, a measured 95.7 MB fell *outside* the
-   predicted range.
-4. **A conditional flag must not demote the recommendation.** The estimate-aware
-   override originally overruled the routing heuristic outright. Measured, that was
-   right on the 721 MB corpus and badly wrong on a 163 MB one, where it demoted
-   Extreme, which then delivered **41.4% against Normal's 7.3%** — a 34-point cost
-   to save two minutes. Now: overrule only on an *unconditional* flag; otherwise
-   keep the recommendation and put the condition on the row ("if Precomp cannot
-   open these streams…"). J3 asked for a bad trade to be *visible* before it is
-   paid for, not silently avoided on evidence labelled unknown.
-5. **Rates are keyed on the resolved chain, not the profile name** — so an Extreme
-   that degrades to zstd for want of Precomp predicts what it will actually run
-   instead of promising the absent tool's ratio.
-6. **The Precomp chain has two throughput regimes** (2.642 MB/s no-op, 0.842 MB/s
-   working — 3.1x), selected by the same unknown as #3. No single rate fits both
-   inside J8's ±40%, so that gate is **±80% for Precomp chains**, documented rather
-   than quietly widened. Range containment is asserted unconditionally.
-7. **ZstdStage's level 19 is not the handicap it looked like.** A 16 MB corpus
-   suggested Fast was 2x slower than Normal; measuring 139 MB put zstd at 3.63 MB/s
-   against 7-Zip's 4.03 — within 11%. The earlier inference was a small-sample
-   artifact.
-8. **No cache was added, against J1's instruction, because nothing needed one.**
-   The ratio is folded into `FileInfo`, and the GUI already re-plans from cached
-   `_infos` without re-reading. An LRU in `estimate.py` would have been dead code.
-9. **The ≤1 s cost budget is missed — by pre-existing code.** 300 files took
-   4.95 s; the new zstd probe is 0.07 s of that (1.4%) and Shannon entropy's
-   `Counter.update` is 1.57 s (~53 ms/MiB). `bytes.count()`x256 measured **3x
-   slower**, so there is no cheap stdlib fix; a real one needs numpy or a C
-   extension (a dependency decision, deliberately not taken mid-phase).
-10. **Headless rendering is not GUI QA.** The table passed 9 pytest-qt tests and
-   was only ever rendered on Qt's offscreen platform, which draws every glyph as a
-   tofu box unless `QT_QPA_FONTDIR` is set — something `tools/shots.py` has always
-   done and which went unread. Rendered with real fonts, four copy and layout
-   defects were obvious in seconds and **none was reachable by a unit test**: the
-   same warning printed three times in one panel, the recommendation reason printed
-   twice (the preset cards already print it), the planner's log sentence leaking
-   into the UI verbatim (`"insane: zpaqfranz backend not integrated yet - using
-   extreme chain"`), and a collapsed range restating the value above it. Fixed in
-   `5675c90`; `docs/images/` regenerated and the shot window raised to 1010 px so
-   the panel is in frame. **Run `python tools/shots.py` and look at the output
-   before calling any GUI change done** — it is the cheapest QA in this repo.
-
-⚠️ **Two integrity findings that are not Phase J's to fix — see D9 and B11 below.**
-
+- [x] I10. 🟡 **PARTLY DONE 2026-09-03** — Ctrl+K palette shipped
+      (`gui/widgets/palette.py`), built as a *filter over* `MainWindow.actions`
+      rather than a second list, so a new action appears the moment it is
+      registered; a test asserts every enabled action is reachable. Subsequence
+      matching, so "oa" finds "Open archive". **Still open from this item:**
+      settings search fed by the same registry, drag-out extract, and the jump
+      list.
 - [x] J1. **Sample-based size estimator** (`excmp/estimate.py`, engine-side, Qt-free).
       Do not use a static ratio table — **measure**. The analyzer already reads up
       to 3×1 MiB per file for entropy (`analyzer.sample_entropy`); compress those

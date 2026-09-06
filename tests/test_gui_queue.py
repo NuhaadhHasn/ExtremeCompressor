@@ -193,3 +193,53 @@ def test_dropping_a_file_and_a_folder_adds_both(tmp_path, qtbot):
 
     assert received == [[folder, loose]]
     assert zone.property("dragActive") is False
+
+
+# --------------------------------------------------------------------------
+# J7 self-calibration: found broken while doing K1
+# --------------------------------------------------------------------------
+
+@needs_7z
+def test_calibration_records_a_finished_job_from_any_working_directory(
+        tmp_path, monkeypatch):
+    """`_calibrate` used to derive its piped byte count by stat-ing
+    `routes[].files`. Those are archive-**relative** paths, so
+    `Path("data/text.txt").is_file()` resolved against the process CWD, came
+    back false for every entry, and `piped` was always 0 - which made
+    `_calibrate` return early and J7 record nothing at all from the GUI.
+
+    The fix is to read the ledger, which already carries a size and a route per
+    file. So the assertion is deliberately made from a directory that has
+    nothing to do with the input: a byte count that depends on where the app
+    happens to be running was never a byte count.
+    """
+    from excmp import engine
+    from excmp.stages.base import StageContext
+
+    from gui.models import Job
+    from gui.queue_manager import CompressWorker, WorkerSignals
+
+    elsewhere = tmp_path / "somewhere-else"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    src = _tiny_tree(tmp_path)
+    result = engine.compress([src], tmp_path / "cal.excmp", Profile.NORMAL,
+                             StageContext(temp_dir=tmp_path / "t"))
+
+    recorded = []
+    monkeypatch.setattr("excmp.calibrate.record",
+                        lambda *a, **kw: recorded.append((a, kw)))
+    worker = CompressWorker(Job(inputs=[src], out_path=tmp_path / "cal.excmp",
+                                profile=Profile.NORMAL),
+                            WorkerSignals(), tmp_path / "t", find_tools())
+    worker._calibrate(result)
+
+    assert recorded, "a finished pipelined job must feed the estimator"
+    (_args, kwargs), = recorded
+    # Cross-checked against the archive's own listing rather than against the
+    # same expression under test.
+    expected = sum(e.size for e in engine.list_archive(tmp_path / "cal.excmp").entries
+                   if e.route == "pipeline")
+    assert expected > 0, "the tiny tree has a compressible file in it"
+    assert kwargs["piped_bytes"] == expected

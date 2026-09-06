@@ -17,7 +17,7 @@ def test_container_roundtrip(tmp_path):
 
     m2, payload2 = read_container(arc, extract_dir=tmp_path / "x")
     assert m2.profile == "normal"
-    assert m2.schema == 1
+    assert m2.schema == 2                # K1 bumped the manifest schema
     assert m2.stages[0].stage == "sevenzip"
     assert m2.stages[0].params == {"mx": 9}
     assert m2.inputs["a.txt"]["sha256"] == "aa"

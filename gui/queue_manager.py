@@ -294,9 +294,14 @@ class CompressWorker(_EngineWorker):
         """
         from excmp.calibrate import record
 
-        piped = sum(sum(Path(f).stat().st_size for f in r.get("files", [])
-                        if Path(f).is_file())
-                    for r in result.routes if r.get("action") == "pipeline")
+        # The engine reports this from the ledger, exactly. It used to be
+        # reconstructed here by stat-ing `routes[].files`, which holds
+        # archive-**relative** paths, so `Path("data/text.txt").is_file()`
+        # resolved against the process CWD, came back false for every entry,
+        # and `piped` was always 0 - which made this return early and J7
+        # record nothing at all. A byte count that depends on where the app
+        # happens to be running was never a byte count.
+        piped = result.piped_bytes
         stages = next((r.get("stages", []) for r in result.routes
                        if r.get("action") == "pipeline"), [])
         if not stages or not piped:

@@ -128,3 +128,56 @@ def test_a_store_only_job_still_budgets_the_self_test_restore(tmp_path):
     assert floor == peak, "no pipeline means no inflation risk to warn about"
     assert floor >= sum(i.size for i in infos), \
         "the self-test restore has to fit in temp"
+
+
+# --------------------------------------------------------------------------
+# K1: the manifest cap, checked at the front instead of at the end
+# --------------------------------------------------------------------------
+
+def test_too_many_files_is_refused_before_any_work_happens(tmp_path, monkeypatch):
+    """The K1 defect was not the cap - it was *when* the cap was checked. It
+    lived in `_read_manifest`, reached through `_verify_before_publish` ->
+    `verify_archive` -> `extract` -> `read_container`, i.e. after the entire
+    archive had already been built. The user waited out a full compress and
+    then lost it.
+
+    So the refusal is asserted the only way that means anything: nothing may
+    have been created. `tempfile.mkdtemp` is the first side effect `compress`
+    has (engine.py, right after the plan is made), so if it is never called,
+    no byte was copied.
+    """
+    src = _compressible_tree(tmp_path)
+    monkeypatch.setattr("excmp.manifest.MAX_MANIFEST_BYTES", 256)
+
+    def refuse(*a, **kw):
+        raise AssertionError("compress started work despite an unwritable manifest")
+    monkeypatch.setattr(engine.tempfile, "mkdtemp", refuse)
+
+    with pytest.raises(RuntimeError, match="manifest"):
+        engine.compress([src], tmp_path / "out.excmp", Profile.NORMAL,
+                        StageContext(temp_dir=tmp_path / "tmp"))
+    assert not (tmp_path / "out.excmp").exists()
+    assert not (tmp_path / "out.excmp.tmp").exists()
+
+
+def test_the_refusal_says_how_many_files_and_how_big(tmp_path, monkeypatch):
+    """A preflight that only says "no" sends the user back to guess. It has the
+    file count and the byte figure in hand, so it says both."""
+    src = _compressible_tree(tmp_path)
+    monkeypatch.setattr("excmp.manifest.MAX_MANIFEST_BYTES", 256)
+    with pytest.raises(RuntimeError) as exc:
+        engine.compress([src], tmp_path / "out.excmp", Profile.NORMAL,
+                        StageContext(temp_dir=tmp_path / "tmp"))
+    message = str(exc.value)
+    assert "4 file" in message, message
+    assert "separately" in message, "point at the way out, not just the wall"
+
+
+@needs_7z
+def test_a_normal_job_is_nowhere_near_the_manifest_cap(tmp_path):
+    """The false-positive half. 64 MiB covers roughly a quarter of a million
+    files; an ordinary folder must not hear about the cap at all."""
+    src = _compressible_tree(tmp_path)
+    result = engine.compress([src], tmp_path / "out.excmp", Profile.NORMAL,
+                             StageContext(temp_dir=tmp_path / "tmp"))
+    assert not any("manifest" in w for w in result.warnings)

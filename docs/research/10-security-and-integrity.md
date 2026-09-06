@@ -44,6 +44,18 @@ enforced on the actual streams (headers can be forged). Also cap `manifest.json`
 (~8 MiB) before `json.loads`, and check free disk up front (Precomp legitimately
 inflates 2–5× mid-pipeline → per-stage bounds, not just the end).
 
+> ⚠️ **Corrected 2026-09-04 (K1). The "~8 MiB" figure was wrong, and it cost a
+> user a folder.** It refused a real 55,477-file tree whose manifest is
+> 12.19 MiB after every redundancy is removed — 21.56 MiB before — and the
+> refusal landed *after* the whole job had run, because the cap was only ever
+> enforced on the read side. The bound itself was right; the number was a
+> guess. It is now **64 MiB**, derived from the thing the cap actually defends
+> against: `json.loads` of a 14.8 MiB manifest costs 1.2–1.7 s and 32.1 MiB
+> resident, 2.2× the JSON size. The outer zip is also no longer
+> entirely STORED — `manifest.json` is DEFLATED — so the decompressed stream,
+> not the header, is what the cap is checked against. See
+> [benchmarks/2026-09-04-k1](../benchmarks/2026-09-04-k1-manifest-v2.md).
+
 ## 1. Encryption: why not 7z `-p`, and the right design
 
 **7z AES-256 verified weaknesses:** key = SHA-256 iterated 2^19 times over the

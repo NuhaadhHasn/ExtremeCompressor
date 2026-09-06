@@ -157,7 +157,11 @@ def cmd_compress(args: argparse.Namespace) -> int:
               f"({payload['saved_percent']}% saved) in {payload['elapsed_s']}s")
         for r in result.routes:
             if r["action"] == "store":
-                print(f"note: {len(r['files'])} file(s) stored losslessly - {r['reason']}")
+                # `count`, not `len(files)`: the manifest stopped listing every
+                # relative path a second time in schema v2 (K1). Fall back for
+                # a v1 archive, which is the only thing that still has `files`.
+                n = r.get("count", len(r.get("files", [])))
+                print(f"note: {n} file(s) stored losslessly - {r['reason']}")
         if result.sidecar is not None:
             print(f"wrote {result.sidecar.name} - check it anywhere with "
                   f"`sha256sum -c {result.sidecar.name}`")

@@ -4,10 +4,10 @@
 > plus a fifth found on the way are fixed, measured and merged. Nothing is
 > awaiting review.
 >
-> **Start with B4 or B5** — the next real feature work. Section 3 explains why
-> those two and not B6.
+> **B5 is partly done and B4 is blocked** — read section 3 before picking
+> anything. The next job is either finishing B5's qpdf question or B8.
 
-**1,002 tests: 1,000 pass + 1 skip + 1 strict-xfail.**
+**1,010 tests: 1,008 pass + 1 skip + 1 strict-xfail.**
 
 The only xfail left is research/23 §2.4's 300px page budget, which §2.4 and
 §3.3 contradict each other about - not a to-do. K4's estimator xfail is gone:
@@ -126,40 +126,54 @@ Benchmarks: [K1](benchmarks/2026-09-04-k1-manifest-v2.md) ·
 
 ---
 
-## 3. The next job: B4 or B5, not B6
+## 3. Where B4 and B5 actually stand
 
-**B6 (xtool + Oodle) is still the biggest ratio gap and still the wrong thing
-to start.** It is blocked on test material: there is no game with Oodle data on
-this machine, and research/24 §2 established that no open-source Oodle
-*encoder* exists, so the `oo2core` DLL is permanent rather than temporary. The
-roadmap's own audit note puts it at 3–4 sessions. Do not open it without a real
-game folder to test against.
+**B4 (WAV/FLAC) is BLOCKED, and the previous version of this document was
+wrong about it.** It said B4 and B5 both had test material on this machine.
+Checked 2026-09-07: there is **no `.wav`, `.flac` or `.aiff` anywhere** — not
+in either real corpus, not in the user profile — and no FLAC binary. Treat B4
+like B6: it needs real audio before it is worth opening, because B3 is the
+standing proof that a specialist judged on synthetic files tells you nothing.
 
-**B4 (WAV/FLAC) and B5 (PDF/Office) are the right size and have test material
-already on this machine.** Both follow a pattern the codebase has run three
-times now (B2 lepton, B3 PNG-through-Precomp, B7 BCJ2):
+**B5 is partly done, and it was not the job the roadmap describes.** Full
+numbers: [benchmarks/2026-09-07-b5](benchmarks/2026-09-07-b5-pdf-office.md).
 
-1. measure the specialist against the current route on *real* files;
-2. keep it only if it is byte-lossless — B3 is the precedent, where `oxipng`
-   saved 31.79% and produced **0 byte-identical files**, and the lossless
-   `precomp → 7z` route beat it anyway at 38.41%;
-3. route it per-file with a reason the GUI can show.
+Measured on 238 real PDF/Office files, the baseline came first and reframed
+everything:
 
-**B5 has a specific trap worth knowing before starting:** docx/xlsx/pptx are
-just ZIPs, so the roadmap's plan is to unpack their members into the solid
-stage. That changes the *file count* in the manifest — one `.docx` becomes
-dozens of ledger entries — which lands straight on the preflight described in
-section 0. Add it to the serialised-manifest tests.
+| profile | chain | saved |
+|---|---|---:|
+| Normal | `7z` | 10.37% |
+| Extreme | `precomp → 7z` | **50.36%** |
 
-**`excmp/ram.py` now models zstd too** — that gap is closed, and the way it was
-closed is worth knowing before you extend it.
-`ZstdCompressionParameters.estimated_compression_context_size()` is the obvious
-exact answer and **must not be called**: for the parameter sets `ZstdStage`
-builds it kills the process with `STATUS_INTEGER_DIVIDE_BY_ZERO` (0xC0000094)
-inside libzstd — a crash, not an exception. A test parses `ram.py`'s AST to keep
-the call out while leaving the reason in a comment. The shipped model is fitted
-to measurement (`128 MiB + 0.85 × window`) and covers both measured points,
-1,868 predicted vs 1,813 at window 31 and 237 vs 163 at window 27.
+PDF/docx/xlsx/pptx were **already piped**, and Precomp already does 4.9x what
+plain 7-Zip does. The defect was that the **estimator** predicted 13.78% for
+Extreme, so `compare_profiles` showed it beating Normal by 4 points where the
+truth is 40 — steering users past half their compression. Now 46.32%.
+
+The fix is `analyzer.probe_expandable`, and the *reason* it has to be a probe
+is the part worth not re-deriving: an extension list would have predicted a
+large win on the 263 MB **encrypted** `.zip` that is 37% of the estimator's own
+backtest corpus and measured 2.97%. Two real corpora, same extension, opposite
+answers.
+
+### What is left of B5
+
+**qpdf is unmeasured**, and there is no binary on this machine. The prediction
+is that it fails the lossless gate exactly as `oxipng` did in B3 —
+`--recompress-flate` rewrites the file, and a SHA-256 ledger cannot be
+satisfied by changed bytes — in which case it belongs in Phase C beside C6,
+not here. It also has to beat **50.36%** to be worth having at all. Measure
+before building.
+
+**"Unpack docx members into the solid stage" is already achieved** by Precomp
+for Extreme/Insane. Doing it explicitly would help only profiles *without*
+Precomp, and would need B2's pack-immediately-unpack-compare-fall-back pattern
+to stay byte-lossless, because rebuilding a zip bit-exactly is not guaranteed.
+
+**So the honest next jobs are B8** (re-benchmark; the B5 work just replaced one
+`(est.)` with a measurement and there are more) **or B5's qpdf question**, and
+either wants a tool fetched first — which is E1.
 
 ---
 

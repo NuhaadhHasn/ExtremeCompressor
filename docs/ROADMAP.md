@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-07**. **1,002 tests** (1,000 pass + 1 skip + 1 strict-xfail;
+> Status date: **2026-09-07**. **1,010 tests** (1,008 pass + 1 skip + 1 strict-xfail;
 > the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
 > Everything below is merged to `main` except **`phase-i3-i8-i10`** and
 > **`phase-k1-manifest-v2`**, which are stacked and awaiting review.
@@ -648,8 +648,48 @@ display scaling — both need a human at the machine.
       flat 5x under-reserved temp for PNG by an order of magnitude.
 - [ ] B4. **WAV specialist**: FLAC 1.5 `-8 -j N`; TAK/OptimFROG as detected-only
       opt-ins (closed freeware — never bundled)
-- [ ] B5. **PDF/Office**: qpdf `--object-streams=generate --recompress-flate`;
-      docx/xlsx members unpacked into the solid stage (they're just ZIPs)
+      ⛔ **BLOCKED on test material, confirmed 2026-09-07.** There is no
+      `.wav`, `.flac` or `.aiff` anywhere on this machine — not in either real
+      corpus, not in the user profile — and no FLAC binary either. The
+      2026-09-07 handoff listed B4 as having material present; that was wrong.
+      Treat it like B6: do not open it without real audio to measure against,
+      because a specialist judged on synthetic WAVs tells us nothing (B3's
+      `oxipng` looked fine until it was measured on real files).
+- [~] B5. 🟡 **PARTLY DONE 2026-09-07** — and it was not the job this item
+      describes. Measured in
+      [benchmarks/2026-09-07-b5](benchmarks/2026-09-07-b5-pdf-office.md) on
+      **238 real PDF/Office files (433.4 MiB)**.
+      **These types were already piped, not stored** (all four are in
+      `_PRECOMP_EXPANDABLE`), and the existing lossless route is already
+      strong: on 224 files, Normal `7z` saved **10.37%** and Extreme
+      `precomp → 7z` saved **50.36%** — Precomp does 4.9x what plain 7-Zip
+      does. So a specialist has to beat 50.36% *losslessly* to earn a place,
+      which is the B3 lesson repeating.
+      **The real defect was in the estimator, and it is fixed.** It predicted
+      **13.78%** for Extreme against the measured 50.36% — so
+      `compare_profiles` showed Extreme beating Normal by 4 points where the
+      truth is 40, steering users past half their compression on two of the
+      most ordinary document formats there are. Now **46.32%**: error 36.6
+      points → 4.0, still conservative.
+      **Why it was invisible:** `zlib_stream` checks for a zlib header at
+      offset 0 and **all 224 files fail it** — a `.docx` starts `PK`, a PDF
+      scatters Flate streams through its body — while the entropy probe
+      honestly reads 0.88-0.91. `estimate.py` had recorded "no cheap signal
+      separates them" as permanent; that is true of the *bytes* and false of
+      the *container*.
+      **Why an extension list would have been wrong:** 37% of the estimator's
+      own backtest corpus is a 263 MB **encrypted** `.zip` that measured
+      2.97%. Two real corpora, same extension, opposite answers. So
+      `analyzer.probe_expandable` reads structure — a zip's central-directory
+      member flags, or a bounded `/FlateDecode` scan for PDFs — and both
+      corpora now agree.
+      **Still open:** qpdf is unmeasured (no binary on this machine) and is
+      *expected to fail the lossless gate* exactly as `oxipng` did in B3,
+      since `--recompress-flate` rewrites the file — in which case it belongs
+      in Phase C beside C6. The "unpack docx members into the solid stage"
+      half is already achieved by Precomp for Extreme/Insane; doing it
+      explicitly would only help profiles without Precomp and would need B2's
+      pack-verify-fallback pattern to stay byte-lossless.
 - [ ] B6. **xtool stage** (game paks: zlib/lz4/zstd/**Oodle** via the game's own
       oo2core DLL): detected-only, MIT but archived upstream — always verified
       roundtrip; extend router with pak/Oodle magic detection. **Source study

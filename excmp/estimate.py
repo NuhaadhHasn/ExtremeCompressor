@@ -129,6 +129,25 @@ _HIGH_SLACK = 1.05
 # measured, where these files gained essentially nothing. Hence two ranges, both
 # deliberately wide: this is the one place the estimator genuinely cannot know.
 _ZLIB_LOW, _ZLIB_EXPECTED, _ZLIB_HIGH = 0.28, 0.45, 1.0
+
+# B5: a container whose deflate layer Precomp really can reach.
+#
+# `analyzer.probe_expandable` answers this structurally - a zip's central
+# directory member flags, or a `/FlateDecode` scan for a PDF - which is what
+# makes it usable where entropy sampling is not. The note above ("no cheap
+# signal separates them") stands for the *bytes*; it does not stand for the
+# container, and 224 real files measured the difference:
+#
+#     profile   predicted (before)   measured
+#     normal          9.40%           10.37%
+#     extreme        13.78%           50.36%
+#
+# So the comparison table showed Extreme beating Normal by 4 points where the
+# truth was 40, steering users past the bigger win on PDFs and Office
+# documents. The aggregate came out at 0.496; 0.55 is used here for the usual
+# reason - `expected` must not oversell - and the range still spans the case
+# where a particular file turns out to hold nothing.
+_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED = 0.30, 0.55
 _OVERRIDE_LOW = 0.30
 
 # The limit of what sampling can know, found the hard way.
@@ -334,7 +353,20 @@ def _piped_ratios(info: FileInfo, factor: float,
         # Piped only because the profile has Precomp - see _ZLIB_* above.
         if info.zlib_stream:
             return _ZLIB_LOW, _ZLIB_EXPECTED, _ZLIB_HIGH
+        if has_precomp and info.expandable:
+            # Roughly half of the real PDF/Office corpus lands here: high
+            # entropy, so `store_reason` would keep it, but the container
+            # probe says Precomp can open it. Before B5 this returned
+            # `sample_ratio_max` (~0.90) as `expected` and predicted no gain.
+            return (_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED, 1.0)
         return _OVERRIDE_LOW, info.sample_ratio_max, 1.0
+
+    if has_precomp and info.expandable:
+        # Structurally known to hold an expandable deflate layer. The probe's
+        # own reading of this file beats the entropy sample, which measured
+        # 0.88-0.91 on exactly these files while the real chain took half.
+        return (_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED,
+                min(1.0, info.sample_ratio_max * _HIGH_SLACK))
 
     low = info.sample_ratio * factor
     expected = info.sample_ratio_max * factor

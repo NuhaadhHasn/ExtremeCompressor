@@ -149,6 +149,31 @@ _OVERRIDE_LOW = 0.30
 # than having no range.
 _PRECOMP_OPTIMISTIC = 0.30
 
+# The same problem on the zstd chain after K4, and the same remedy: the
+# optimistic end has to reach the case the per-file probe cannot see.
+#
+# `_CODEC_FACTOR["zstd"]` multiplies each file's *own* worst zstd-3 sample.
+# Nothing in that shape can express "this whole file is a duplicate of one
+# 170 MiB earlier", which is precisely what K4's wide window made findable, so
+# the measured archive landed below `low` and the range excluded the truth.
+#
+# Measured 2026-09-07 on 220,200,960 B in three files, the third
+# byte-identical to the first: predicted low 61,945,796 against an actual
+# 41,963,379 - the truth at **0.677x** the optimistic end.
+#
+# This is a *credit per duplicate byte*, not a blanket factor on the whole
+# estimate, and `_long_range_discount` only ever awards it to files that share
+# an exact size with another file. That matters twice: a selection with no
+# repeated size gets no discount at all, so ordinary estimates keep the narrow
+# range the Compress page's height budget depends on, and the credit is
+# claimed only where there is actual evidence for it rather than everywhere a
+# zstd chain happens to be planned.
+#
+# Not 1.0, because same-size is a superset of same-content: two files of equal
+# length need not be duplicates. 0.9 recovers the measured corpus with margin
+# while still crediting nothing to a tree of distinct files.
+_ZSTD_LONG_RANGE_CREDIT = 0.9
+
 # Container overhead: a ledger entry per file (size, 64-hex sha256, route) plus
 # zip headers per stored entry. Only material for very small archives.
 #
@@ -321,6 +346,28 @@ def _piped_ratios(info: FileInfo, factor: float,
     return low, expected, max(expected, high)
 
 
+def _long_range_discount(piped: list[FileInfo]) -> float:
+    """Bytes the wide zstd window may find as cross-file duplicates.
+
+    Files are grouped by exact size; every copy after the first in a group is
+    a duplicate *candidate*, and its bytes are discounted by
+    ``_ZSTD_LONG_RANGE_CREDIT``. Same-size is a superset of same-content, so
+    this can over-credit but never under-credit, which is the right direction
+    for the optimistic end of a range.
+
+    The credit is not 1.0 even though a real duplicate compresses to almost
+    nothing, because a same-size pair need not be a duplicate at all. It was
+    fitted against the corpus that exposed the defect: three files, the third
+    byte-identical to the first and 170 MiB downstream, where the real archive
+    sat at 0.677x the un-discounted `low`.
+    """
+    by_size: dict[int, int] = {}
+    for info in piped:
+        by_size[info.size] = by_size.get(info.size, 0) + 1
+    return sum(size * (count - 1) * _ZSTD_LONG_RANGE_CREDIT
+               for size, count in by_size.items() if count > 1)
+
+
 def _overhead(infos: list[FileInfo], stored_count: int) -> int:
     """Manifest + zip headers. The manifest is deflated; everything else in the
     container is ZIP_STORED.
@@ -368,6 +415,30 @@ def estimate_size(infos: list[FileInfo], the_plan: Plan,
         low += info.size * r_low
         expected += info.size * r_expected
         high += info.size * r_high
+
+    # K4's long-range window, on the optimistic end only.
+    #
+    # Every ratio above is *per-file*: each file's own worst sample times a
+    # codec factor. Nothing in that shape can express "this whole file is a
+    # duplicate of one 170 MiB earlier", which is exactly the saving the wide
+    # window made findable - so after K4 the measured archive landed *below*
+    # `low` and the range excluded the truth, which is worse than no range.
+    #
+    # The obvious repair - discount `low` by a flat factor for every zstd
+    # chain - was measured and rejected: it renders a 2.2x numeric range on
+    # ordinary input, which wraps a line and pushes the populated Compress
+    # page past the height budget research/23 2.4 argues for. It also lies
+    # about corpora that hold no duplicates at all, which is most of them.
+    #
+    # So the discount is driven by evidence instead. Identical size is the
+    # cheapest available duplicate signal - it needs no hashing, which the
+    # analysis pass cannot afford - and it is a true *superset* of the
+    # duplicate set: two files that differ in size cannot be duplicates. That
+    # makes this an optimistic bound in the honest direction, and it collapses
+    # to zero on a selection with no repeated size, leaving those estimates
+    # exactly as they were.
+    if piped and "zstd" in stages:
+        low -= _long_range_discount(piped)
 
     base = stored_bytes + overhead
     return SizeEstimate(

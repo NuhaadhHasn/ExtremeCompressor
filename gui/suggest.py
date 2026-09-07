@@ -382,14 +382,24 @@ def _ram_words(profile: Profile, cores: int | None,
                input_bytes: int = 0) -> str:
     """Peak compression RAM for a profile on this machine.
 
-    Only the LZMA2 profiles have a meaningful figure - zstd's window is a
-    tenth of it and never the thing that runs a 16 GB laptop out of memory.
-    Rather than print a number nobody needs for Fast, say nothing.
+    **Fast is no longer blank.** It used to be, on the stated grounds that
+    "zstd's window is a tenth of it and never the thing that runs a 16 GB
+    laptop out of memory" - and K4 measured 1,813 MiB for exactly that stage
+    with the window pinned wide, which is the same order as an LZMA2
+    dictionary. Leaving the cell empty in a *comparison* table then implied
+    Fast was free rather than unmeasured, which is the worse of the two
+    errors a column like this can make.
+
+    Fast's figure moves with the input, because `ZstdStage` fits its window to
+    the data rather than pinning it - so a small job honestly reports a small
+    number here.
     """
-    from excmp.ram import effective_dict, lzma2_compress_ram, lzma2_default_dict
+    from excmp.ram import (effective_dict, lzma2_compress_ram,
+                           lzma2_default_dict, zstd_compress_ram)
 
     if profile is Profile.FAST:
-        return ""
+        from excmp.stages.zstdstage import _window_log_for
+        return fmt_size(zstd_compress_ram(_window_log_for(input_bytes)))
     threads = cores or (os.cpu_count() or 2)
     # Clamped to the data: 7-Zip does the same before quoting its own figure,
     # and without it a 371 KB job was advertised as needing 6 GB.

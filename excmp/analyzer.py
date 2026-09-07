@@ -223,7 +223,8 @@ def iter_files(root: Path) -> list[Path]:
     return [p for p in sorted(root.rglob("*")) if p.is_file()]
 
 
-def iter_empty_dirs(root: Path) -> list[Path]:
+def iter_empty_dirs(root: Path,
+                    files: list[Path] | None = None) -> list[Path]:
     """Every directory under ``root`` that holds nothing at all (K2).
 
     :func:`iter_files` keeps only ``p.is_file()``, so a directory with no files
@@ -244,6 +245,30 @@ def iter_empty_dirs(root: Path) -> list[Path]:
     root = Path(root)
     if root.is_file():
         return []
+    if files is not None:
+        # Reuse the walk the caller already paid for. `iter_files` exists
+        # precisely because walking is the one cheap pass worth doing once,
+        # and on the 57,020-file corpus it costs ~20 s of drive metadata
+        # latency - so doing it a second time for a list that is usually
+        # empty was the wrong trade.
+        #
+        # A directory is empty iff no walked file lies inside it. Derived from
+        # the file list rather than re-statted, which also makes the two
+        # answers incapable of disagreeing.
+        occupied: set[Path] = set()
+        for f in files:
+            for parent in f.parents:
+                if parent in occupied:
+                    break
+                occupied.add(parent)
+        dirs = [p for p in sorted(root.rglob("*")) if p.is_dir()]
+        # A directory that merely holds *other directories* is not wholly
+        # empty, and returning it would repeat what the deeper entry's own
+        # `mkdir(parents=True)` already rebuilds - the redundancy K1 spent a
+        # phase removing. So `deep/empty/chain` is recorded and `deep` is not.
+        has_subdir = {d.parent for d in dirs}
+        return [p for p in dirs
+                if p not in occupied and p not in has_subdir]
     out = []
     for p in sorted(root.rglob("*")):
         if not p.is_dir():

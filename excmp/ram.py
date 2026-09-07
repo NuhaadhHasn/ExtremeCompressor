@@ -222,3 +222,57 @@ def dict_choices(threads: int = 2) -> list[int]:
         sizes.append(size)
         size <<= 1
     return sizes
+
+
+# --- zstd (Fast profile) --------------------------------------------------
+#
+# Added 2026-09-07. Until then this module modelled LZMA2 only, and the GUI's
+# peak-RAM column was therefore **blank for Fast** on the stated grounds that
+# "zstd's window is a tenth of it and never the thing that runs a 16 GB laptop
+# out of memory". K4 falsified that: with the window pinned at 31 the same
+# stage measured a 1,813 MiB peak, which is the same order as an LZMA2
+# dictionary and very much the thing that matters on a 2-core/16 GB target.
+#
+# `zstandard.ZstdCompressionParameters.estimated_compression_context_size()`
+# would answer this exactly and **must not be called**: for the parameter sets
+# ZstdStage builds it kills the process with STATUS_INTEGER_DIVIDE_BY_ZERO
+# (0xC0000094) inside libzstd - not an exception, a crash. So the model is
+# fitted to measurement, which is this module's convention anyway.
+#
+# Measured on this machine, ZstdStage's real parameters (level 19, LDM on,
+# threads=-1), 96 MiB of compressible input, each window in a fresh process
+# because peak working set is a high-water mark for the life of a process:
+#
+#     window_log   window    peak
+#         20         1 MiB   100 MiB
+#         23         8 MiB   103 MiB
+#         25        32 MiB   115 MiB
+#         27       128 MiB   163 MiB
+#
+# That is a clean `base + 0.5 x window` (predicting 103/115/163 exactly), but
+# the base is NOT constant: K4's 1.8 GiB run measured 1,813 MiB at window 31
+# where this fit predicts 1,123. The gap is the multi-threaded worker buffers,
+# which scale with the input as well as the window. So the shipped constants
+# are deliberately above the fit - they cover the wl31 measurement too, and
+# over-reading is the safe direction for a "will this fit in RAM?" column, the
+# same bias `estimate.py` documents for every one of its own numbers.
+_ZSTD_BASE_BYTES = 128 * MIB
+_ZSTD_WINDOW_SHARE = 0.85
+
+
+def zstd_compress_ram(window_log: int) -> int:
+    """Peak working set for one ZstdStage compress, in bytes.
+
+    Takes the window the stage will actually use - `_window_log_for` fits it
+    to the input, so passing the maximum would over-report by more than a
+    gigabyte on an ordinary job.
+    """
+    return int(_ZSTD_BASE_BYTES + _ZSTD_WINDOW_SHARE * (1 << window_log))
+
+
+def zstd_decompress_ram(window_log: int) -> int:
+    """Peak for one extract. The window buffer dominates and there are no
+    worker buffers, so this is the window plus a small fixed cost - measured
+    14 MiB for a narrow frame under a 2 GiB *ceiling*, which is why the
+    ceiling is safe to raise but the frame's own window still costs."""
+    return int((1 << window_log) + 16 * MIB)

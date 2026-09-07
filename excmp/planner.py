@@ -113,6 +113,18 @@ def store_reason(info: FileInfo) -> str | None:
     """The plain-English sentence explaining why this file won't be piped,
     or None if it will be. Public because the GUI shows it per file - the
     route-level reason is a joined summary and loses the detail."""
+    if info.path.suffix.lower() in _UNCOMPRESSED_AUDIO:
+        # B4: a WAV is NOT "already compressed by its codec" - it has no
+        # codec. Saying so was false, and it was shown to the user beside 0%
+        # savings on 5.07 GiB of real audio. FLAC gets 43.15% on it, byte for
+        # byte, so what the file needs is a specialist rather than an excuse.
+        from . import flacaudio
+        if flacaudio.available():
+            return ("uncompressed PCM audio: packed with FLAC, which restores "
+                    "it byte for byte (measured ~43% smaller)")
+        return ("uncompressed PCM audio: stored as-is because the FLAC tool "
+                "is not installed - fetching it would shrink this ~43% with "
+                "no loss")
     if info.category in _MEDIA:
         return (
             "media file: already compressed by its codec; stored losslessly so "
@@ -144,6 +156,21 @@ _PRECOMP_EXPANDABLE = {".zip", ".gz", ".jar", ".apk", ".docx", ".xlsx", ".pptx",
 #: Kept deliberately tiny. JPEG must NOT be here: its entropy is real, and it
 #: has its own specialist on the stored route (B2/lepton).
 _DEFLATE_MEDIA = {".png"}
+
+#: Audio containers holding **uncompressed** PCM (B4).
+#:
+#: These are `Category.AUDIO` and therefore in `_MEDIA`, which is what made
+#: the engine store them and tell the user they were "already compressed by
+#: its codec". They are not compressed at all, and their entropy does not
+#: reveal it: real music measures 7.7-7.9 bits/byte, which every entropy
+#: heuristic reads as incompressible. Only knowing the *format* tells you that
+#: an audio predictor will take 43% off.
+#:
+#: This is the audio twin of `_DEFLATE_MEDIA` above, and it is a separate set
+#: because the remedy is different: a PNG is routed *into* the pipeline for
+#: Precomp to expand, whereas a WAV stays on the store route and is packed
+#: there by `flacaudio`, the way B2 packs a JPEG with lepton.
+_UNCOMPRESSED_AUDIO = {".wav", ".aiff", ".aif", ".w64", ".rf64"}
 
 #: How far Precomp inflates its output mid-pipeline, per data type. The
 #: generic figure is 5x (research/10 C-3), but **PNG measured ~50x** — 15 PNGs

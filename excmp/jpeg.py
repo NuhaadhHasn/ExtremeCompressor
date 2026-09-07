@@ -95,3 +95,9 @@ def unpack(packed: bytes) -> bytes:
             "this archive contains lepton-compressed JPEGs and the "
             "'lepton-jpeg-python' package is not installed")
     return bytes(_lepton.decompress_bytes(packed))
+
+
+def looks_like(head: bytes) -> bool:
+    """Registry-facing alias. `manifest._CODECS` asks every codec the same
+    question, so the name has to be the same on each of them."""
+    return looks_like_jpeg(head)

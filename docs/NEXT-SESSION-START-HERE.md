@@ -4,10 +4,12 @@
 > plus a fifth found on the way are fixed, measured and merged. Nothing is
 > awaiting review.
 >
-> **B5 and E1 are done. Start with B4** — the test material is there after
-> all (610 FLAC, 110 WAV) and E1 can now fetch the FLAC binary. Section 3.
+> **B4, B5 and E1 are all done too.** The next job is **finishing the E1
+> audit** — section 3, and read it before picking anything: 18 reported
+> findings against the module that downloads and executes binaries are
+> **unverified**, because the audit ran out of session mid-run.
 
-**1,030 tests: 1,028 pass + 1 skip + 1 strict-xfail.**
+**1,045 tests: 1,043 pass + 1 skip + 1 strict-xfail.**
 
 The only xfail left is research/23 §2.4's 300px page budget, which §2.4 and
 §3.3 contradict each other about - not a to-do. K4's estimator xfail is gone:
@@ -97,8 +99,8 @@ misdiagnosed as a real defect. Serialise the heavy runs.
 
 ## 1. What is on `main`
 
-Everything. `main` now carries I3/I8/I10, K1, and K2–K5; nothing is unmerged and
-nothing is awaiting review.
+Everything. `main` carries I3/I8/I10, K1, K2–K5, B5, E1 and B4; nothing is
+unmerged and nothing is awaiting review.
 
 The app does: verified byte-identical restore · per-file routing with reasons ·
 duplicate-file dedup · split volumes · PAR2 recovery records · AES-256-GCM +
@@ -107,7 +109,8 @@ foreign-archive listing and extraction · convert-and-shrink · plain
 `.7z`/`.zip` export · self-calibrating time estimates · persisted history ·
 treemap · Ctrl+K · **preserved timestamps and empty directories** ·
 **locked files skipped and reported** · **a manifest that scales to a
-`node_modules` tree**.
+`node_modules` tree** · **WAV packed with FLAC, 43% and byte-identical** ·
+**hash-pinned tool downloads**.
 
 ---
 
@@ -122,52 +125,87 @@ treemap · Ctrl+K · **preserved timestamps and empty directories** ·
 | **K5** | every job touching a `.git` leaked a temp directory | `rmtree_force` at all 11 sites |
 
 Benchmarks: [K1](benchmarks/2026-09-04-k1-manifest-v2.md) ·
-[K2–K5](benchmarks/2026-09-07-k2-k5-defects.md).
+[K2–K5](benchmarks/2026-09-07-k2-k5-defects.md) ·
+[B5](benchmarks/2026-09-07-b5-pdf-office.md) ·
+[B4 + E1](benchmarks/2026-09-07-b4-wav-flac.md).
+
+### And what B4/B5/E1 added after it
+
+| item | finding | proof |
+|---|---|---|
+| **B5** | the estimator showed Extreme beating Normal by 4 points where the truth is 40 | 13.78% → 46.32% predicted vs 50.36% measured |
+| **E1** | hash-pinned tool downloads; its own first fetch found its redirect rule refused GitHub | 24 tests |
+| **B4** | WAV was stored at **0%** and told "already compressed by its codec" — it has no codec | **43.15%**, 4/4 byte-identical |
+
+**B4 is the first specialist in this project that beat the route already
+present.** B3's `oxipng`, B5's `qpdf` and K4's wide window all lost to
+`precomp → 7z` on real files. The reason B4 differs is structural: a PDF or a
+docx is already deflate output one layer down, which Precomp reaches, while a
+WAV is genuinely uncompressed and no general-purpose compressor models audio.
+Keep that test — "is this format actually already compressed?" — for the next
+specialist.
 
 ---
 
-## 3. The next job: B4, and measure the baseline first
+## 3. The next job: finish the E1 audit
 
-**B4 (WAV/FLAC) is ready and I was wrong to call it blocked.** The previous
-version of this document said there was no audio on this machine. There is:
-`C:\Users\nuhaa\Desktop\Downloads-1` holds **610 `.flac` and 110 `.wav`**,
-including a `Songs` folder. The earlier search only looked under the two corpus
-folders and `~/Music` and never checked `Downloads-1` itself. No
-`.aiff`/`.ape`/`.wv`; no FLAC binary yet, and **E1 can now fetch one** (ask
-first - the user wants the site, the size, the hash and the destination before
-any download).
+**E1 was audited after it shipped, and the audit found a critical hole. That
+one is fixed. Eighteen further findings were reported and never verified**,
+because 38 of the 44 audit agents died on a session limit mid-run.
 
-### The one rule that matters here
+They are leads, not facts. This project's own rule is that an unverified
+finding is worth nothing until reproduced, and on past form roughly half do not
+survive contact with the code. But they are *specific* leads about the one
+module that downloads and then executes binaries, so they are the
+highest-value work available.
 
-**Measure the existing route before building the specialist.** This has now
-been decided by measurement three times, and the specialist lost every time:
+The verified one, for calibration, because it shows the class of mistake:
+`verify_installed` hashed `exe_relpath` and nothing else — **0.02% of the real
+qpdf install**, since `qpdf.exe` is a 19 KB launcher and `qpdf30.dll` is 7.4 MB.
+Live because of B4: `flac.exe` sits beside `libFLAC.dll` and gets spawned.
+Fixed by moving the digests into source, covering the whole executable
+directory, and refusing extra files. Write-up:
+[benchmarks/2026-09-07-b4](benchmarks/2026-09-07-b4-wav-flac.md) §5.
 
-| item | proposed specialist | result | the existing lossless route |
-|---|---|---|---|
-| B3 | `oxipng` | 31.79%, **0/10 byte-identical** | `precomp -> 7z` 38.41% |
-| B5 | `qpdf` | 7.14%, **0/10 byte-identical** | `precomp -> 7z` 49.5% |
-| K4 | wide zstd window | 49.9% synthetic, **0%** real | unchanged |
+### The unverified eighteen, worst-if-true first
 
-**B4 is the one where a specialist plausibly wins outright**, and the reason is
-structural rather than hopeful: raw PCM is *genuinely uncompressed*, unlike a
-PDF or a docx whose bytes are already deflate output one layer down. FLAC
-should beat `precomp -> 7z` on `.wav` by a wide margin.
+Reproduce each before believing or fixing it.
 
-But two things still have to be measured, not assumed:
+1. **Only the last redirect hop is checked** — intermediate hops possibly
+   followed to any host over any scheme. If true, both the https-only rule and
+   the per-origin allowlist are weaker than they read.
+2. **No bound on the *unpacked* size.** `MAX_DOWNLOAD_BYTES` caps the
+   download; nothing obviously caps what the zip expands to — the classic
+   asymmetry.
+3. **`fetch_tool(allow_insecure=True)` is the default** while `ensure_tool`
+   defaults to False, reportedly the wrong way round, making "https only"
+   opt-in on the low-level call.
+4. **`ensure_tool` raises what its docstring says it swallows**
+   (`UnsafePathError`, `BadZipFile`, `UnicodeDecodeError`), which would turn a
+   missing tool into a crashed job rather than a graceful degrade.
+5. **No deadline on the whole transfer** — `timeout=60` is per socket read, so
+   a drip-feeding server could hang a job indefinitely.
+6. **A re-install destroys the existing install and then fails**, because
+   `rmtree_force` never raises — so a failed re-fetch could leave nothing.
+7. **`spec.size` is not used as a streaming bound**, so up to 512 MiB of
+   unverified bytes may be written before the size check fires.
+8. Also reported: unverified download bytes landing inside the install root and
+   never swept; `_redirect_ok` comparing `netloc` rather than `hostname`, so a
+   legitimate `:443` would be refused; duplicate and case-colliding archive
+   entries; the manifest consistency test accepting an uppercase hash that
+   `_download_to` will always reject; and `find_tools` not looking at the
+   layout E1 actually installs into.
 
-1. **The `.wav` baseline.** What does `precomp -> 7z` already get on those 110
-   files? That is the number FLAC has to beat.
-2. **Byte-identity.** `flac -8` then `flac -d` must reproduce the input
-   **exactly**, or it cannot satisfy the ledger and belongs in Phase C like
-   `oxipng` and `qpdf`. FLAC is designed to be lossless, so this should hold -
-   which is precisely why it should be checked rather than trusted.
-   `excmp/jpeg.py`'s `pack()` is the pattern: compress, immediately
-   decompress, compare, and store raw if it does not match.
+The audit script is saved and re-runnable, which is the cheapest way to begin —
+resume it rather than re-deriving the list:
 
-**The 610 `.flac` files are a different job** and worth separating: they are
-*already* FLAC, so the question for them is not "can we compress this" but
-"does anything beat storing it" - which is where the analyzer currently routes
-them, correctly.
+```
+Workflow({scriptPath: ".../workflows/scripts/e1-toolfetch-audit-wf_8697f7a5-44e.js",
+          resumeFromRunId: "wf_8697f7a5-44e"})
+```
+
+**After that, B8** — re-benchmark and replace the remaining `(est.)` figures.
+B6 (Oodle) is still blocked on test material and still 3–4 sessions.
 
 ---
 

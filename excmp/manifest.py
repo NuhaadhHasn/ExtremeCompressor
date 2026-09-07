@@ -20,8 +20,29 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import jpeg
+from . import flacaudio, jpeg
+
 from .safepath import UnsafePathError, resolve_within, safe_relpath
+
+#: Stored-route specialists, in the order they are offered a file (B2, B4).
+#:
+#: A `stored/` entry is normally the file's own bytes. A codec here replaces
+#: them with a smaller encoding that restores **byte for byte** - which is the
+#: only kind admissible, because the ledger records the original file's
+#: SHA-256 and D9 replays it before publishing.
+#:
+#: Generalised from a hardcoded "lepton" when B4 arrived: the string was
+#: spelled out in six places across the writer and the reader, and adding a
+#: second codec by copying all six was how the two halves would eventually
+#: disagree about what a `codec` value means.
+#:
+#: Each module owes: `available()`, `looks_like(head)`, `pack(raw) -> bytes |
+#: None` where the bytes have **already been round-tripped and compared**, and
+#: `unpack(packed) -> bytes`.
+_CODECS: dict[str, object] = {
+    "lepton": jpeg,
+    "flac": flacaudio,
+}
 
 SCHEMA_VERSION = 2
 MANIFEST_NAME = "manifest.json"
@@ -69,6 +90,7 @@ _MANIFEST_REASON_BYTES = 16
 #   `,"same_as":"<relpath>"`   G9, on every duplicate stored entry: 13 + the
 #                              whole relative path of the entry holding the bytes
 #   `,"codec":"lepton"`        B2, on every packed JPEG
+#   `,"codec":"flac"`          B4, on every packed WAV (shorter)
 #
 # Never both on one entry - the packing loop skips anything already carrying a
 # `same_as` - so the allowance is the larger of the two, and the path it points
@@ -388,23 +410,33 @@ def write_container(archive_path: Path, manifest: Manifest,
     # JPEG is compressed **once** - the engine used to pack every one merely to
     # decide, throw the bytes away, and pack it again down here.
     packed_bytes: dict[str, bytes] = {}
-    if jpeg.available():
-        for rel, src in stored_norm.items():
-            meta = manifest.inputs.get(rel, {})
-            if "same_as" in meta:
+    ready = {name: mod for name, mod in _CODECS.items() if mod.available()}
+    for rel, src in stored_norm.items():
+        meta = manifest.inputs.get(rel, {})
+        if "same_as" in meta:
+            continue
+        # Cleared first, unconditionally: an entry that fails to pack this
+        # time must not ship carrying a `codec` from a previous attempt whose
+        # bytes it no longer honours. That exact bug is why B2 moved this
+        # decision here in the first place.
+        meta.pop("codec", None)
+        if not ready:
+            continue
+        try:
+            raw = Path(src).read_bytes()
+        except OSError:
+            continue
+        for name, mod in ready.items():
+            if not mod.looks_like(raw[:16]):
                 continue
             try:
-                packed = jpeg.pack(Path(src).read_bytes())
+                packed = mod.pack(raw)
             except OSError:
                 packed = None
             if packed is not None:
                 packed_bytes[rel] = packed
-                meta["codec"] = "lepton"
-            else:
-                meta.pop("codec", None)
-    else:
-        for rel in stored_norm:
-            manifest.inputs.get(rel, {}).pop("codec", None)
+                meta["codec"] = name
+            break        # the format is claimed; a second codec cannot help
 
     # K1: the cap used to be enforced only on the way back in, so `compress`
     # would build an archive its own reader refused and find out at the bottom
@@ -557,7 +589,7 @@ def extract_stored(archive_path: Path, out_dir: Path,
             # so the raw-size comparison below would be meaningless for it.
             # The ledger's size still bounds the restored bytes, which is what
             # the bomb defence actually cares about.
-            if meta.get("codec") != "lepton" and info.file_size > declared:
+            if not meta.get("codec") and info.file_size > declared:
                 raise ContainerError(
                     f"stored entry {key!r} declares {info.file_size} bytes but "
                     f"the ledger says {declared}")
@@ -573,9 +605,9 @@ def extract_stored(archive_path: Path, out_dir: Path,
             target = resolve_within(out_dir, key)
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                if meta.get("codec") == "lepton":
-                    target.write_bytes(
-                        _read_lepton_member(zf, info, declared, key))
+                if meta.get("codec"):
+                    target.write_bytes(_read_packed_member(
+                        zf, info, declared, key, str(meta["codec"])))
                 else:
                     with zf.open(info) as src, target.open("wb") as dst:
                         got = _copy_bounded(src, dst, declared,
@@ -634,14 +666,15 @@ def extract_stored(archive_path: Path, out_dir: Path,
             target = resolve_within(out_dir, key)
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                if source_meta.get("codec") == "lepton":
+                if source_meta.get("codec"):
                     # The member holds the SOURCE entry's lepton bytes, which
                     # are smaller than the JPEG they restore to. Copying them
                     # across verbatim produced "holds 20162 bytes, the ledger
                     # declares 23906" and failed the entire compress - two
                     # identical photos in one folder was all it took.
-                    target.write_bytes(
-                        _read_lepton_member(zf, info, declared, key))
+                    target.write_bytes(_read_packed_member(
+                        zf, info, declared, key,
+                        str(source_meta["codec"])))
                 else:
                     with zf.open(info) as src, target.open("wb") as dst:
                         got = _copy_bounded(src, dst, declared,
@@ -657,8 +690,9 @@ def extract_stored(archive_path: Path, out_dir: Path,
     return written
 
 
-def _read_lepton_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo,
-                        declared: int, key: str) -> bytes:
+def _read_packed_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo,
+                        declared: int, key: str,
+                        codec: str) -> bytes:
     """Unpack one lepton member, bounded at both ends.
 
     Two amplification steps live here and both used to be unbounded: a plain
@@ -675,17 +709,22 @@ def _read_lepton_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo,
         packed = fh.read(info.file_size + 1)
     if len(packed) > info.file_size:
         raise ContainerError(f"stored entry {key!r} is larger than it declares")
-    if not jpeg.available():
+    mod = _CODECS.get(codec)
+    if mod is None:
         raise ContainerError(
-            f"stored entry {key!r} needs the 'lepton-jpeg-python' package to "
-            f"restore, and it is not installed")
+            f"stored entry {key!r} was packed with {codec!r}, which this build "
+            f"does not know how to restore")
+    if not mod.available():
+        raise ContainerError(
+            f"stored entry {key!r} needs the {codec!r} codec to restore, and "
+            f"it is not installed")
     try:
-        restored = jpeg.unpack(packed)
+        restored = mod.unpack(packed)
     except RuntimeError as exc:
         # lepton's own error text carries the Rust build machine's paths, which
         # is not something to show somebody about their own photo.
         raise ContainerError(
-            f"stored entry {key!r} is not valid lepton data") from exc
+            f"stored entry {key!r} is not valid {codec} data") from exc
     if len(restored) != declared:
         raise ContainerError(
             f"stored entry {key!r} restored to {len(restored)} bytes, the "

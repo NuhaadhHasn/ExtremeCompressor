@@ -251,12 +251,29 @@ def test_an_installed_binary_is_rehashed_before_use(server):
     spec = _spec(base, "qpdf.zip", digest, size)
 
     exe = fetch_tool(spec)
+    spec = _pinned(spec)
     assert verify_installed(spec) is True
 
     exe.write_bytes(b"MZ trojan")
     assert verify_installed(spec) is False
     assert installed_path(spec) is None, \
         "a tampered binary must not be handed back as installed"
+
+
+def test_an_unpinned_spec_is_never_reported_as_installed(server):
+    """With no `exe_dir_sha256` there is nothing in source to compare against,
+    so a good install and a tampered one are indistinguishable. Answering
+    "installed" there would be a guess, which is the thing this function
+    exists to avoid - so it refuses, and the tool is re-fetched instead."""
+    base, root = server
+    payload = _zip_bytes({"bin/qpdf.exe": b"MZ"})
+    digest, size = _publish(root, "qpdf.zip", payload)
+    spec = _spec(base, "qpdf.zip", digest, size)
+
+    fetch_tool(spec)
+    assert spec.exe_dir_sha256 == ()
+    assert verify_installed(spec) is False
+    assert installed_path(spec) is None
 
 
 def test_a_version_below_the_security_floor_is_refused(server):
@@ -331,3 +348,106 @@ def test_an_unlisted_origin_gets_no_redirect_latitude():
 
     assert _redirect_ok("example.org", "example.org")
     assert not _redirect_ok("example.org", "cdn.example.org")
+
+
+# --------------------------------------------------------------------------
+# The hole an audit found in the first version of this module: "re-hash before
+# use" hashed the launcher and nothing else.
+# --------------------------------------------------------------------------
+
+def _pinned(spec):
+    """Re-create ``spec`` carrying the digests of the install now on disk.
+
+    This mirrors the real workflow exactly: `fetch_tool` has verified the
+    *archive* against a source-pinned hash, so the tree it just unpacked is
+    trustworthy at that moment, and `pin_exe_dir` records what it found for a
+    human to commit. Tests that skip this step are asserting `verify_installed`
+    on an unpinned spec, which now correctly answers False.
+    """
+    import dataclasses
+
+    return dataclasses.replace(spec, exe_dir_sha256=toolfetch.pin_exe_dir(spec))
+
+
+def _tool_with_dll(server, tmp_path, **kw):
+    """Install a tool shaped like the real ones: a small exe beside a DLL that
+    holds the actual code. qpdf.exe is 19 KB next to a 7.4 MB qpdf30.dll, and
+    flac.exe is 339 KB next to a 522 KB libFLAC.dll."""
+    base, root = server
+    payload = _zip_bytes({
+        "bin/qpdf.exe": b"MZ small launcher",
+        "bin/qpdf30.dll": b"MZ this is where the code actually lives",
+        "bin/msvcp140.dll": b"MZ runtime",
+    })
+    digest, size = _publish(root, "tool.zip", payload)
+    spec = _spec(base, "tool.zip", digest, size, **kw)
+    exe = fetch_tool(spec)
+    return _pinned(spec), exe
+
+
+def test_replacing_a_sibling_dll_is_detected(server, tmp_path):
+    """The critical finding. `verify_installed` hashed `exe_relpath` alone, so
+    on the real qpdf install it guarded 19,456 of 87,686,094 bytes - 0.02% -
+    and the 7.4 MB DLL holding the code was unchecked.
+
+    Windows searches the application directory first for a non-KnownDLL, so
+    replacing a sibling DLL is code execution inside the process the engine
+    spawns. `flac` has exactly this shape and **is** spawned, by
+    `flacaudio._run` through `installed_path`, so this was live rather than
+    hypothetical.
+    """
+    spec, exe = _tool_with_dll(server, tmp_path)
+    assert verify_installed(spec) is True
+
+    (exe.parent / "qpdf30.dll").write_bytes(b"MZ ATTACKER PAYLOAD")
+
+    assert verify_installed(spec) is False, \
+        "a replaced sibling DLL was not detected"
+    assert installed_path(spec) is None
+
+
+def test_adding_a_dll_that_was_never_in_the_archive_is_detected(server, tmp_path):
+    """The variant the reporter missed and the verifier found: there was no
+    "nothing extra" check either, so *planting* a DLL was undetected even
+    without touching a pinned file. `version.dll` is a classic hijack target."""
+    spec, exe = _tool_with_dll(server, tmp_path)
+    (exe.parent / "version.dll").write_bytes(b"MZ PLANTED")
+
+    assert verify_installed(spec) is False, \
+        "a planted DLL in the executable's own directory was not detected"
+
+
+def test_the_trust_anchor_is_not_a_file_in_the_directory_it_protects(server, tmp_path):
+    """The first version wrote the expected hash to `.pinned-sha256` **next to
+    the binary**, so anyone able to overwrite the binary could rewrite the
+    marker too. Verified: tampering with both left `verify_installed` returning
+    True. Hashing the whole tree into that marker would not have fixed it - the
+    same single write closes the loop.
+
+    So the expected digests live in the source-pinned `ToolSpec`, where the
+    archive hash already lives. An attacker who can edit the source can do
+    anything anyway; that is outside the threat model and always was.
+    """
+    spec, exe = _tool_with_dll(server, tmp_path)
+    exe.write_bytes(b"MZ TROJAN LAUNCHER")
+
+    # Re-write every on-disk marker to agree with the tampered tree.
+    import hashlib as _h
+    for marker in exe.parent.parent.rglob(".pinned-sha256"):
+        marker.write_text(_h.sha256(exe.read_bytes()).hexdigest(),
+                          encoding="ascii")
+
+    assert verify_installed(spec) is False, \
+        "the on-disk marker is still being trusted"
+
+
+def test_every_pinned_tool_declares_its_directory_digests():
+    """Without `exe_dir_sha256` there is nothing in source to compare against,
+    so `verify_installed` cannot answer and the tool would be re-fetched on
+    every run. Pinning it is therefore not optional for a shipped entry, and
+    this is what stops an unpinned one being committed."""
+    for name, spec in toolfetch.TOOL_MANIFEST.items():
+        assert spec.exe_dir_sha256, f"{name}: no exe_dir_sha256 pinned"
+        for filename, digest in spec.exe_dir_sha256:
+            assert "/" not in filename and "\\" not in filename, filename
+            assert len(digest) == 64, f"{name}/{filename}: not a sha256"

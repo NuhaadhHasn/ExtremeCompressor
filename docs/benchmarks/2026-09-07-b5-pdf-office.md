@@ -199,3 +199,65 @@ byte-lossless, because rebuilding a zip bit-exactly is not guaranteed.
 # the estimator against the measured baseline
 .venv\Scripts\python.exe -m pytest tests\test_estimate_backtest.py -q
 ```
+
+---
+
+## 8. qpdf, measured — and the answer is Phase C
+
+**2026-09-07.** §6 predicted qpdf would fail the lossless gate exactly as
+`oxipng` did in B3. Fetched via E1 and measured, it does — and it also loses
+the ratio contest by 7×, which §6 did not predict.
+
+qpdf 12.4.1 (msvc64), `--object-streams=generate --recompress-flate
+--compression-level=9`, on 10 real PDFs from the tutorial corpus:
+
+| file | original | qpdf | saved | byte-identical |
+|---|---:|---:|---:|:--:|
+| in1 | 4,270,155 | 3,770,720 | 11.7% | **NO** |
+| in2 | 1,535,917 | 1,537,617 | **−0.1%** | NO |
+| in3 | 1,219,022 | 1,224,485 | **−0.4%** | NO |
+| in4 | 784,496 | 768,757 | 2.0% | NO |
+| in5 | 1,089,348 | 1,052,602 | 3.4% | NO |
+| in6 | 1,112,961 | 924,253 | 17.0% | NO |
+| in7 | 305,772 | 286,229 | 6.4% | NO |
+| in8 | 449,241 | 423,316 | 5.8% | NO |
+| in9 | 1,588,653 | 1,471,994 | 7.3% | NO |
+| in10 | 1,462,064 | 1,370,450 | 6.3% | NO |
+
+### Head to head, same ten files
+
+| route | result | saved | lossless? |
+|---|---:|---:|:--:|
+| **qpdf** `--recompress-flate` | 12,830,423 B | **7.14%** | **0 of 10 byte-identical** |
+| **existing `precomp → 7z`** | 6,978,233 B | **49.5%** | yes, D9-verified |
+
+**Two independent disqualifications.** Either alone would be enough:
+
+1. **Not byte-lossless.** 0 of 10 files came back identical, so no qpdf output
+   can satisfy a SHA-256 ledger. This is the same finding as B3's `oxipng`
+   (31.79% saved, 0 of 10 identical) and it has the same consequence: the tool
+   belongs in **Phase C** with the AV1 re-encoder and C6, opt-in and labelled
+   as changing your file.
+2. **It loses anyway, by 7×.** Even granted a free pass on byte-identity it
+   saves 7.14% where the lossless route already saves 49.5%. Two of the ten
+   files got *larger*.
+
+So B5's qpdf half is **closed, not deferred**. There is no configuration of
+qpdf worth adding to a lossless phase, and its Phase C value is marginal
+because the route we already have beats it seven-fold.
+
+**This is now the third time the pattern has held** (B3 oxipng, B5 qpdf, and
+K4's zstd window on real data): a specialist named in the roadmap loses to the
+`precomp → 7z` route once real files are put through both. Worth defaulting to
+"measure the baseline first" for B4 and B6 as well.
+
+### E1 earned its place immediately
+
+The download was the first real exercise of the new fetcher, and it found a
+defect in it: `_open` refused the transfer with *"refusing a cross-host
+redirect: github.com → release-assets.githubusercontent.com"*. The guard was
+right to exist and wrong as written — **GitHub serves every release asset by
+redirecting to that host**, so a same-host-only rule refuses the primary source
+for every tool this project fetches. Narrowed to a per-origin allowlist
+(`github.com → *.githubusercontent.com`), with both hops required to be https
+and suffix-match bait (`githubusercontent.com.evil.com`) pinned by tests.

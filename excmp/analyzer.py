@@ -26,6 +26,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
+import zipfile
 from pathlib import Path
 
 import zstandard
@@ -117,6 +118,83 @@ class FileInfo:
     #: ``0`` means "unknown", which is what a hand-built FileInfo (tests,
     #: planner fixtures) gets and what makes the field safe to add.
     mtime_ns: int = 0
+    #: B5: does this file hold a deflate layer Precomp can actually expand?
+    #:
+    #: Structural, not statistical, and that is the whole point. `estimate.py`
+    #: recorded "no cheap signal separates them" for whether Precomp will find
+    #: anything, and for **entropy sampling** that is true - measured on 224
+    #: real PDF/Office files, all 224 fail the `zlib_stream` test and their
+    #: worst-sample ratios sit at 0.88-0.91, so the bytes honestly say
+    #: "incompressible" while `precomp -> 7z` took 50.36% off them.
+    #:
+    #: An extension list is not sufficient either: 37% of the estimator's own
+    #: backtest corpus is a 263 MB **encrypted** `.zip` that measured 2.97%.
+    #: So this reads the container - a zip's central directory member flags,
+    #: or a bounded head scan for a PDF - and answers for the file in hand.
+    expandable: bool = False
+
+
+#: Containers built out of a zip: their members are individually deflated, so
+#: Precomp can expand each one - unless they are encrypted.
+_ZIP_FAMILY = {".zip", ".docx", ".xlsx", ".pptx", ".jar", ".apk", ".odt",
+               ".ods", ".odp", ".epub"}
+
+#: How far into a PDF to look for a Flate stream. PDFs scatter their streams
+#: through the body, so offset 0 says nothing - but 11 of 12 real PDFs
+#: sampled declare one inside the first 64 KiB, and reading more than that per
+#: file is not free on a 55,000-file tree over an external drive. The one that
+#: does not is an image-only scan, which genuinely has nothing to expand; the
+#: estimate's optimistic end covers being wrong about it.
+_PDF_SCAN_BYTES = 64 << 10
+
+
+def _zip_is_expandable(path: Path) -> bool:
+    """True when this really is a zip whose members Precomp could expand.
+
+    Reads the central directory only - member *flags*, never member data - so
+    it costs one seek and a short read regardless of how large the file is.
+
+    Encryption is the case that matters. `Wondershare ... pass=123.zip` is
+    263 MB and 37% of the estimator's backtest corpus, and Extreme measured
+    **2.97%** on that corpus: Precomp cannot see inside an encrypted member,
+    so believing the `.zip` extension would predict a large gain that never
+    arrives.
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            members = zf.infolist()
+    except (OSError, zipfile.BadZipFile, ValueError):
+        # Not a zip after all, or truncated. This runs during analysis, which
+        # K3 spent a phase making incapable of failing a job.
+        return False
+    if not members:
+        return False
+    if any(info.flag_bits & 0x1 for info in members):
+        return False
+    return any(info.compress_type == zipfile.ZIP_DEFLATED for info in members)
+
+
+def _pdf_is_expandable(head: bytes) -> bool:
+    """True when the PDF declares a Flate stream in its first pages.
+
+    `/FlateDecode` is the filter Precomp reverses. An image-only PDF wrapping
+    DCT data declares `/DCTDecode` instead and has nothing to expand.
+    """
+    return b"FlateDecode" in head
+
+
+def probe_expandable(path: Path, head: bytes) -> bool:
+    """Will Precomp find a deflate layer in this file? (B5.)
+
+    ``head`` is the buffer `analyze_file` has already read, so the common case
+    costs nothing extra; only a zip-family container pays for a second open.
+    """
+    suffix = path.suffix.lower()
+    if suffix in _ZIP_FAMILY:
+        return _zip_is_expandable(path)
+    if suffix == ".pdf":
+        return _pdf_is_expandable(head)
+    return False
 
 
 def _looks_like_zlib(head: bytes) -> bool:
@@ -194,7 +272,10 @@ def analyze_file(path: Path) -> FileInfo:
     st = path.stat()
     size = st.st_size
     with path.open("rb") as fh:
-        head = fh.read(4096)
+        # 64 KiB rather than 4096: B5's PDF probe has to reach a `/FlateDecode`
+        # declaration, and a PDF never puts one at offset 0. Category sniffing
+        # and the zlib check still only look at the first few bytes.
+        head = fh.read(_PDF_SCAN_BYTES)
     stats = sample_stats(path)
     return FileInfo(
         path=path,
@@ -205,6 +286,7 @@ def analyze_file(path: Path) -> FileInfo:
         sample_ratio=stats.ratio,
         sample_ratio_max=stats.ratio_max,
         mtime_ns=st.st_mtime_ns,
+        expandable=probe_expandable(path, head),
     )
 
 

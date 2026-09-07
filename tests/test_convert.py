@@ -31,6 +31,7 @@ import pytest
 from excmp.convert import ConvertResult, convert_archive
 from excmp.planner import Profile
 from excmp.stages.base import StageContext
+from restored import assert_all_present, hash_tree
 from excmp.tools import find_tools
 
 needs_7z = pytest.mark.skipif(find_tools().get("7z") is None,
@@ -86,13 +87,8 @@ def test_a_zip_becomes_an_excmp_with_the_same_contents(tmp_path):
     from excmp.engine import extract
     restored = tmp_path / "restored"
     extract(out, restored, StageContext(temp_dir=tmp_path / "x", threads=2))
-    got = {p.relative_to(restored).as_posix():
-           hashlib.sha256(p.read_bytes()).hexdigest()
-           for p in restored.rglob("*") if p.is_file()}
-    for rel, digest in digests.items():
-        match = [v for k, v in got.items() if k.endswith(rel)]
-        assert match, f"{rel} did not survive the conversion"
-        assert match[0] == digest, f"{rel} came back different"
+    # Exact names - see tests/restored.py for why a suffix match is wrong.
+    assert_all_present(restored, digests)
 
 
 @needs_7z

@@ -64,8 +64,11 @@ def test_a_zip_export_opens_with_the_stdlib(tmp_path):
         assert zf.testzip() is None
         names = {n.replace("\\", "/").split("/", 1)[-1] if "/" in n else n
                  for n in zf.namelist()}
+        # Compare whole names, not suffixes: "a.txt" is "contained in"
+        # "backup-a.txt", so a suffix test passes on a file that is not there.
+        present = {n.rsplit("/", 1)[-1] for n in zf.namelist()}
         for rel in digests:
-            assert any(n.endswith(rel) for n in zf.namelist()), \
+            assert rel.rsplit("/", 1)[-1] in present, \
                 f"{rel} missing from {sorted(zf.namelist())}"
 
 

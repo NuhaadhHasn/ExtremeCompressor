@@ -31,6 +31,7 @@ from hypothesis import strategies as st
 from excmp.engine import compress, extract
 from excmp.planner import Profile
 from excmp.stages.base import StageContext
+from restored import assert_restored_exactly
 
 # Characters chosen because each has broken a real archiver: spaces and dots
 # (Windows strips trailing ones), non-ASCII (code-page mangling), digits and
@@ -105,14 +106,12 @@ def test_any_tree_survives_a_roundtrip(tmp_path_factory, tree):
     out = tmp_path / "out"
     extract(archive, out, StageContext(temp_dir=tmp_path / "xt", threads=2))
 
-    got = {p.relative_to(out).as_posix():
-           hashlib.sha256(p.read_bytes()).hexdigest()
-           for p in out.rglob("*") if p.is_file()}
-
-    for rel, digest in expected.items():
-        match = [v for k, v in got.items() if k.endswith(rel)]
-        assert match, f"{rel!r} did not come back. Got {sorted(got)}"
-        assert match[0] == digest, f"{rel!r} came back with different bytes"
+    # Exact names, compared as sets. The suffix match this used to do was
+    # broken in both directions, and Hypothesis proved it by shrinking to
+    # {'0': b'', '.0': b'repeating block '} - ".0".endswith("0") is True, so
+    # the empty file matched the wrong restored file and reported a corruption
+    # that had not happened. See tests/restored.py.
+    assert_restored_exactly(out, expected)
 
 
 @settings(max_examples=10, deadline=None,
@@ -164,3 +163,52 @@ def test_the_ledger_accounts_for_every_file(tmp_path_factory, tree):
     for meta in manifest.inputs.values():
         assert meta.get("sha256"), "a ledger entry carries no hash"
         assert meta.get("route") in ("pipeline", "store")
+
+
+# ---------------------------------------------------------------------------
+# The comparison itself, which was the thing that was broken
+# ---------------------------------------------------------------------------
+
+def test_the_comparison_catches_a_file_that_did_not_come_back(tmp_path):
+    """The false-PASS the old suffix match allowed, and the worse half of that
+    bug: `a.txt` missing but `backup-a.txt` present would have matched, and a
+    lost file would have gone green."""
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "backup-a.txt").write_bytes(b"not the file you asked for")
+
+    with pytest.raises(AssertionError, match="did not come back|appeared"):
+        assert_restored_exactly(out, {"a.txt": hashlib.sha256(b"x").hexdigest()})
+
+
+def test_the_comparison_does_not_confuse_two_similar_names(tmp_path):
+    """Hypothesis's own counterexample, pinned as an example test so it cannot
+    come back: '.0'.endswith('0') is True."""
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "0").write_bytes(b"")
+    (out / ".0").write_bytes(b"repeating block ")
+
+    assert_restored_exactly(out, {
+        "0": hashlib.sha256(b"").hexdigest(),
+        ".0": hashlib.sha256(b"repeating block ").hexdigest(),
+    })
+
+
+def test_the_comparison_catches_altered_bytes(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "a.txt").write_bytes(b"tampered")
+    with pytest.raises(AssertionError, match="different bytes"):
+        assert_restored_exactly(out, {"a.txt": hashlib.sha256(b"original").hexdigest()})
+
+
+def test_the_comparison_sees_through_the_wrapping_directory(tmp_path):
+    """A restore recreates the source folder, so `src/a.txt` arrives as
+    `out/src/a.txt`. Stripping a whole leading component is the careful way to
+    handle that; matching on suffixes was the careless one."""
+    out = tmp_path / "out"
+    (out / "src").mkdir(parents=True)
+    (out / "src" / "a.txt").write_bytes(b"content")
+
+    assert_restored_exactly(out, {"a.txt": hashlib.sha256(b"content").hexdigest()})

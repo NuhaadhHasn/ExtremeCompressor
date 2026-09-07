@@ -31,6 +31,7 @@ import pytest
 from excmp.engine import compress, extract
 from excmp.planner import Profile
 from excmp.stages.base import StageContext, StageError
+from restored import assert_all_present, hash_tree
 
 
 def _corpus(tmp_path: Path) -> tuple[Path, dict[Path, tuple[bytes, int]]]:
@@ -106,10 +107,8 @@ def test_a_cancelled_compress_leaves_nothing_behind(tmp_path, profile, fire_afte
         extract(out, restored, StageContext(temp_dir=tmp_path / "ct2", threads=2))
         for path, (data, _mtime) in snapshot.items():
             rel = path.relative_to(src).as_posix()
-            match = [q for q in restored.rglob("*")
-                     if q.is_file() and q.as_posix().endswith(rel)]
-            assert match, f"{rel} missing from a job that reported success"
-            assert match[0].read_bytes() == data
+            # Exact names - tests/restored.py explains why endswith is wrong.
+            assert_all_present(restored, {rel: hashlib.sha256(data).hexdigest()})
     else:
         assert not out.exists(), "a cancelled job published an archive"
 
@@ -218,8 +217,5 @@ def test_a_failed_job_does_not_poison_the_next_one(tmp_path):
         if not p.is_file():
             continue
         rel = p.relative_to(src).as_posix()
-        match = [q for q in restored.rglob("*")
-                 if q.is_file() and q.as_posix().endswith(rel)]
-        assert match, f"{rel} missing after a poisoned-temp run"
-        assert (hashlib.sha256(match[0].read_bytes()).hexdigest()
-                == hashlib.sha256(p.read_bytes()).hexdigest())
+        assert_all_present(restored,
+                           {rel: hashlib.sha256(p.read_bytes()).hexdigest()})

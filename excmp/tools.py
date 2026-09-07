@@ -34,17 +34,27 @@ LEGACY_ONLY: frozenset[str] = frozenset({"srep"})
 
 #: Minimum version we are willing to see, per tool. Below this the app says so.
 #:
-#: 7-Zip < 24.09 carries **CVE-2025-0411**, a Mark-of-the-Web bypass. This is
-#: not an exploit path for *us* — `excmp.safepath` validates every
-#: archive-supplied name ourselves and never delegates to 7-Zip's sanitizer —
-#: but it is the wrong binary to be feeding untrusted archives to, and E1
-#: plans this floor alongside its pinned hashes. Kept as a tuple so the
-#: comparison is numeric: `"9.20" > "24.09"` is True as *strings*, which
-#: would wave a 2010 build straight through.
-SECURITY_FLOOR: dict[str, tuple[int, int]] = {"7z": (24, 9)}
+#: 7-Zip below **26.02** carries **CVE-2026-14266** (CVSS 7.0): a heap buffer
+#: overflow in the XZ decoder (`MixCoder_Code`, `C/XzDec.c`) that a crafted
+#: `.xz` can turn into code execution in the process doing the extracting.
+#: It was present from 21.07 through 26.01 - a five-year window - and fixed in
+#: 26.02 on 2026-06-25.
+#:
+#: **This one IS an exploit path for us**, unlike the CVE the floor previously
+#: named. `excmp.safepath` protects against hostile *names*; it cannot do
+#: anything about memory corruption inside 7-Zip while it decompresses, and we
+#: hand 7-Zip arbitrary user archives on the Extract tab by design. The floor
+#: was 24.09 for CVE-2025-0411, a Mark-of-the-Web bypass that our own
+#: propagation and validation already covered - so it was both too low and
+#: aimed at the wrong risk.
+#:
+#: Kept as a tuple so the comparison is numeric: `"9.20" > "24.09"` is True as
+#: *strings*, which would wave a 2010 build straight through.
+SECURITY_FLOOR: dict[str, tuple[int, int]] = {"7z": (26, 2)}
 
 _FLOOR_REASON: dict[str, str] = {
-    "7z": "CVE-2025-0411 (Mark-of-the-Web bypass)",
+    "7z": "CVE-2026-14266, a heap overflow in the XZ decoder that a crafted "
+          "archive can turn into code execution",
 }
 
 # A version sits after the product name, but not always in the next word:

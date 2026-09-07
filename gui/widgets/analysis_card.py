@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QProgressBar,
 from ..suggest import CATEGORY_LABELS, AnalysisSummary, gain_note, headline, shrink_mode_hint
 from ..theme import GAP_INTRA, repolish
 from .bars import CategoryBreakdown
+from .treemap import Treemap
 
 
 class AnalysisCard(QFrame):
@@ -88,6 +89,13 @@ class AnalysisCard(QFrame):
 
         self._legend_holder = self._breakdown.take_legend(self._details)
         details.addWidget(self._legend_holder)
+
+        # I8: the same breakdown as an area, behind the same disclosure. It
+        # answers the question people actually ask when told an archive saved
+        # 3% - "what IS all this?" - and the bar above cannot, because a bar
+        # 2% wide is invisible whatever it is labelled.
+        self._treemap = Treemap(self._details)
+        details.addWidget(self._treemap)
 
         self._hint = QLabel("", self._details)
         self._hint.setObjectName("Subtitle")
@@ -184,6 +192,7 @@ class AnalysisCard(QFrame):
         self._status.setText("")
         self._headline.setText(headline(summary))
         self._headline.setAccessibleName(headline(summary))
+        self._treemap.set_breakdown(summary.by_category)
         self._breakdown.set_data(summary.ranked_categories(), summary.total_bytes,
                                  CATEGORY_LABELS)
 

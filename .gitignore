@@ -20,3 +20,6 @@ tools/bin/
 .shots-work/
 # tools/qa_sweep.py output - review these, never commit them
 .qa/
+
+# corpus_guard snapshot - machine-specific, never committed
+.corpus-snapshot.json

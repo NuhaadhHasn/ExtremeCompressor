@@ -540,10 +540,75 @@ class QueueManager(QObject):
         for job in list(self.jobs):
             self.cancel(job.id)
 
+    def order(self) -> list[str]:
+        """Job ids in run order. A list copy - callers reorder through
+        `move_job`, so the queue stays the only thing that mutates it."""
+        return list(self._order)
+
+    def move_job(self, job_id: str, delta: int) -> None:
+        """Nudge a queued job up or down. Out-of-range and unknown ids are
+        no-ops: a queue control that raises is a queue control nobody uses."""
+        if job_id not in self._jobs or job_id not in self._order:
+            return
+        index = self._order.index(job_id)
+        target = max(0, min(len(self._order) - 1, index + delta))
+        if target == index:
+            return
+        self._order.insert(target, self._order.pop(index))
+
+    def run_next(self, job_id: str) -> None:
+        """Put this job at the head of the *waiting* jobs.
+
+        Never ahead of one already running - that would mean stopping work
+        already paid for, which is not what "run next" means to anybody.
+        """
+        if job_id not in self._jobs or job_id not in self._order:
+            return
+        first_waiting = 0
+        for i, other in enumerate(self._order):
+            if self._jobs[other].state.is_terminal or other == self._active_id:
+                first_waiting = i + 1
+        self._order.remove(job_id)
+        self._order.insert(min(first_waiting, len(self._order)), job_id)
+
     def clear_finished(self) -> None:
+        """Tidy the queue - and keep the record (I3).
+
+        This used to delete the job outright, so the only trace of what was
+        compressed, how well and with which settings went with it.
+        """
+        from . import history
+
         for job_id in [i for i in self._order if self._jobs[i].state.is_terminal]:
+            job = self._jobs[job_id]
+            history.append(self._history_entry(job))
             del self._jobs[job_id]
             self._order.remove(job_id)
+
+    @staticmethod
+    def _history_entry(job):
+        from datetime import datetime
+
+        from . import history
+
+        return history.HistoryEntry(
+            archive=str(job.out_path),
+            inputs=[str(p) for p in job.inputs],
+            profile=job.profile.value,
+            chain=" + ".join(getattr(job, "chain", []) or []),
+            orig_bytes=int(job.orig_bytes or 0),
+            final_bytes=int(job.final_bytes or 0),
+            elapsed_s=float(getattr(job, "elapsed_s", 0.0) or 0.0),
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+            state=job.state.value,
+            error=str(getattr(job, "error", "") or ""),
+            archive_format=getattr(job, "archive_format", "excmp"),
+            recovery=getattr(job, "recovery", None),
+            split=getattr(job, "split", None),
+            # The fact, never the password: history outlives the session and a
+            # secret written here would outlive it too.
+            encrypted=bool(getattr(job, "password", None)),
+        )
 
     def shutdown(self, wait_ms: int = 5000) -> None:
         """Cancel everything and wait for the pool - called on window close so

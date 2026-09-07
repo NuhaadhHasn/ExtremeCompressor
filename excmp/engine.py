@@ -199,9 +199,18 @@ def _check_manifest_size(relmap: dict[Path, str], the_plan: Plan,
     projected = manifest_size_estimate(relmap.values(), stored_count=stored,
                                        dirs=empty_dirs or ())
     if projected > cap:
+        # Name whichever list is actually the problem. Saying "N file(s),
+        # whose names and hashes" is simply false for a selection of 300 files
+        # and 200,000 empty directories, and it sends the user off to split a
+        # folder that was never the cause.
+        n_dirs = len(empty_dirs or ())
+        what = f"{len(relmap):,} file(s), whose names and hashes"
+        if n_dirs > len(relmap):
+            what = (f"{len(relmap):,} file(s) and {n_dirs:,} empty "
+                    f"director{'y' if n_dirs == 1 else 'ies'}, whose names")
         raise RuntimeError(
-            f"this selection has {len(relmap):,} file(s), whose names and "
-            f"hashes need about {projected / 2**20:.1f} MiB of manifest - past "
+            f"this selection has {what} need about "
+            f"{projected / 2**20:.1f} MiB of manifest - past "
             f"the {cap / 2**20:.1f} MiB an archive may carry. Archive the "
             f"subfolders separately.")
     if projected > cap * 4 // 5:
@@ -576,7 +585,22 @@ def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str],
                 raise ValueError(f"duplicate archive path '{rel}' - rename one of the inputs")
             infos.append(info)
             relmap[info.path] = rel
-        for d in iter_empty_dirs(inp):
+        # Reuse the walk `analyze_tree_safe` already did, and derive the empty
+        # set from the files that were actually *analyzed*. That does two jobs
+        # at once.
+        #
+        # It stops the second full `rglob` over a tree we have just walked -
+        # ~20 s of drive metadata latency on the 57,020-file corpus, paid for a
+        # list that is usually empty.
+        #
+        # And it closes a K3/K2 interaction that would otherwise lose a folder:
+        # a directory whose *only* file was unreadable is in neither list - not
+        # in the ledger, because its file was skipped, and not in `dirs`,
+        # because it was not empty when the tree was walked. Keyed on the
+        # analyzed files it is empty, which is exactly what the restore can
+        # faithfully reproduce, and the user hears about the skipped file
+        # instead of silently losing the directory.
+        for d in iter_empty_dirs(inp, files=[i.path for i in analyses]):
             empty_dirs.append(f"{inp.name}/{d.relative_to(inp).as_posix()}")
     return infos, relmap, empty_dirs, skipped
 
@@ -932,6 +956,21 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     for r in the_plan.routes],
             dirs=empty_dirs,
         )
+        # K3 + K2 interaction: a directory whose *only* file was skipped is
+        # now in neither list - not in the ledger (its file is gone) and not
+        # in `dirs` (it was not empty when the tree was walked). The restore
+        # would silently lose a folder that exists in the source, and the user
+        # would be told about a skipped *file* rather than a missing *folder*.
+        #
+        # Recording it as an empty directory is the honest outcome: that is
+        # exactly what the restore can faithfully reproduce.
+        if skipped:
+            for rel in sorted({p.rsplit("/", 1)[0] for p in
+                               (relmap[f] for f in dropped) if "/" in p}):
+                if not any(k == rel or k.startswith(rel + "/") for k in ledger):
+                    if rel not in empty_dirs:
+                        empty_dirs.append(rel)
+
         stored_map = {relmap[f]: f for f in (store_route.files if store_route else [])}
         # K3, the window the first pass missed. A store-route file is never
         # staged: its bytes are first read *inside* `write_container`, by
@@ -1387,6 +1426,11 @@ def _extract_selected(archive: Path, names: list[str], out_dir: Path,
     finally:
         rmtree_force(work)
 
+    # K2 for the selective path as well. Without this, "extract everything"
+    # and "extract these files" produced different trees from the same
+    # archive - and a user pulling one file out is not asking for a different
+    # directory layout than the one the archive records.
+    _restore_empty_dirs(out_dir, manifest.dirs)
     return ExtractResult(out_dir=out_dir, files_restored=len(wanted),
                          verified=verified, elapsed_s=time.monotonic() - t0)
 

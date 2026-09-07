@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-07**. **994 tests** (991 pass + 1 skip + 2 strict-xfail;
+> Status date: **2026-09-07**. **1,002 tests** (1,000 pass + 1 skip + 1 strict-xfail;
 > the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
 > Everything below is merged to `main` except **`phase-i3-i8-i10`** and
 > **`phase-k1-manifest-v2`**, which are stacked and awaiting review.

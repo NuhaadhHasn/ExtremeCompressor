@@ -7,11 +7,11 @@
 > **Start with B4 or B5** — the next real feature work. Section 3 explains why
 > those two and not B6.
 
-**994 tests: 991 pass + 1 skip + 2 strict-xfail.**
+**1,002 tests: 1,000 pass + 1 skip + 1 strict-xfail.**
 
-The second xfail is new and deliberate: K4 left the Fast estimator's range
-excluding the truth on a duplicate-heavy corpus. It is B8's to close - see
-section 5.
+The only xfail left is research/23 §2.4's 300px page budget, which §2.4 and
+§3.3 contradict each other about - not a to-do. K4's estimator xfail is gone:
+it was fixed rather than deferred to B8, see section 2.
 
 ```
 .venv\Scripts\python.exe -m pytest -q
@@ -151,10 +151,15 @@ stage. That changes the *file count* in the manifest — one `.docx` becomes
 dozens of ledger entries — which lands straight on the preflight described in
 section 0. Add it to the serialised-manifest tests.
 
-**Also worth doing cheaply:** `excmp/ram.py` models LZMA2 dictionaries only, so
-the GUI's peak-RAM column says nothing about the Fast profile — and K4 just made
-zstd's compress memory data-dependent (up to ~1.8 GiB). That is now a visible
-gap in a shipped column.
+**`excmp/ram.py` now models zstd too** — that gap is closed, and the way it was
+closed is worth knowing before you extend it.
+`ZstdCompressionParameters.estimated_compression_context_size()` is the obvious
+exact answer and **must not be called**: for the parameter sets `ZstdStage`
+builds it kills the process with `STATUS_INTEGER_DIVIDE_BY_ZERO` (0xC0000094)
+inside libzstd — a crash, not an exception. A test parses `ram.py`'s AST to keep
+the call out while leaving the reason in a comment. The shipped model is fitted
+to measurement (`128 MiB + 0.85 × window`) and covers both measured points,
+1,868 predicted vs 1,813 at window 31 and 237 vs 163 at window 27.
 
 ---
 
@@ -177,20 +182,19 @@ correct the doc.** That happened nine times across the last two sessions.
 ## 5. Still open, in the order they are worth doing
 
 1. **B4** (WAV/FLAC), **B5** (PDF/Office) — right-sized, test material present
-2. **B8** — re-benchmark and replace every `(est.)` with a measurement. It now
-   has a **failing test waiting for it**: K4 left the Fast estimator's range
-   excluding the truth on a duplicate-heavy corpus (measured 0.677x the
-   optimistic end), pinned as a strict xfail in `tests/test_zstd_window.py`.
-   Two cheap fixes were tried and measured and both cost more than they buy —
-   the roadmap entry says which and why, so start there rather than
-   re-discovering it
-3. **`ram.py` for zstd** — small, and now a visible gap (section 3)
-4. **B6** (Oodle/AAA games) — biggest gap, blocked on test material
-5. **I6** (compare presets on a real sample), **I7** (translations — the loader
+2. **B8** — re-benchmark and replace every `(est.)` with a measurement. No
+   longer carries a failing test: K4's estimator gap was **fixed**, not
+   deferred here. `_long_range_discount` credits duplicate candidates by exact
+   size, which contains the truth without widening the range on selections
+   that hold no duplicates. If B8 re-derives `_CODEC_FACTOR["zstd"]` from a
+   fresh benchmark, re-check that discount against it rather than assuming it
+   still fits
+3. **B6** (Oodle/AAA games) — biggest gap, blocked on test material
+4. **I6** (compare presets on a real sample), **I7** (translations — the loader
    exists, a `.ts` file does not; **do not invent Dhivehi**, set up the pipeline
    and let the user translate)
-6. **I5** (Explorer context menu) — **ask first**, it writes to HKCU
-7. **B12** (LOLZ), **C** (video shrink, needs ~90 MB FFmpeg), **D4–D8**,
+5. **I5** (Explorer context menu) — **ask first**, it writes to HKCU
+6. **B12** (LOLZ), **C** (video shrink, needs ~90 MB FFmpeg), **D4–D8**,
    **E1–E5** (only if this is ever shared)
 
 ### From the tool survey, still unevaluated

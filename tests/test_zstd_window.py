@@ -215,17 +215,6 @@ def test_the_ceiling_is_documented_as_a_ceiling():
         "ceiling" in (zstdstage.__doc__ or "").lower()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "K4 changed the codec and left `_CODEC_FACTOR['zstd']` describing the old "
-    "one. Recorded as a strict xfail rather than patched, because fixing it "
-    "properly is B8's job (re-benchmark and re-derive), and the two cheap "
-    "fixes both cost more than they buy: widening the aggregate `low` by the "
-    "0.5 the measurement implies renders a 2.2x numeric range that wraps a "
-    "line and pushes the populated Compress page from 420 to 431px past the "
-    "budget research/23 2.4 argues for, and flagging zstd chains "
-    "`upper_bound` breaks the contract "
-    "test_only_precomp_chains_are_flagged_as_upper_bounds pins - without "
-    "fixing the height either. See ROADMAP B8."))
 def test_the_fast_estimate_still_contains_the_truth_after_k4(tmp_path):
     """K4 changed the codec and left the calibration describing the old one.
 
@@ -241,9 +230,22 @@ def test_the_fast_estimate_still_contains_the_truth_after_k4(tmp_path):
     41,963,379 - the truth at 0.677x the low end. Scaled down here so it runs
     in seconds.
 
-    The first attempt at the fix clamped the *per-file* low and changed
-    nothing, because for compressible data that number (0.28) already sits
-    below any sane cap. The discount has to apply to the aggregate.
+    **Two fixes were tried and rejected before the one that shipped**, and both
+    rejections are the reason the third looks the way it does. Clamping the
+    *per-file* low changed nothing, because for compressible data that number
+    (0.28) already sits below any sane cap - the discount has to apply to the
+    aggregate. Discounting the aggregate by a flat factor for every zstd chain
+    then worked, but rendered a 2.2x numeric range that wrapped a line and
+    pushed the populated Compress page from 420 to 431px, past the budget
+    research/23 2.4 argues for - and it claimed a dedup saving on corpora that
+    contain no duplicates at all, which is most of them.
+
+    So `_long_range_discount` awards the credit **per duplicate candidate**,
+    keyed on exact file size. Same-size is a superset of same-content, so it
+    over-credits rather than under-credits, which is the honest direction for
+    an optimistic bound; and it collapses to zero when no two files share a
+    size, which is what keeps every ordinary estimate - and the page height -
+    exactly as it was.
     """
     import random
 

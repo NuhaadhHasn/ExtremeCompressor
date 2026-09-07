@@ -4,10 +4,10 @@
 > plus a fifth found on the way are fixed, measured and merged. Nothing is
 > awaiting review.
 >
-> **B5 is partly done and B4 is blocked** — read section 3 before picking
-> anything. The next job is either finishing B5's qpdf question or B8.
+> **B5 and E1 are done. Start with B4** — the test material is there after
+> all (610 FLAC, 110 WAV) and E1 can now fetch the FLAC binary. Section 3.
 
-**1,010 tests: 1,008 pass + 1 skip + 1 strict-xfail.**
+**1,030 tests: 1,028 pass + 1 skip + 1 strict-xfail.**
 
 The only xfail left is research/23 §2.4's 300px page budget, which §2.4 and
 §3.3 contradict each other about - not a to-do. K4's estimator xfail is gone:
@@ -126,54 +126,48 @@ Benchmarks: [K1](benchmarks/2026-09-04-k1-manifest-v2.md) ·
 
 ---
 
-## 3. Where B4 and B5 actually stand
+## 3. The next job: B4, and measure the baseline first
 
-**B4 (WAV/FLAC) is BLOCKED, and the previous version of this document was
-wrong about it.** It said B4 and B5 both had test material on this machine.
-Checked 2026-09-07: there is **no `.wav`, `.flac` or `.aiff` anywhere** — not
-in either real corpus, not in the user profile — and no FLAC binary. Treat B4
-like B6: it needs real audio before it is worth opening, because B3 is the
-standing proof that a specialist judged on synthetic files tells you nothing.
+**B4 (WAV/FLAC) is ready and I was wrong to call it blocked.** The previous
+version of this document said there was no audio on this machine. There is:
+`C:\Users\nuhaa\Desktop\Downloads-1` holds **610 `.flac` and 110 `.wav`**,
+including a `Songs` folder. The earlier search only looked under the two corpus
+folders and `~/Music` and never checked `Downloads-1` itself. No
+`.aiff`/`.ape`/`.wv`; no FLAC binary yet, and **E1 can now fetch one** (ask
+first - the user wants the site, the size, the hash and the destination before
+any download).
 
-**B5 is partly done, and it was not the job the roadmap describes.** Full
-numbers: [benchmarks/2026-09-07-b5](benchmarks/2026-09-07-b5-pdf-office.md).
+### The one rule that matters here
 
-Measured on 238 real PDF/Office files, the baseline came first and reframed
-everything:
+**Measure the existing route before building the specialist.** This has now
+been decided by measurement three times, and the specialist lost every time:
 
-| profile | chain | saved |
-|---|---|---:|
-| Normal | `7z` | 10.37% |
-| Extreme | `precomp → 7z` | **50.36%** |
+| item | proposed specialist | result | the existing lossless route |
+|---|---|---|---|
+| B3 | `oxipng` | 31.79%, **0/10 byte-identical** | `precomp -> 7z` 38.41% |
+| B5 | `qpdf` | 7.14%, **0/10 byte-identical** | `precomp -> 7z` 49.5% |
+| K4 | wide zstd window | 49.9% synthetic, **0%** real | unchanged |
 
-PDF/docx/xlsx/pptx were **already piped**, and Precomp already does 4.9x what
-plain 7-Zip does. The defect was that the **estimator** predicted 13.78% for
-Extreme, so `compare_profiles` showed it beating Normal by 4 points where the
-truth is 40 — steering users past half their compression. Now 46.32%.
+**B4 is the one where a specialist plausibly wins outright**, and the reason is
+structural rather than hopeful: raw PCM is *genuinely uncompressed*, unlike a
+PDF or a docx whose bytes are already deflate output one layer down. FLAC
+should beat `precomp -> 7z` on `.wav` by a wide margin.
 
-The fix is `analyzer.probe_expandable`, and the *reason* it has to be a probe
-is the part worth not re-deriving: an extension list would have predicted a
-large win on the 263 MB **encrypted** `.zip` that is 37% of the estimator's own
-backtest corpus and measured 2.97%. Two real corpora, same extension, opposite
-answers.
+But two things still have to be measured, not assumed:
 
-### What is left of B5
+1. **The `.wav` baseline.** What does `precomp -> 7z` already get on those 110
+   files? That is the number FLAC has to beat.
+2. **Byte-identity.** `flac -8` then `flac -d` must reproduce the input
+   **exactly**, or it cannot satisfy the ledger and belongs in Phase C like
+   `oxipng` and `qpdf`. FLAC is designed to be lossless, so this should hold -
+   which is precisely why it should be checked rather than trusted.
+   `excmp/jpeg.py`'s `pack()` is the pattern: compress, immediately
+   decompress, compare, and store raw if it does not match.
 
-**qpdf is unmeasured**, and there is no binary on this machine. The prediction
-is that it fails the lossless gate exactly as `oxipng` did in B3 —
-`--recompress-flate` rewrites the file, and a SHA-256 ledger cannot be
-satisfied by changed bytes — in which case it belongs in Phase C beside C6,
-not here. It also has to beat **50.36%** to be worth having at all. Measure
-before building.
-
-**"Unpack docx members into the solid stage" is already achieved** by Precomp
-for Extreme/Insane. Doing it explicitly would help only profiles *without*
-Precomp, and would need B2's pack-immediately-unpack-compare-fall-back pattern
-to stay byte-lossless, because rebuilding a zip bit-exactly is not guaranteed.
-
-**So the honest next jobs are B8** (re-benchmark; the B5 work just replaced one
-`(est.)` with a measurement and there are more) **or B5's qpdf question**, and
-either wants a tool fetched first — which is E1.
+**The 610 `.flac` files are a different job** and worth separating: they are
+*already* FLAC, so the question for them is not "can we compress this" but
+"does anything beat storing it" - which is where the analyzer currently routes
+them, correctly.
 
 ---
 

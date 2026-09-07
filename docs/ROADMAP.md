@@ -648,14 +648,19 @@ display scaling — both need a human at the machine.
       flat 5x under-reserved temp for PNG by an order of magnitude.
 - [ ] B4. **WAV specialist**: FLAC 1.5 `-8 -j N`; TAK/OptimFROG as detected-only
       opt-ins (closed freeware — never bundled)
-      ⛔ **BLOCKED on test material, confirmed 2026-09-07.** There is no
-      `.wav`, `.flac` or `.aiff` anywhere on this machine — not in either real
-      corpus, not in the user profile — and no FLAC binary either. The
-      2026-09-07 handoff listed B4 as having material present; that was wrong.
-      Treat it like B6: do not open it without real audio to measure against,
-      because a specialist judged on synthetic WAVs tells us nothing (B3's
-      `oxipng` looked fine until it was measured on real files).
-- [~] B5. 🟡 **PARTLY DONE 2026-09-07** — and it was not the job this item
+      ✅ **Test material CONFIRMED present 2026-09-07** (an earlier note in
+      this file said the opposite — that was a bad search, not a fact).
+      `C:\Users\nuhaa\Desktop\Downloads-1` holds **610 `.flac` and 110 `.wav`**,
+      including a `Songs` folder. No `.aiff`/`.ape`/`.wv`, and no FLAC binary
+      yet — E1 can now fetch one.
+      **Measure the baseline first.** Three times running (B3 oxipng, B5
+      qpdf, K4's window on real data) a roadmap-named specialist lost to the
+      existing `precomp → 7z` route once real files went through both. WAV is
+      the one case where a specialist plausibly wins outright, because raw PCM
+      is genuinely uncompressed rather than already-deflated — but that is a
+      hypothesis until measured, and FLAC must also come back
+      **byte-identical** to survive the ledger.
+- [x] B5. ✅ **DONE 2026-09-07** — and it was not the job this item
       describes. Measured in
       [benchmarks/2026-09-07-b5](benchmarks/2026-09-07-b5-pdf-office.md) on
       **238 real PDF/Office files (433.4 MiB)**.
@@ -683,10 +688,15 @@ display scaling — both need a human at the machine.
       `analyzer.probe_expandable` reads structure — a zip's central-directory
       member flags, or a bounded `/FlateDecode` scan for PDFs — and both
       corpora now agree.
-      **Still open:** qpdf is unmeasured (no binary on this machine) and is
-      *expected to fail the lossless gate* exactly as `oxipng` did in B3,
-      since `--recompress-flate` rewrites the file — in which case it belongs
-      in Phase C beside C6. The "unpack docx members into the solid stage"
+      **qpdf: measured, and closed rather than deferred.** Fetched with E1 and
+      run on 10 real PDFs with `--object-streams=generate --recompress-flate
+      --compression-level=9`. Two independent disqualifications, either
+      sufficient: **0 of 10 files came back byte-identical**, so no output of
+      it can satisfy a SHA-256 ledger; and it saved **7.14%** against the
+      existing lossless route's **49.5% on the same ten files** — losing by
+      7×, with two files coming out *larger*. Moved to Phase C as **C7**,
+      where its value is marginal anyway. There is no configuration of qpdf
+      worth adding to a lossless phase. The "unpack docx members into the solid stage"
       half is already achieved by Precomp for Extreme/Insane; doing it
       explicitly would only help profiles without Precomp and would need B2's
       pack-verify-fallback pattern to stay byte-lossless.
@@ -855,6 +865,13 @@ display scaling — both need a human at the machine.
 - [ ] C4. Honest UX: ETA warning before starting ("~9 hours on this machine — run
       overnight?"), output tagged so we never re-encode our own output
 - [ ] C5. Later: ab-av1-style CRF search targeting VMAF 95 (needs beefier machine)
+- [ ] C7. **(moved from B5, 2026-09-07)** `qpdf` as an **opt-in** PDF
+      rewriter. Measured 7.14% on 10 real PDFs with **0 of 10 byte-identical**,
+      against the lossless `precomp → 7z` route's 49.5% on the same files — so
+      it is both non-byte-lossless *and* 7× worse, and two files got larger.
+      Pinned in `toolfetch.TOOL_MANIFEST` and fetchable, but only worth
+      building for the case where Precomp is unavailable. Numbers:
+      [benchmarks/2026-09-07-b5](benchmarks/2026-09-07-b5-pdf-office.md) §8.
 - [ ] C6. **(moved from B3, 2026-09-02)** `oxipng` / ECT as an **opt-in**
       PNG re-encoder. Measured 31.79% on real PNGs but **0 of 10 files came
       back byte-identical** — it rewrites the image to a smaller encoding.
@@ -954,7 +971,23 @@ display scaling — both need a human at the machine.
 
 ## Phase E — Release engineering
 
-- [ ] E1. **SHA-pinned tool downloader** — THE lightweight strategy: core app small,
+- [x] E1. ✅ **DONE 2026-09-07** — `excmp/toolfetch.py`, 20 tests, first real
+      fetch (qpdf 12.4.1) verified against GitHub's own asset digest.
+      **Installs to `tools/bin/<name>/<version>/`, not `%LOCALAPPDATA%`** as
+      this item sketched: that is where `zpaqfranz.exe` already lives, where
+      `find_tools` already looks, and it is already in `.gitignore` — so one
+      directory holds every tool the app runs and a binary cannot be committed
+      by accident. `EXCMP_TOOLS_DIR` overrides it for E3.
+      **Found by its own first real download:** a same-host redirect rule
+      refused GitHub, which serves every release asset by redirecting to
+      `release-assets.githubusercontent.com`. Now a per-origin allowlist with
+      both hops required https, and suffix-match bait pinned by tests.
+      Enforced and tested: size **and** sha256 on the received bytes, nothing
+      written to the install root until verified, `safepath` on every archive
+      entry (zip-slip refused 4 ways), re-hash before use so a tampered binary
+      is not handed back, a per-tool minimum-version floor, a 512 MiB download
+      ceiling, and PATH never touched.
+      Original item: **SHA-pinned tool downloader** — THE lightweight strategy: core app small,
       specialists fetched when a profile first needs them (whole fleet minus FFmpeg
       is only **~15 MB**). Manifest entry = `{name, version, url, sha256, size,
       exe_relpath, license}`; download to

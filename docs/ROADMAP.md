@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-07**. **1,045 tests** (1,043 pass + 1 skip + 1 strict-xfail;
+> Status date: **2026-09-07**. **1,056 tests** (1,053 pass + 2 skip + 1 strict-xfail;
 > the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
 > Everything below is merged to `main` except **`phase-i3-i8-i10`** and
 > **`phase-k1-manifest-v2`**, which are stacked and awaiting review.
@@ -1037,6 +1037,29 @@ display scaling — both need a human at the machine.
       directory, compares case-insensitively (Windows resolves DLLs that way),
       and **refuses extra files** — planting `version.dll` modifies nothing
       pinned and Windows would still load it.
+      🔍 **The audit was then finished by hand (2026-09-07).** It had reported
+      39 findings and run out of session with 6 of 44 agents done, so the rest
+      were leads. Checked by running each:
+      [benchmarks/2026-09-07-e1-audit](benchmarks/2026-09-07-e1-audit.md).
+      **10 of 12 distinct claims reproduced and are fixed**; 2 did not; and 2
+      more turned out to be the verification harness being stale rather than
+      the code being wrong.
+      The worst was a real zip bomb: **a 204,060-byte download installed
+      209,715,202 bytes — 1028× — with no refusal**, because
+      `MAX_DOWNLOAD_BYTES` bounds the *compressed* side and nothing bounded
+      the expansion. The first replacement ceiling was 768 MiB, which sat
+      *above* the bomb that had just been measured and caught nothing; it is
+      256 MiB, enforced on the real stream. Also fixed: the transfer is now
+      cut at the pinned size (41 MB had been written for a 120-byte pin);
+      staging moved out of the install root and a failed fetch sweeps itself
+      (209 MB of a refused download had been left behind); `ensure_tool` no
+      longer leaks `BadZipFile`/`UnsafePathError` through a docstring that
+      promises it never raises; `allow_insecure` defaults to **False**;
+      `1.5.0-rc9` no longer outranks `1.5.0`; duplicate archive entries are
+      refused; the redirect check compares hostnames and validates **every**
+      hop, not just the last; both shipped tools carry a version floor; and
+      `find_tools` finally knows E1's nested layout, which it had promised to
+      search and never did.
       Original item: **SHA-pinned tool downloader** — THE lightweight strategy: core app small,
       specialists fetched when a profile first needs them (whole fleet minus FFmpeg
       is only **~15 MB**). Manifest entry = `{name, version, url, sha256, size,

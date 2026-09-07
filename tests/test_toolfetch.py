@@ -42,8 +42,23 @@ import pytest
 
 from excmp import toolfetch
 from excmp.safepath import UnsafePathError
-from excmp.toolfetch import (FetchError, ToolSpec, fetch_tool, installed_path,
+from excmp.toolfetch import (FetchError, ToolSpec, installed_path,
                              verify_installed)
+
+
+def fetch_tool(spec, **kw):
+    """`toolfetch.fetch_tool` with the localhost-HTTP waiver.
+
+    Production defaults ``allow_insecure`` to **False** - that is this
+    module's first stated rule, and an audit found it defaulting to True,
+    which made "HTTPS only" opt-in on the function that does the work. These
+    tests serve from a localhost `http.server` deliberately - hermetic,
+    offline, and able to send corrupt bytes on purpose - so the waiver lives
+    here and nowhere else. Tests that assert on the https rule itself call the
+    real function directly.
+    """
+    kw.setdefault("allow_insecure", True)
+    return toolfetch.fetch_tool(spec, **kw)
 
 
 @pytest.fixture
@@ -200,8 +215,9 @@ def test_an_insecure_url_is_refused_without_being_fetched(server):
     digest, size = _publish(root, "qpdf.zip", payload)
     spec = _spec(base, "qpdf.zip", digest, size)
 
+    # The real function, not the waiver helper above - this is the rule.
     with pytest.raises(FetchError, match="https"):
-        fetch_tool(spec, allow_insecure=False)
+        toolfetch.fetch_tool(spec, allow_insecure=False)
 
 
 # --------------------------------------------------------------------------
@@ -451,3 +467,222 @@ def test_every_pinned_tool_declares_its_directory_digests():
         for filename, digest in spec.exe_dir_sha256:
             assert "/" not in filename and "\\" not in filename, filename
             assert len(digest) == 64, f"{name}/{filename}: not a sha256"
+
+
+# --------------------------------------------------------------------------
+# The rest of the audit, verified by hand after the workflow that found them
+# ran out of session. 10 of 12 reproduced; the two that did not are recorded
+# in docs/benchmarks/2026-09-07-e1-audit.md so nobody re-derives them.
+# --------------------------------------------------------------------------
+
+def test_an_archive_that_expands_hugely_is_refused(server):
+    """The worst of the batch. `MAX_DOWNLOAD_BYTES` caps the *download* and
+    nothing capped the *expansion*: measured, a 204,060-byte download
+    installed 209,715,202 bytes - **1028x** - with no refusal at all.
+
+    A ceiling on the compressed side is not a ceiling. This is the same
+    asymmetry the `.excmp` reader was hardened against in D0, where extraction
+    is bounded by the manifest's own ledger rather than by a ratio.
+    """
+    base, root = server
+    payload = _zip_bytes({"bin/qpdf.exe": b"MZ",
+                          "payload.bin": b"\0" * (300 << 20)})
+    digest, size = _publish(root, "bomb.zip", payload)
+    # The point of the test is the asymmetry: tiny on the wire, huge on disk.
+    assert size < (2 << 20), f"the bomb should be small in transit: {size}"
+
+    with pytest.raises(FetchError, match="expand|unpacked|limit"):
+        fetch_tool(_spec(base, "bomb.zip", digest, size))
+
+
+def test_a_server_sending_more_than_the_pin_is_cut_off_early(server):
+    """`spec.size` was checked *after* the whole transfer, so a server that
+    sends 41,943,160 bytes for a 120-byte pin had all 41 MB written to disk
+    before the refusal. The pin is a known-good number available up front;
+    reading one byte past it is enough to know.
+    """
+    base, root = server
+    payload = _zip_bytes({"bin/qpdf.exe": b"MZ"})
+    digest = hashlib.sha256(payload).hexdigest()
+    (root / "over.zip").write_bytes(payload + b"\0" * (8 << 20))
+
+    with pytest.raises(FetchError, match="size|bytes"):
+        fetch_tool(_spec(base, "over.zip", digest, len(payload)))
+
+
+def test_a_refused_download_leaves_no_staging_behind(server):
+    """Measured after the bomb above: 209,715,200 bytes of a *refused*
+    download were still sitting under the install root, because the staging
+    directory is created with `dir=root` and the failure path did not sweep
+    what the unpack had already written."""
+    base, root = server
+    payload = _zip_bytes({"bin/qpdf.exe": b"MZ",
+                          "payload.bin": b"\0" * (300 << 20)})
+    digest, size = _publish(root, "bomb.zip", payload)
+
+    with pytest.raises(FetchError):
+        fetch_tool(_spec(base, "bomb.zip", digest, size))
+
+    install_root = toolfetch._install_root()
+    strays = ([p for p in install_root.rglob("*") if p.is_file()]
+              if install_root.exists() else [])
+    assert strays == [], f"a refused fetch left {len(strays)} file(s): {strays[:3]}"
+
+
+def test_ensure_tool_never_raises(server):
+    """Its docstring promises this, and the promise is load-bearing: every
+    stage that shells a tool degrades when the tool is missing, so a download
+    that fails must look like a tool that was never there. Measured, a non-zip
+    download raised `BadZipFile` and a traversing entry raised
+    `UnsafePathError` straight out of it, crashing the job instead."""
+    base, root = server
+    (root / "junk.zip").write_bytes(b"this is not a zip file at all")
+    junk = (root / "junk.zip").read_bytes()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        info = zipfile.ZipInfo("placeholder")
+        info.filename = "../../escaped.exe"
+        zf.writestr(info, b"pwned")
+    hostile = buf.getvalue()
+    (root / "hostile.zip").write_bytes(hostile)
+
+    for label, filename, blob in (("non-zip", "junk.zip", junk),
+                                  ("traversal", "hostile.zip", hostile)):
+        spec = _spec(base, filename, hashlib.sha256(blob).hexdigest(),
+                     len(blob), name=f"et-{label}")
+        toolfetch.TOOL_MANIFEST[spec.name] = spec
+        try:
+            assert toolfetch.ensure_tool(spec.name, allow_insecure=True) is None, \
+                f"{label}: expected None"
+        finally:
+            toolfetch.TOOL_MANIFEST.pop(spec.name, None)
+
+
+def test_https_is_required_unless_explicitly_waived():
+    """`fetch_tool`'s `allow_insecure` defaulted to **True**, so the module's
+    first stated rule - "HTTPS only" - was opt-in on the function that does
+    the work. Only the tests want the waiver, so only the tests should ask."""
+    import inspect
+
+    assert inspect.signature(toolfetch.fetch_tool).parameters[
+        "allow_insecure"].default is False
+    assert inspect.signature(toolfetch.ensure_tool).parameters[
+        "allow_insecure"].default is False
+
+
+def test_a_prerelease_cannot_jump_the_version_floor():
+    """`_version_tuple` strips non-digits per chunk, so `1.5.0-rc9` became
+    `(1, 5, 0, 9)` - which sorts **above** `1.5.0`'s `(1, 5, 0)`. A floor of
+    "1.5.0" would therefore accept a release candidate of itself, and the
+    floor exists to keep known-vulnerable builds out."""
+    assert toolfetch._version_tuple("1.5.0-rc9") < toolfetch._version_tuple("1.5.0")
+    assert toolfetch._version_tuple("24.09") > toolfetch._version_tuple("22.00")
+    assert toolfetch._version_tuple("1.5.1") > toolfetch._version_tuple("1.5.0")
+
+
+def test_a_legitimate_redirect_with_a_port_is_allowed():
+    """`_redirect_ok` compared `netloc`, which carries the port and the case,
+    so `github.com -> release-assets.githubusercontent.com:443` was refused
+    and `GitHub.com -> GitHub.com` was refused. That is an availability bug in
+    a security check, which is how security checks get switched off."""
+    ok = toolfetch._redirect_ok
+    assert ok("github.com", "release-assets.githubusercontent.com:443")
+    assert ok("github.com", "GitHub.com")
+    assert ok("github.com", "github.com:443")
+    # ...and the refusals still refuse.
+    assert not ok("github.com", "githubusercontent.com.evil.com")
+    assert not ok("github.com", "evil.com:443")
+
+
+def test_a_duplicate_entry_name_is_refused(server):
+    """A zip may carry two entries with one name, and `_unpack` wrote both in
+    order, so the archive chose which bytes ended up at `exe_relpath` -
+    measured, the second won. `manifest.extract_stored` has refused this since
+    D0 for exactly this reason; the tool reader had not caught up."""
+    base, root = server
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr("bin/qpdf.exe", b"MZ FIRST")
+        zf.writestr("bin/qpdf.exe", b"MZ SECOND WINS")
+    payload = buf.getvalue()
+    digest, size = _publish(root, "dup.zip", payload)
+
+    with pytest.raises(FetchError, match="two entries|duplicate"):
+        fetch_tool(_spec(base, "dup.zip", digest, size))
+
+
+def test_every_shipped_tool_declares_a_version_floor():
+    """The floor is listed as a guarantee of this module and was unset on both
+    shipped entries, so it protected nothing in production. A pin says "these
+    are the bytes I meant"; the floor says "and that version is not the one
+    with the CVE"."""
+    for name, spec in toolfetch.TOOL_MANIFEST.items():
+        assert spec.min_version, f"{name}: no min_version"
+        assert (toolfetch._version_tuple(spec.version)
+                >= toolfetch._version_tuple(spec.min_version)), name
+
+
+def test_every_redirect_hop_is_validated(server, tmp_path):
+    """`urlopen` follows a redirect chain internally and `geturl()` reports
+    only where it ended, so checking that checked one hop out of however many
+    were contacted. An intermediate `Location` could name any host, and the
+    request to it was already sent by the time we looked.
+
+    The pinned hash still catches substituted *content*; this is about not
+    issuing the request at all, which a hash cannot help with because it is
+    checked afterwards.
+    """
+    from http.server import BaseHTTPRequestHandler
+
+    hops: list[str] = []
+
+    class Chain(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hops.append(self.path)
+            self.send_response(302)
+            # An unrelated host, mid-chain, that nothing has allowlisted.
+            self.send_header("Location", "https://evil.example.net/final.zip")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    httpd = HTTPServer(("127.0.0.1", 0), Chain)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_port}"
+    try:
+        payload = _zip_bytes({"bin/qpdf.exe": b"MZ"})
+        spec = _spec(base, "start.zip", hashlib.sha256(payload).hexdigest(),
+                     len(payload))
+        with pytest.raises(FetchError, match="host|redirect"):
+            fetch_tool(spec)
+        assert hops, "the first hop should have been attempted"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_an_e1_installed_tool_is_found_by_normal_discovery():
+    """`excmp/tools.py` promised to look "in the app-managed tools/bin
+    directory" and only ever checked a flat `tools/bin/<name>.exe`, never
+    E1's nested `<name>/<version>/<exe_relpath>`. So a hash-pinned tool was
+    invisible to `find_tools` and reachable only by asking `toolfetch`
+    directly - which `flacaudio` happens to do, so nothing was visibly broken
+    while the discovery layer quietly did not know the tool existed.
+
+    Skipped when nothing is installed, so the suite still runs on a machine
+    that has never fetched a tool.
+    """
+    from excmp.tools import find_tools
+
+    installed = {name for name, spec in toolfetch.TOOL_MANIFEST.items()
+                 if toolfetch.installed_path(spec) is not None}
+    if not installed:
+        pytest.skip("no E1-pinned tool is installed on this machine")
+
+    found = find_tools()
+    for name in installed:
+        assert found.get(name) is not None, \
+            f"{name} is installed and verified but find_tools missed it"
+        assert Path(found[name].path).is_file()

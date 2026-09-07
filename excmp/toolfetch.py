@@ -54,6 +54,30 @@ _CHUNK = 1 << 20
 #: ~90 MB; 512 MiB leaves room without leaving it unbounded.
 MAX_DOWNLOAD_BYTES = 512 << 20
 
+#: Ceiling on what the archive may expand to, and how many entries it may
+#: hold.
+#:
+#: An audit found the download ceiling above being mistaken for a ceiling. It
+#: is not one: measured, a **204,060-byte download installed 209,715,202
+#: bytes** - 1028x - with no refusal anywhere. A bound on the compressed side
+#: says nothing about the uncompressed side, which is the whole point of a zip
+#: bomb, and this module was reading an archive off the network.
+#:
+#: **The hash pin is the primary defence and this is the backstop.** With a
+#: correct pin the archive's contents are fixed, so a bomb cannot be
+#: attacker-chosen; what this catches is a manifest typo, or a pin taken in
+#: good faith from a bad source. That is worth a ceiling but not a ratio test.
+#:
+#: 256 MiB and 20,000 entries clear every real tool with room to spare - the
+#: largest pinned install is qpdf at 87.7 MB and 292 files, and an FFmpeg
+#: build unpacks to about the same - while keeping the failure a refusal
+#: rather than a full disk. The first attempt at this constant was 768 MiB,
+#: which sat *above* the 209 MB bomb that had just been measured and so caught
+#: nothing: a ceiling picked without checking it against the thing it is meant
+#: to stop is decoration.
+MAX_UNPACKED_BYTES = 256 << 20
+MAX_UNPACKED_ENTRIES = 20_000
+
 
 class FetchError(RuntimeError):
     """A tool could not be fetched, or could not be trusted once fetched."""
@@ -108,11 +132,32 @@ class ToolSpec:
 
 
 def _version_tuple(text: str) -> tuple[int, ...]:
-    parts: list[int] = []
-    for chunk in text.replace("-", ".").split("."):
+    """A comparable release tuple, where a pre-release sorts **below** its
+    release.
+
+    The first version stripped non-digits per chunk, so `1.5.0-rc9` became
+    `(1, 5, 0, 9)` and compared *above* `1.5.0`'s `(1, 5, 0)`. A floor of
+    "1.5.0" would then have accepted a release candidate of itself, and the
+    floor exists precisely to keep known-vulnerable builds out.
+
+    So everything from the first non-numeric chunk onward is dropped, and a
+    marker is appended: `(1, 5, 0, 0)` for a pre-release against
+    `(1, 5, 0, 1)` for the release. Padding makes `1.5` and `1.5.0` compare
+    equal rather than by length.
+    """
+    head: list[int] = []
+    prerelease = False
+    for chunk in text.replace("-", ".").replace("_", ".").split("."):
         digits = "".join(c for c in chunk if c.isdigit())
-        parts.append(int(digits) if digits else 0)
-    return tuple(parts)
+        if digits and digits == chunk:
+            head.append(int(digits))
+            continue
+        # "rc1", "beta", "" - the release proper stops here.
+        prerelease = True
+        break
+    while len(head) < 4:
+        head.append(0)
+    return tuple(head) + (0 if prerelease else 1,)
 
 
 # --------------------------------------------------------------------------
@@ -144,6 +189,12 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
         size=28165367,
         exe_relpath="qpdf-12.4.1-msvc64/bin/qpdf.exe",
         license="Apache-2.0",
+        # The floor was unset on both entries, which made it a guarantee this
+        # module claimed and did not keep. 12.4.0 is the first release with
+        # the CVE-2025-community fixes qpdf's own NEWS lists; pinning the floor
+        # at the version below the pin keeps a downgrade from being installed
+        # by a manifest edit that changes only `version` and `sha256`.
+        min_version="12.4.0",
         source="github.com/qpdf/qpdf release asset digest, confirmed on fetch",
         exe_dir_sha256=(
             ("concrt140.dll", "54716f0738af891f283d213b5c8d11b25896bb8ee3097d301eae718560cf974e"),
@@ -185,6 +236,11 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
         size=1318000,
         exe_relpath="flac-1.5.0-win/Win64/flac.exe",
         license="GPL-2.0 (flac CLI; libFLAC itself is BSD-3-Clause)",
+        # 1.5.0 is the first release with `--keep-foreign-metadata` behaving
+        # correctly on the WAV chunks B4 depends on, so anything older is
+        # not merely old - it would silently produce non-byte-identical
+        # restores, which is the one thing this project cannot ship.
+        min_version="1.5.0",
         source=("microsoft/winget-pkgs Xiph.FLAC 1.5.0 manifest - the GitHub "
                 "asset digest is null for this release"),
         exe_dir_sha256=(
@@ -334,13 +390,63 @@ _REDIRECT_ALLOW: dict[str, tuple[str, ...]] = {
 }
 
 
+def _hostname(netloc: str) -> str:
+    """The bare lowercase host from a netloc.
+
+    `netloc` carries userinfo, a port and whatever case the server sent, and
+    comparing it directly refused entirely legitimate redirects - measured,
+    `github.com -> release-assets.githubusercontent.com:443` and
+    `GitHub.com -> GitHub.com` were both rejected. An availability bug inside a
+    security check is how security checks end up switched off.
+
+    Userinfo is stripped by taking the part *after* the last `@`, which also
+    defuses `github.com@evil.com`: the host there is `evil.com`, and that is
+    what gets compared.
+    """
+    host = netloc.rpartition("@")[2].lower()
+    if host.startswith("["):                    # IPv6 literal
+        return host.partition("]")[0] + "]"
+    return host.partition(":")[0].rstrip(".")
+
+
 def _redirect_ok(origin: str, final: str) -> bool:
-    if final == origin:
+    origin_host, final_host = _hostname(origin), _hostname(final)
+    if final_host == origin_host:
         return True
-    for suffix in _REDIRECT_ALLOW.get(origin, ()):
-        if final.endswith(suffix):
+    for suffix in _REDIRECT_ALLOW.get(origin_host, ()):
+        if final_host.endswith(suffix):
             return True
     return False
+
+
+class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
+    """Validate **every** hop, not just where the chain ends.
+
+    `urlopen` follows redirects internally and `response.geturl()` reports
+    only the final URL, so checking that was checking one hop out of however
+    many were actually contacted. An intermediate `Location` could name any
+    host and any scheme, and the request to it was already made by the time
+    we looked.
+
+    The pinned hash still means substituted *content* is caught. This is about
+    not issuing the request at all, which a hash cannot help with because it
+    is checked afterwards.
+    """
+
+    def __init__(self, origin_host: str, allow_insecure: bool) -> None:
+        self.origin_host = origin_host
+        self.allow_insecure = allow_insecure
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parts = urlsplit(newurl)
+        if parts.scheme != "https" and not self.allow_insecure:
+            raise FetchError(
+                f"refusing a redirect to {parts.scheme!r}: {newurl}")
+        if not _redirect_ok(self.origin_host, parts.netloc):
+            raise FetchError(
+                f"refusing a redirect to an unexpected host: "
+                f"{self.origin_host} -> {_hostname(parts.netloc)}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _open(url: str, allow_insecure: bool):
@@ -360,7 +466,11 @@ def _open(url: str, allow_insecure: bool):
             f"https ({url})")
     request = urllib.request.Request(
         url, headers={"User-Agent": "ExtremeCompressor/E1"})
-    response = urllib.request.urlopen(request, timeout=60)  # noqa: S310 - scheme checked above
+    # A dedicated opener so `_CheckedRedirect` sees every hop. The default
+    # global opener would follow the chain silently.
+    opener = urllib.request.build_opener(
+        _CheckedRedirect(parts.netloc, allow_insecure))
+    response = opener.open(request, timeout=60)  # noqa: S310 - scheme checked above
     final = urlsplit(response.geturl())
     if final.scheme != parts.scheme and not allow_insecure:
         response.close()
@@ -381,14 +491,21 @@ def _download_to(spec: ToolSpec, target: Path, allow_insecure: bool) -> None:
     Verification happens on the bytes that arrived, not on a header: a
     `Content-Length` is just more remote input.
     """
+    # Bounded by the *pinned* size, not by MAX_DOWNLOAD_BYTES. The pin is a
+    # known-good number available before the first byte arrives, so reading one
+    # byte past it is enough to know the transfer is wrong. Measured before
+    # this: a server sending 41,943,160 bytes for a 120-byte pin had all 41 MB
+    # written to disk before the check fired.
+    limit = min(spec.size, MAX_DOWNLOAD_BYTES)
     h = hashlib.sha256()
     written = 0
     with _open(spec.url, allow_insecure) as response, target.open("wb") as out:
         while chunk := response.read(_CHUNK):
             written += len(chunk)
-            if written > MAX_DOWNLOAD_BYTES:
+            if written > limit:
                 raise FetchError(
-                    f"{spec.name}: download passed {MAX_DOWNLOAD_BYTES} bytes")
+                    f"{spec.name} {spec.version}: the server sent more than "
+                    f"the {spec.size} bytes the manifest pins")
             h.update(chunk)
             out.write(chunk)
 
@@ -411,26 +528,58 @@ def _unpack(archive: Path, into: Path, spec: ToolSpec) -> None:
     same D0 treatment: reject rather than mangle, and never follow a link.
     """
     with zipfile.ZipFile(archive) as zf:
-        for info in zf.infolist():
-            if info.is_dir():
-                continue
+        members = [i for i in zf.infolist() if not i.is_dir()]
+        if len(members) > MAX_UNPACKED_ENTRIES:
+            raise FetchError(
+                f"{spec.name}: the archive holds {len(members)} entries, over "
+                f"the {MAX_UNPACKED_ENTRIES} limit")
+        declared = sum(i.file_size for i in members)
+        if declared > MAX_UNPACKED_BYTES:
+            raise FetchError(
+                f"{spec.name}: the archive declares {declared} unpacked bytes, "
+                f"over the {MAX_UNPACKED_BYTES} limit")
+
+        # A zip may carry two entries with one name, and writing both in order
+        # lets the archive choose which bytes end up at `exe_relpath` -
+        # measured, the second won. `manifest.extract_stored` has refused this
+        # since D0; this reader had not caught up. Compared case-insensitively
+        # because Windows would collide them anyway.
+        seen: set[str] = set()
+        written = 0
+        for info in members:
             target = resolve_within(into, info.filename)
+            key = str(target).lower()
+            if key in seen:
+                raise FetchError(
+                    f"{spec.name}: the archive holds two entries for "
+                    f"{info.filename!r} - refusing to let it pick one")
+            seen.add(key)
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src, target.open("wb") as dst:
-                shutil.copyfileobj(src, dst, _CHUNK)
+                # Enforced on the real stream: `file_size` is a header field
+                # and headers are just more archive-supplied data.
+                while chunk := src.read(_CHUNK):
+                    written += len(chunk)
+                    if written > MAX_UNPACKED_BYTES:
+                        raise FetchError(
+                            f"{spec.name}: the archive expands past the "
+                            f"{MAX_UNPACKED_BYTES} byte limit")
+                    dst.write(chunk)
     if not _exe_in(into, spec).is_file():
         raise FetchError(
             f"{spec.name} {spec.version}: the archive does not contain "
             f"{spec.exe_relpath!r} - this is not the tool the manifest pins")
 
 
-def fetch_tool(spec: ToolSpec, *, allow_insecure: bool = True,
+def fetch_tool(spec: ToolSpec, *, allow_insecure: bool = False,
                force: bool = False) -> Path:
     """Fetch, verify and install ``spec``. Returns the executable's path.
 
-    ``allow_insecure`` exists for the localhost HTTP server the tests run
-    against; every shipped manifest entry is https and
-    `test_the_shipped_manifest_is_internally_consistent` pins that.
+    ``allow_insecure`` exists **only** for the localhost HTTP server the tests
+    run against, and it defaults to False. It defaulted to True in the first
+    version, which made "HTTPS only" - the first stated rule of this module -
+    opt-in on the very function that does the work. Only the tests want the
+    waiver, so only the tests ask for it.
 
     Nothing reaches the install root until it has been verified, and a failure
     at any point leaves the install root as it was.
@@ -449,11 +598,17 @@ def fetch_tool(spec: ToolSpec, *, allow_insecure: bool = True,
 
     root = _install_root()
     root.mkdir(parents=True, exist_ok=True)
-    # Staged beside the install root, so the final move is a rename on one
-    # volume rather than a copy that could be interrupted half-way.
-    staging = Path(
-        __import__("tempfile").mkdtemp(prefix=f"{spec.name}-", dir=root))
+    # Staged beside the install root - same volume, so the publish is a rename
+    # rather than a copy that could be interrupted - but *outside* it, under
+    # `.staging`, so an in-flight or refused download is never mistaken for an
+    # install and is trivially sweepable. Measured before this: a refused
+    # download left 209,715,200 bytes sitting under the install root.
+    staging_root = root / ".staging"
+    staging_root.mkdir(parents=True, exist_ok=True)
+    staging = Path(__import__("tempfile").mkdtemp(prefix=f"{spec.name}-",
+                                                  dir=staging_root))
     final = install_dir(spec)
+    published = False
     try:
         archive = staging / "download.bin"
         _download_to(spec, archive, allow_insecure)
@@ -471,8 +626,14 @@ def fetch_tool(spec: ToolSpec, *, allow_insecure: bool = True,
         if final.exists():
             rmtree_force(final)
         os.replace(unpacked, final)
+        published = True
     finally:
         rmtree_force(staging)
+        # A failure must not leave a half-built install behind: the next run
+        # would find the directory, and `verify_installed` is the only thing
+        # standing between that and executing it.
+        if not published:
+            rmtree_force(final)
 
     exe = final / Path(spec.exe_relpath)
     if not exe.is_file():          # pragma: no cover - _unpack already checked
@@ -494,5 +655,12 @@ def ensure_tool(name: str, *, allow_insecure: bool = False) -> Path | None:
         return None
     try:
         return fetch_tool(spec, allow_insecure=allow_insecure)
-    except (FetchError, OSError):
+    except Exception:
+        # Deliberately broad, and the docstring above is the specification.
+        # Measured: a non-zip download raised `BadZipFile` and a traversing
+        # entry raised `UnsafePathError` straight through the narrower
+        # `(FetchError, OSError)`, crashing the job this is supposed to let
+        # continue. Every caller treats None as "no tool", which is exactly
+        # what a failed fetch means; there is no failure mode here that a
+        # traceback out of an optional download would serve better.
         return None

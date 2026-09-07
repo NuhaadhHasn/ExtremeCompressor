@@ -116,10 +116,12 @@ class MainWindow(QMainWindow):
         self._infos: list[FileInfo] = []
         self._summary: AnalysisSummary | None = None
         self._analysis_pool = QThreadPool(self)
+        self._analysis_notes: list[str] = []
         self._analysis_signals = AnalysisSignals(self)
         self._analysis_signals.ready.connect(self._on_analysis_ready)
         self._analysis_signals.failed.connect(self._on_analysis_failed)
         self._analysis_signals.progress.connect(self._on_analysis_progress)
+        self._analysis_signals.note.connect(self._on_analysis_note)
         # Set by the banner's "Close anyway": the second closeEvent must not
         # ask the same question again.
         self._force_close = False
@@ -640,6 +642,7 @@ class MainWindow(QMainWindow):
         self.analysis_card.set_busy(len(self._pending))
         self._refresh_pending_view()
         self._refresh_actions()
+        self._analysis_notes.clear()
         worker = AnalysisWorker(list(self._pending), self.presets.current_profile(),
                                 self.tools, self._analysis_signals)
         self._analysis_pool.start(worker)
@@ -723,6 +726,18 @@ class MainWindow(QMainWindow):
 
     def _on_analysis_progress(self, done: int, total: int) -> None:
         self.analysis_card.set_progress(done, total)
+
+    def _on_analysis_note(self, message: str) -> None:
+        """A file the analysis could not read (K3).
+
+        Deliberately not a failure: before this, `analyze_file` raising on an
+        open Excel or Outlook document painted the whole analysis card red with
+        the raw "[Errno 13] Permission denied" and the user lost the size
+        estimate, the route breakdown and the profile recommendation for the
+        entire selection because of one file.
+        """
+        self._analysis_notes.append(message)
+        self.analysis_card.set_note("; ".join(self._analysis_notes[:3]))
 
     def _on_analysis_failed(self, message: str) -> None:
         self.analysis_card.set_error(message)

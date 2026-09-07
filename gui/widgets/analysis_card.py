@@ -116,6 +116,9 @@ class AnalysisCard(QFrame):
         details.addWidget(self._shrink_note)
 
         self._warnings = QLabel("", self._details)
+        # Two sources feed one label, and they arrive at different times.
+        self._notes: list[str] = []
+        self._plan_warnings: list[str] = []
         self._warnings.setObjectName("Mono")
         self._warnings.setWordWrap(True)
         self._warnings.setVisible(False)
@@ -206,11 +209,29 @@ class AnalysisCard(QFrame):
         self._hint.setText(hint or "")
         self._hint.setVisible(bool(hint))
 
-        if summary.warnings:
-            self._warnings.setText("\n".join(f"· {w}" for w in summary.warnings))
+        self._plan_warnings = list(summary.warnings)
+        self._render_warnings()
+
+    def set_note(self, message: str) -> None:
+        """A note from the analysis pass itself, not from the plan (K3).
+
+        Kept apart from ``summary.warnings`` because the two arrive at
+        different times: notes are emitted *while* files are being read and
+        `set_summary` lands afterwards, so a single shared label meant the
+        summary silently erased the fact that a file could not be read.
+        """
+        self._notes = [message] if message else []
+        self._render_warnings()
+
+    def _render_warnings(self) -> None:
+        lines = [*self._notes, *self._plan_warnings]
+        if lines:
+            self._warnings.setText("\n".join(f"· {w}" for w in lines))
             self._warnings.setVisible(True)
         else:
             self._warnings.setVisible(False)
 
     def clear(self) -> None:
+        self._notes = []
+        self._plan_warnings = []
         self.setVisible(False)

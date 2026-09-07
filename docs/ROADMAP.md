@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-07**. **947 tests** (945 pass + 1 skip + 1 strict-xfail;
+> Status date: **2026-09-07**. **994 tests** (991 pass + 1 skip + 2 strict-xfail;
 > the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
 > Everything below is merged to `main` except **`phase-i3-i8-i10`** and
 > **`phase-k1-manifest-v2`**, which are stacked and awaiting review.
@@ -218,7 +218,38 @@ from the GUI**. Reproduced: the pre-K1 expression returned `0` where the ledger
 said `30,000`. The engine now reports `CompressResult.piped_bytes` from the
 ledger, exactly, with no filesystem access.
 
-### K2. Stored files come back dated today
+### K2. Stored files come back dated today ✅ **DONE 2026-09-07**
+
+Branch `phase-k2-k5-defects`. Both halves fixed, proven on real files: the two
+MySQL installers restored to **2023-11-14 00:29:20** and **2025-08-10 22:29:56**
+— their real download dates, exact to the nanosecond.
+
+**One thing the implementation did differently from the plan, and it matters.**
+The plan said to teach the store route to set mtimes. Instead they are applied
+in **one pass at the end of `engine.extract`**, from the ledger, for *both*
+routes. Two reasons, the second found while building it:
+
+1. The routes disagreed precisely because each half looked reasonable alone.
+   One pass over the ledger makes them agree by construction, not by coincidence.
+2. It has to run **after** F4's Mark-of-the-Web propagation. Writing a
+   `Zone.Identifier` alternate data stream **updates the host file's last-write
+   time on NTFS**, so a timestamp applied inside `extract_stored` is silently
+   overwritten by the zone marker a few lines later. Pinned by
+   `test_the_zone_marker_does_not_clobber_the_restored_date`, which marks the
+   archive first so the propagation path actually runs.
+
+`mtime_ns` rides on the `stat()` the analyzer already performs, so there is no
+second walk — on a 55,000-file tree over the external drive that would have been
+minutes. Empty directories travel in a new defaulted `dirs` field (still v2, no
+v3 needed) holding only *wholly* empty ones: a directory with files in it is
+already implied by their paths, and a chain is rebuilt from its deepest member
+with `mkdir(parents=True)`. `verify_restore` deliberately does **not** compare
+timestamps — every pre-K2 archive lacks them, and "your archive is corrupt" is a
+far worse outcome than "your file is dated today".
+
+<details><summary>the original entry</summary>
+
+### K2 (original)
 
 Reproduced: two files given an mtime of 2023-07-31, compressed, restored.
 
@@ -234,7 +265,36 @@ lossless claim holds literally — but restore a photo archive and every file is
 dated today, which breaks sort-by-date and looks like data loss to anyone who
 did not read the fine print.
 
-### K3. One locked file kills the whole job
+</details>
+
+### K3. One locked file kills the whole job ✅ **DONE 2026-09-07**
+
+Branch `phase-k2-k5-defects`. Six files, one held with `CreateFileW`
+`dwShareMode=0`: the five readable ones are now archived, restore and verify,
+and the sixth is reported by name.
+
+**The plan was right about the behaviour and wrong about the location.** It
+reads as though the fix belongs where the file is copied. It does not —
+`analyzer.analyze_file` **opens every file** to sniff its category and sample its
+entropy, and that happens during collection, before the plan exists, before the
+ledger, before any staging copy. So the skip starts in `analyze_tree_safe()` and
+is carried through to `CompressResult.skipped`.
+
+Two later windows are guarded as well, because a file readable at analysis time
+can be locked before it is hashed or copied — a real race, not a theoretical
+one, since analysing a large tree takes minutes. A file dropped in either window
+must leave **the ledger and both route lists**, or D9 refuses to publish an
+archive whose ledger promises a file the payload does not contain, turning a
+graceful skip into a total failure one stage later.
+
+`describe_unreadable()` exists because the stdlib's text for a share-mode denial
+is "Permission denied", which is actively misleading on Windows: the user's
+permissions are usually fine and the real cause is another program holding the
+file open. Closing Excel fixes it; changing an ACL does not.
+
+<details><summary>the original entry</summary>
+
+### K3 (original)
 
 Reproduced with `CreateFileW(dwShareMode=0)`, the way Outlook and Excel hold a
 file open. Six files, one locked:
@@ -247,7 +307,59 @@ file open. Six files, one locked:
 Every other archiver skips it, carries on, and reports it at the end. This
 fails the whole job and writes nothing.
 
-### K4. zstd's window is costing 50% on this corpus 🎁 **free win**
+</details>
+
+### K4. zstd's window ✅ **DONE 2026-09-07 — and it is not a free win**
+
+Branch `phase-k2-k5-defects`. The roadmap's synthetic measurement **reproduced
+to within 4 bytes** (314,580,006 against the predicted 314,580,010; 157,699,989
+against 157,699,992). Three of its other claims did not.
+
+| the plan said | measured |
+|---|---|
+| half the size | ✅ **49.9% smaller** on the synthetic case |
+| 2.1x faster | ❌ **1.54x** |
+| peak working set *fell* (1,707 -> 1,644 MiB) | ❌ **rose**, 1,002 -> 1,813 MiB |
+| raising only compress breaks old readers | ✅ confirmed exactly |
+
+**And the real-data number is 4.40%, not 49.9%.** Two builds of the same
+installer (mysql-installer-community 8.0.35.0 + 8.0.43.0, 642.9 MiB, sharing
+content ~288 MiB apart) forced through the stage: 668,628,541 -> 639,241,730 B,
+**4.40% smaller and no speedup at all**.
+
+**Worse for the "free win" framing: in the actual pipeline those two MSIs are
+high-entropy, so the analyzer routes them to `store` and the zstd stage never
+sees them.** K4 changes nothing for that job. The win applies only to bytes that
+go through the codec — so read 49.9% as "what a window is worth when the
+duplicate is exact", 4.40% as "two versions of a real installer", and 0% as
+"already-compressed input", which is most of the Programs corpus.
+
+**The window is therefore fitted to the input, not pinned at the maximum.** A
+window larger than the data cannot find matches the data does not contain:
+
+| window_log | output | peak |
+|---|---:|---:|
+| 29 (512 MiB) | 157,699,989 | **1,045 MiB** |
+| 30 (1 GiB) | 157,699,989 | 1,289 MiB |
+| 31 (2 GiB) | 157,699,989 | 1,814 MiB |
+
+Byte-identical at all three, so `_window_log_for()` rounds the input up to the
+next power of two and clamps it to [27, 31] — the full ratio win for **769 MiB
+less memory**, and small jobs stay exactly where they were before K4.
+
+**The actual defect, which the plan only hinted at:** `extract` computed
+`max_window_size = 1 << self.long_log`, so a build could only ever read archives
+as wide as it writes. Confirmed directly — a 27-cap reader given a 31-window
+streamed frame fails with *"Frame requires too much memory for decoding"*. The
+read ceiling is now a module constant independent of the write setting, and
+raising it is genuinely free: measured **14 MiB** peak for a 27-byte frame under
+a 2 GiB ceiling, because `max_window_size` is a refusal threshold and not an
+allocation. `excmp/ram.py` still models LZMA2 dictionaries only, so none of the
+zstd figures reach the GUI's peak-RAM column — a known gap, not fixed here.
+
+<details><summary>the original entry</summary>
+
+### K4 (original)
 
 Measured here, three runs, bit-identical, round-trip verified both ways —
 300 MiB whose duplicate half sits 150 MiB away:
@@ -269,7 +381,7 @@ cap first and unconditionally (it is a ceiling; existing 27-window archives
 still read), then raise the compress default separately. Then both directions
 interoperate.
 
-### K5. Every job that touches a git repo leaks temp forever 🆕 **found 2026-09-06**
+### K5. Every job that touches a git repo leaks temp forever ✅ **DONE 2026-09-07** (found 2026-09-06)
 
 Not from a test — from *looking at the disk* after the K1 end-to-end run. Two
 abandoned scratch directories were sitting in temp, each holding exactly the
@@ -303,12 +415,14 @@ clears the read-only bit and retries (`onexc=` on 3.12, `onerror=` below), used
 at all 11 sites — plus the D3 test the existing ones imply, with a read-only
 file in the fixture.
 
+</details>
+
 - [x] K1. ✅ Manifest schema v2, a 64 MiB cap measured against its own parse
       cost, a deflated manifest, and a pre-flight that refuses at the front
-- [ ] K2. Preserve mtimes on the store route; restore empty directories
-- [ ] K3. Skip an unreadable file, record it, finish the job, report at the end
-- [ ] K4. zstd `window_log` 27→31, decompress cap first
-- [ ] K5. `rmtree_force`: a read-only file must not strand a scratch directory
+- [x] K2. ✅ mtimes from the ledger, applied after MOTW; empty dirs in `dirs`
+- [x] K3. ✅ Skipped at analysis, guarded at hash and copy, reported by name
+- [x] K4. ✅ Read ceiling decoupled and raised; compress window **fitted** to input
+- [x] K5. ✅ `rmtree_force` at all 11 call sites, premise pinned by its own test
 
 ---
 
@@ -621,6 +735,33 @@ display scaling — both need a human at the machine.
       documented to auto-select BCJ2 and plainly had not. **Never UPX** still
       stands.
 - [ ] B8. Re-benchmark everything on Silesia + a real game folder; update README table
+      ⚠️ **K4 gave B8 a concrete, failing starting point (2026-09-07).**
+      `_CODEC_FACTOR["zstd"] = 0.960` is a **per-file** multiplier on each
+      file's own worst zstd-3 sample, and nothing per-file can represent "this
+      whole file duplicates one 170 MiB earlier" - which is exactly the saving
+      K4's wide window unlocked. Measured on 220,200,960 B in three files, the
+      third byte-identical to the first:
+
+      | | bytes |
+      |---|---:|
+      | estimate `low` | 61,945,796 |
+      | estimate `expected` | 61,967,870 |
+      | **actual, post-K4** | **41,963,379** |
+
+      The truth sits at **0.677x the optimistic end**, i.e. outside the range,
+      and the calibration was *good* before K4 (`expected` was off by +0.6%).
+      Pinned as a **strict xfail**,
+      `tests/test_zstd_window.py::test_the_fast_estimate_still_contains_the_truth_after_k4`,
+      so it cannot be forgotten and closing it is a deliberate act.
+      **Two cheap fixes were tried and rejected, both measured:** widening the
+      aggregate `low` by the implied 0.5 renders a 2.2x numeric range that
+      wraps a line and pushes the populated Compress page 420 -> 431px past
+      research/23 2.4's budget; flagging zstd chains `upper_bound` breaks the
+      contract `test_only_precomp_chains_are_flagged_as_upper_bounds` pins and
+      does not fix the height either. B8 should **re-derive** the constant
+      against several corpus shapes rather than pick a floor that happens to
+      contain one, and add a corpus with a duplicate beyond 128 MiB to the
+      bench set so the next codec change cannot do this silently.
       — this is also what replaces every *(est.)* in the doc 09 comparison table
 - [~] B9. 🟡 **PARTLY DONE 2026-09-02** — `-mqs` is now always passed (measured never harmful, worth 0.13% on source trees; 7-Zip leaves it off by default). **`-md=192m` was measured and deliberately NOT adopted: zero bytes of difference on all three corpora, up to 27% more time.** It stays a user knob, not a default. Default threads is already 2. The remaining part is the exact RAM estimator formula. Original item: **RAM caps + thread defaults** (verified formulas, [research/12](research/12-lightweight-and-performance.md);
       **corrected by [19 §3](research/19-source-study-7zip.md)**):

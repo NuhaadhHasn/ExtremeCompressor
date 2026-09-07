@@ -11,12 +11,13 @@ Guarantees:
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 import time
 import zipfile
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import jpeg
@@ -24,13 +25,15 @@ from . import jpeg
 # the module global, so the compress-side preflight has to read the same one or
 # the two can disagree about what is writable.
 from . import manifest as _manifest
-from .analyzer import Category, FileInfo, analyze_tree
+from .analyzer import (Category, FileInfo, analyze_tree, analyze_tree_safe,
+                       describe_unreadable, iter_empty_dirs)
 from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
                        manifest_size_estimate, read_container, write_container)
 from .planner import Plan, Profile, plan as make_plan, precomp_inflation, store_reason
-from .safepath import resolve_within, safe_relpath
+from .tempclean import rmtree_force
+from .safepath import UnsafePathError, resolve_within, safe_relpath
 from .slt import classify_failure
 from .stages.base import Stage, StageContext, StageError, StageSkip
 from .stages.sevenzip import SevenZipStage
@@ -175,7 +178,8 @@ def _check_compress_space(out_path: Path, temp_dir: Path, infos: list[FileInfo],
     return warnings
 
 
-def _check_manifest_size(relmap: dict[Path, str], the_plan: Plan) -> list[str]:
+def _check_manifest_size(relmap: dict[Path, str], the_plan: Plan,
+                         empty_dirs: list[str] | None = None) -> list[str]:
     """K1: refuse a selection whose manifest we could not read back.
 
     The cap exists because `manifest.json` is parsed before anything in it can
@@ -192,7 +196,8 @@ def _check_manifest_size(relmap: dict[Path, str], the_plan: Plan) -> list[str]:
     """
     cap = _manifest.MAX_MANIFEST_BYTES
     stored = sum(len(r.files) for r in the_plan.routes if r.action == "store")
-    projected = manifest_size_estimate(relmap.values(), stored_count=stored)
+    projected = manifest_size_estimate(relmap.values(), stored_count=stored,
+                                       dirs=empty_dirs or ())
     if projected > cap:
         raise RuntimeError(
             f"this selection has {len(relmap):,} file(s), whose names and "
@@ -204,6 +209,113 @@ def _check_manifest_size(relmap: dict[Path, str], the_plan: Plan) -> list[str]:
                 f"{projected / 2**20:.1f} MiB, near the {cap / 2**20:.1f} MiB "
                 f"ceiling - a much larger selection would be refused"]
     return []
+
+
+def _relabel(reason: str, path: Path, rel: str) -> str:
+    """Swap a basename-only skip sentence for one naming the relative path.
+
+    `analyze_tree_safe` builds the sentence (it has the exception), but only
+    `_collect` knows the archive-relative name, and a sentence saying just
+    "index.js" identifies nothing in a tree with hundreds of them.
+    """
+    if rel and reason.startswith(path.name + ":"):
+        return rel + reason[len(path.name):]
+    return reason
+
+
+def _nothing_readable(skipped: list[str]) -> str:
+    """K3: "nothing to compress" reads as "the folder was empty", which is the
+    one thing it was not when every file in it was locked."""
+    if not skipped:
+        return "nothing to compress"
+    return (f"none of the {len(skipped)} file(s) selected could be read - they "
+            f"may be open in another program. " + "; ".join(skipped[:3]))
+
+
+def _restore_empty_dirs(out_dir: Path, dirs: object) -> int:
+    """Recreate K2's wholly-empty directories under ``out_dir``.
+
+    ``dirs`` comes out of the archive, so it is exactly as untrusted as a
+    ledger key or a payload name and goes through the same validator - a
+    `mkdir` is a filesystem write and `../../` would land it anywhere the user
+    can write. `resolve_within` raises rather than mangling, which is the D0
+    rule.
+
+    **The shape is checked before the contents.** `Manifest.from_json` does
+    `cls(**data)` with no coercion, so this field is whatever JSON held: a
+    dict iterates its *keys* and created directories named after them, and a
+    bare string iterates characters and created ``a/``, ``b/``, ``c/``.
+    safepath still held - nothing escaped `out_dir` - but those were
+    archive-controlled filesystem writes with names that had never been in any
+    archive.
+
+    **And it cannot fail the restore.** This runs at the very end of
+    `extract`, after `extract_stored`, `verify_restore` and MOTW propagation,
+    so an unguarded `mkdir` meant an OSError here reported a restore whose
+    every byte had verified byte-identical as a *failure* - the CLI printing
+    `error:` and exiting 1, the GUI painting the tab red. It did not even need
+    a hostile archive: a destination that already holds a file where a parent
+    of an empty chain must go is enough. An empty directory is cosmetic in
+    precisely the way `_apply_mtimes` documents a timestamp to be, so it gets
+    the same policy - try, count what worked, and never undo a good restore.
+    """
+    if not isinstance(dirs, (list, tuple)):
+        return 0
+    made = 0
+    for rel in dirs:
+        if not isinstance(rel, str):
+            continue
+        try:
+            target = resolve_within(out_dir, rel)
+            if not target.exists():
+                target.mkdir(parents=True, exist_ok=True)
+                made += 1
+        except (OSError, UnsafePathError):
+            continue
+    return made
+
+
+def _apply_mtimes(out_dir: Path, ledger: dict[str, dict]) -> int:
+    """Stamp every restored file with the mtime its ledger entry records (K2).
+
+    Done in one pass here rather than inside `extract_stored` and the tar
+    stage, for two reasons that are both about correctness rather than tidiness:
+
+    * The two routes used to disagree - tar carried an mtime, the stored route
+      set nothing - and the disagreement was invisible because each half looked
+      reasonable alone. One pass over the ledger makes them agree by
+      construction.
+    * It has to run **after** F4's Mark-of-the-Web propagation. Writing a
+      Zone.Identifier alternate data stream updates the host file's last-write
+      time on NTFS, so a mtime applied before propagation is overwritten by it.
+
+    An entry with no ``mtime_ns`` is skipped, not defaulted: every archive
+    written before K2 has none, and inventing a timestamp for those would be
+    worse than leaving the restore-time one alone. Failures are ignored for the
+    same reason the zone marker's are - a file whose bytes verified is a
+    successful restore, and a timestamp we could not set does not undo that.
+    """
+    stamped = 0
+    for rel, meta in ledger.items():
+        ns = meta.get("mtime_ns")
+        # `type(ns) is int` rather than isinstance: `True` is an int in
+        # Python, so `"mtime_ns": true` passed an isinstance guard and stamped
+        # the file to 1 nanosecond after the epoch. A bool is not a timestamp.
+        #
+        # The upper bound is not decoration either. This value is
+        # archive-supplied, and `os.utime(ns=...)` raises **OverflowError**
+        # past `time_t` - an ArithmeticError, not an OSError, so the handler
+        # below did not catch it and a crafted manifest aborted `extract` with
+        # a raw traceback *after* the restore had completed and verified.
+        if type(ns) is not int or not 0 < ns < 2 ** 63:
+            continue
+        try:
+            target = resolve_within(out_dir, rel)
+            os.utime(target, ns=(ns, ns))
+            stamped += 1
+        except (OSError, OverflowError, ValueError, UnsafePathError):
+            continue
+    return stamped
 
 
 def _wait_if_paused(ctx: StageContext) -> None:
@@ -308,6 +420,13 @@ class CompressResult:
     #: archive-relative paths against its own working directory, which never
     #: worked (K1).
     piped_bytes: int = 0
+    #: K3: one sentence per file that could not be read and was left out.
+    #:
+    #: Not a log and not a warning subset - it is part of the result, because
+    #: a file the user believes is backed up and is not is the worst outcome
+    #: this program can produce. `warnings` carries a summary line for the
+    #: places that only surface warnings; this carries the names.
+    skipped: list[str] = field(default_factory=list)
 
     @property
     def ratio(self) -> float:
@@ -420,19 +539,46 @@ class VerifyResult:
     problem: str = ""
 
 
-def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str]]:
-    """Analyze all inputs; map absolute path -> archive-relative path."""
+def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str],
+                                          list[str], list[str]]:
+    """Analyze all inputs; map absolute path -> archive-relative path.
+
+    The third return value is K2's list of archive-relative directories that
+    hold nothing at all. They cannot come from ``relmap``, which is keyed on
+    files, so they are walked alongside it and travel in the manifest's own
+    ``dirs`` field.
+
+    The fourth is K3's list of files that could not be read, already turned
+    into sentences. Analysis is where a locked file is first touched, so it is
+    where the skip has to be taken - and it is returned rather than logged,
+    because a skipped file is part of the job's result and the user has to be
+    told which one.
+    """
     infos: list[FileInfo] = []
     relmap: dict[Path, str] = {}
+    empty_dirs: list[str] = []
+    skipped: list[str] = []
     for inp in inputs:
         inp = Path(inp).resolve()
-        for info in analyze_tree(inp):
+        analyses, unreadable = analyze_tree_safe(inp)
+        for bad, reason in unreadable:
+            # Relabel with the archive-relative path, computed the same way
+            # `rel` is below - `analyze_tree_safe` cannot know it.
+            try:
+                rel = (bad.name if inp.is_file()
+                       else f"{inp.name}/{bad.relative_to(inp).as_posix()}")
+            except ValueError:
+                rel = bad.name
+            skipped.append(_relabel(reason, bad, rel))
+        for info in analyses:
             rel = info.path.name if inp.is_file() else f"{inp.name}/{info.path.relative_to(inp).as_posix()}"
             if rel in relmap.values():
                 raise ValueError(f"duplicate archive path '{rel}' - rename one of the inputs")
             infos.append(info)
             relmap[info.path] = rel
-    return infos, relmap
+        for d in iter_empty_dirs(inp):
+            empty_dirs.append(f"{inp.name}/{d.relative_to(inp).as_posix()}")
+    return infos, relmap, empty_dirs, skipped
 
 
 def _write_sidecar(archive: Path) -> Path:
@@ -472,6 +618,15 @@ class StandardResult:
     has_ledger: bool
     #: One sentence for the user about that trade.
     note: str
+    #: K3: files that could not be read and are therefore NOT in this archive.
+    #:
+    #: Added after an audit found that `compress_standard` bound `_collect`'s
+    #: skip list and then consumed it only in the "nothing readable at all"
+    #: branch - so a partially-locked selection published silently, with the
+    #: missing names recorded nowhere. The plain-export path cannot fall back
+    #: on a ledger either: there is none, which is the whole point of this
+    #: result type, so this list is the only record that a file was left out.
+    skipped: list[str] = field(default_factory=list)
 
 
 def _hash_tree(root: Path) -> dict[str, str]:
@@ -524,9 +679,9 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
     t0 = time.monotonic()
     tools = tools if tools is not None else find_tools(with_versions=True)
     out_path = Path(out_path)
-    infos, _relmap = _collect([Path(p) for p in inputs])
+    infos, _relmap, _dirs, skipped = _collect([Path(p) for p in inputs])
     if not infos:
-        raise ValueError("nothing to compress")
+        raise ValueError(_nothing_readable(skipped))
     orig = sum(i.size for i in infos)
 
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-std-", dir=ctx.temp_dir))
@@ -546,7 +701,14 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
             rel = _relmap[info.path]
             target = resolve_within(staged, rel)
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(info.path, target)
+            try:
+                shutil.copy2(info.path, target)
+            except OSError as exc:
+                # Same guard the .excmp path has. Without it a mid-job lock is
+                # fatal here while `compress` survives it.
+                skipped.append(describe_unreadable(info.path, exc))
+                target.unlink(missing_ok=True)
+                continue
 
         # Same stage the .excmp route uses - the output path staying last, the
         # password redaction, the progress parsing all come for free. Only the
@@ -586,7 +748,7 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
     finally:
         if tmp_out is not None:
             Path(tmp_out).unlink(missing_ok=True)
-        shutil.rmtree(job_dir, ignore_errors=True)
+        rmtree_force(job_dir)
 
     return StandardResult(
         archive=out_path,
@@ -599,6 +761,7 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
               "extracting and hashing every file just now - but it carries no "
               "ledger, so it cannot be re-verified later the way an .excmp can"
               % fmt),
+        skipped=skipped,
     )
 
 
@@ -611,16 +774,17 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     t0 = time.monotonic()
     tools = tools if tools is not None else find_tools(with_versions=True)
     out_path = Path(out_path)
-    infos, relmap = _collect([Path(p) for p in inputs])
+    infos, relmap, empty_dirs, skipped = _collect([Path(p) for p in inputs])
     if not infos:
-        raise ValueError("nothing to compress")
+        raise ValueError(_nothing_readable(skipped))
     the_plan: Plan = make_plan(infos, profile, tools)
     # Before copying a single byte: will this fit? (J4 - the compression-side
     # twin of the check extract() has done since D0.)
     the_plan.warnings.extend(
         _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
     # ...and will the manifest itself be readable? (K1.)
-    the_plan.warnings.extend(_check_manifest_size(relmap, the_plan))
+    the_plan.warnings.extend(
+        _check_manifest_size(relmap, the_plan, empty_dirs))
 
     # B7: the branch filter is decided from what will actually be *piped*,
     # not from the whole input. A folder of installers is mostly stored, and
@@ -645,12 +809,28 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
 
         ledger: dict[str, dict] = {}
         piped_paths = set(pipe_route.files) if pipe_route else set()
+        # K3: a file readable at analysis time can be locked before it is
+        # hashed - a real race, not a theoretical one, since the analysis of a
+        # large tree takes minutes. Anything dropped here has to leave the
+        # route lists too, or the staging copy would still try to read it.
+        dropped: set[Path] = set()
         for info in infos:
             route = "pipeline" if info.path in piped_paths else "store"
+            try:
+                digest = hash_file(info.path)
+            except OSError as exc:
+                skipped.append(describe_unreadable(info.path, exc,
+                                                   label=relmap[info.path]))
+                dropped.add(info.path)
+                continue
             entry = {
                 "size": info.size,
-                "sha256": hash_file(info.path),
+                "sha256": digest,
                 "route": route,
+                # K2: from the stat the analyzer already did. Applied on the
+                # way out by `_apply_mtimes`, for both routes, so the two
+                # cannot drift apart again.
+                "mtime_ns": info.mtime_ns,
             }
             # B2 (JPEG packing) is decided in `write_container`, not here.
             # Deciding it here meant packing every JPEG once as a predicate,
@@ -658,6 +838,15 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             # the two calls could disagree, leaving the ledger claiming a
             # codec the bytes did not honour.
             ledger[relmap[info.path]] = entry
+
+        if dropped:
+            if pipe_route:
+                pipe_route.files = [f for f in pipe_route.files if f not in dropped]
+            if store_route:
+                store_route.files = [f for f in store_route.files if f not in dropped]
+            piped_paths -= dropped
+            if not ledger:
+                raise ValueError(_nothing_readable(skipped))
 
         # --- run the pipeline chain on a staging copy ----------------------
         payload_path: Path | None = None
@@ -674,7 +863,19 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             for f in pipe_route.files:
                 target = staging / relmap[f]
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(f, target)
+                try:
+                    shutil.copy2(f, target)
+                except OSError as exc:
+                    # K3, last window: hashed successfully and locked before
+                    # the copy. It must come out of the ledger as well, or D9
+                    # would refuse to publish an archive whose ledger promises
+                    # a file the payload does not contain - turning a graceful
+                    # skip into a total failure one stage later.
+                    skipped.append(describe_unreadable(f, exc,
+                                                       label=relmap[f]))
+                    ledger.pop(relmap[f], None)
+                    target.unlink(missing_ok=True)
+                    continue
             current: Path = staging
             skip_notes: list[str] = []
             for i, sid in enumerate(chain):
@@ -703,9 +904,18 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 ))
             the_plan.warnings.extend(skip_notes)
             payload_path = current
-            shutil.rmtree(staging, ignore_errors=True)
+            rmtree_force(staging)
 
         # --- package -------------------------------------------------------
+        if skipped:
+            # One summary line for the places that only render warnings (the
+            # CLI's note list, the GUI's results screen); the names themselves
+            # travel in CompressResult.skipped.
+            the_plan.warnings.append(
+                f"{len(skipped)} file(s) could not be read and were left out "
+                f"of the archive: " + "; ".join(skipped[:5])
+                + ("" if len(skipped) <= 5 else f" (and {len(skipped) - 5} more)"))
+
         payload_name = f"payload{_PAYLOAD_EXT.get(chain[-1], '.bin')}" if pipe_route else ""
         manifest = Manifest.new(
             profile=profile.value,
@@ -720,8 +930,38 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             # `Manifest.new` derives the count from it (K1).
             routes=[{"action": r.action, "stages": r.stages, "reason": r.reason}
                     for r in the_plan.routes],
+            dirs=empty_dirs,
         )
         stored_map = {relmap[f]: f for f in (store_route.files if store_route else [])}
+        # K3, the window the first pass missed. A store-route file is never
+        # staged: its bytes are first read *inside* `write_container`, by
+        # `jpeg.pack(read_bytes())` and `zf.write(src, ...)`, neither of which
+        # can drop a file - so a lock there escaped as a raw PermissionError
+        # and destroyed the job, which is exactly what K3 exists to prevent.
+        # The analyzer puts ~42% of the real corpus's bytes on this route, so
+        # this is the more likely half of the window rather than an edge case.
+        #
+        # Probing with a one-byte read is enough: the failure mode is a
+        # share-mode denial on open, which `open()` reproduces exactly and
+        # cheaply, and the same drop bookkeeping as the copy guard applies.
+        for rel, source in list(stored_map.items()):
+            try:
+                with open(source, "rb") as probe:
+                    probe.read(1)
+            except OSError as exc:
+                skipped.append(describe_unreadable(source, exc, label=rel))
+                stored_map.pop(rel, None)
+                ledger.pop(rel, None)
+
+        # (4) ...and now the ledger may be empty for a second reason. The
+        # guard after the hash loop cannot see a drop that happened in the
+        # staging copy or in the probe above. `compress_standard` has always
+        # refused this case - "a gate that can pass having checked nothing is
+        # not a gate" - because an archive with an empty ledger publishes
+        # happily and then passes `excmp verify` forever, reporting 0 verified
+        # files as success.
+        if not ledger:
+            raise ValueError(_nothing_readable(skipped))
         # With a password the plaintext container is built inside temp; without
         # one it is the usual `<out>.tmp` twin beside the destination. See the
         # `stage_dir` note above.
@@ -754,7 +994,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             out_path.unlink()
         tmp_out.replace(out_path)
     finally:
-        shutil.rmtree(job_dir, ignore_errors=True)
+        rmtree_force(job_dir)
         # A cancel or failure between write_container and replace() would
         # otherwise strand a half-written .tmp beside the user's output.
         if tmp_out is not None and tmp_out.exists():
@@ -775,6 +1015,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         elapsed_s=time.monotonic() - t0,
         piped_bytes=sum(m["size"] for m in ledger.values()
                         if m.get("route") == "pipeline"),
+        skipped=skipped,
     )
 
 
@@ -831,7 +1072,7 @@ def opened_for_reading(archive: Path, ctx: StageContext,
         yield current
     finally:
         if scratch is not None:
-            shutil.rmtree(scratch, ignore_errors=True)
+            rmtree_force(scratch)
 
 
 def is_excmp(path: Path) -> bool:
@@ -1137,8 +1378,14 @@ def _extract_selected(archive: Path, names: list[str], out_dir: Path,
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(source), str(target))
         verified = verify_restore(out_dir, ledger)
+        # K2 for the selective path too. The solid branch goes through
+        # `extract`, which already stamped them, and `shutil.move` carries the
+        # timestamp across - but the `stored_only` branch calls
+        # `extract_stored` directly and would otherwise hand back files dated
+        # today. Applying it to both keeps one rule instead of two.
+        _apply_mtimes(out_dir, ledger)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        rmtree_force(work)
 
     return ExtractResult(out_dir=out_dir, files_restored=len(wanted),
                          verified=verified, elapsed_s=time.monotonic() - t0)
@@ -1172,7 +1419,7 @@ def _extract_foreign_selected(archive: Path, wanted: list[str], out_dir: Path,
         if missing:
             raise KeyError(f"not in this archive: {', '.join(sorted(missing))}")
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        rmtree_force(work)
     return ExtractResult(out_dir=out_dir, files_restored=placed, verified=0,
                          elapsed_s=time.monotonic() - t0, ledger_backed=False)
 
@@ -1208,7 +1455,7 @@ def verify_archive(archive: Path, ctx: StageContext,
         with opened_for_reading(Path(archive), ctx, password) as opened:
             result = extract(opened, work / "restore", ctx, password=password)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        rmtree_force(work)
     return VerifyResult(
         archive=archive,
         ok=True,
@@ -1306,7 +1553,19 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
         # Never raises - see motw.propagate.
         from .motw import propagate as _propagate_zone
         _propagate_zone(source_archive, out_dir)
+        # K2, and deliberately the last thing that touches these files: the
+        # zone marker above is an alternate data stream, and writing one
+        # updates the host file's last-write time.
+        _apply_mtimes(out_dir, manifest.inputs)
+        # Deliberately NOT added to `restored`. That field has always meant
+        # "ledger entries written back" and equalled `verified` for every
+        # ledger-backed archive; folding a directory count into it made the
+        # GUI hero read "Restored 4 files" beside "2 SHA-256 hashes verified"
+        # on a two-file tree, and broke the invariant two existing tests
+        # assert - which passed only because their fixtures had no empty
+        # directories.
+        _restore_empty_dirs(out_dir, manifest.dirs)
     finally:
-        shutil.rmtree(job_dir, ignore_errors=True)
+        rmtree_force(job_dir)
     return ExtractResult(out_dir=out_dir, files_restored=restored,
                          verified=verified, elapsed_s=time.monotonic() - t0)

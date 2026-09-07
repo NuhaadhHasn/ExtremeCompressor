@@ -50,7 +50,15 @@ MAX_MANIFEST_BYTES = 64 << 20
 # comma. Counted from the format rather than fitted to a corpus, and rounded up
 # - `manifest_size_estimate` decides whether a job is refused, so it must err
 # high. A stored entry additionally carries `,"reason":<index>`.
-_MANIFEST_ENTRY_BYTES = 120
+#
+# K2 added `,"mtime_ns":<19 digits>` to every entry, which is 32 bytes: the key
+# and its quotes and colon (12) plus a nanosecond epoch (19) plus the comma.
+# **Any new ledger key has to be added here.** Leave it out and
+# `manifest_size_estimate` under-reads, the preflight waves a job through, and
+# the refusal lands back at `write_container` after every byte is written -
+# which is K1's original defect, and it was re-introduced twice during K1
+# itself before being caught.
+_MANIFEST_ENTRY_BYTES = 152
 _MANIFEST_REASON_BYTES = 16
 # `write_container` mutates the same ledger again *after* the estimate has been
 # taken and the job has been allowed to start, so these have to be budgeted for
@@ -67,6 +75,8 @@ _MANIFEST_REASON_BYTES = 16
 # at is bounded only by the longest name in the selection.
 _MANIFEST_SAME_AS_BYTES = 13
 _MANIFEST_CODEC_BYTES = 17
+# K2's `dirs` entry: the two quotes around the path and the separating comma.
+_MANIFEST_DIR_BYTES = 3
 # The fixed head: schema/created/profile/payload_name, the stage records, the
 # routes, the warnings, and the interned reason table. The table is the only
 # part that grows, and it cannot pass **12** entries: `planner.store_reason`
@@ -138,12 +148,18 @@ class Manifest:
     #: v2: the distinct store reasons, referenced by index from
     #: ``inputs[rel]["reason"]``. Bounded at 12 strings by construction.
     reasons: list[str] = field(default_factory=list)
+    #: K2: directories that hold nothing at all, which no ledger entry implies.
+    #: Only the deepest of a chain is recorded; the restore uses
+    #: ``mkdir(parents=True)``. Archive-supplied, so every entry is validated
+    #: through `safepath` before it is created, exactly like a ledger key.
+    dirs: list[str] = field(default_factory=list)
 
     @classmethod
     def new(cls, profile: str, stages: list[StageRecord], inputs: dict[str, dict],
             payload_name: str, warnings: list[str] | None = None,
             routes: list[dict] | None = None,
-            store_reasons: dict[str, str] | None = None) -> "Manifest":
+            store_reasons: dict[str, str] | None = None,
+            dirs: list[str] | None = None) -> "Manifest":
         """Build a v2 manifest. ``store_reasons`` is still taken as
         ``{relpath: sentence}`` - that is the shape the planner produces - and
         interned here, so exactly one place knows the storage format.
@@ -191,6 +207,7 @@ class Manifest:
             routes=lean_routes,
             store_reasons={},
             reasons=table,
+            dirs=sorted(dirs or []),
         )
 
     def to_json(self) -> str:
@@ -252,7 +269,8 @@ def declared_total(ledger: dict[str, dict]) -> int:
     return sum(int(meta.get("size", 0)) for meta in ledger.values())
 
 
-def manifest_size_estimate(relpaths: Iterable[str], stored_count: int = 0) -> int:
+def manifest_size_estimate(relpaths: Iterable[str], stored_count: int = 0,
+                           dirs: Iterable[str] = ()) -> int:
     """How large the manifest for this selection will be, in bytes.
 
     Public and pure so the answer is available *before* any work starts, and
@@ -277,6 +295,12 @@ def manifest_size_estimate(relpaths: Iterable[str], stored_count: int = 0) -> in
         encoded = len(rel.encode("utf-8"))
         longest = max(longest, encoded)
         total += encoded + _MANIFEST_ENTRY_BYTES
+    # K2's `dirs`: one full relative path each, and unbounded. Measured before
+    # this term existed, 20,000 empty directories beside 10 files predicted
+    # 14,498 B against 1,550,859 B written - a 100x under-read, and K1's defect
+    # for the third time.
+    for d in dirs:
+        total += len(d.encode("utf-8")) + _MANIFEST_DIR_BYTES
     # The keys write_container stamps on after this number has been taken.
     return total + stored_count * max(_MANIFEST_SAME_AS_BYTES + longest,
                                       _MANIFEST_CODEC_BYTES)

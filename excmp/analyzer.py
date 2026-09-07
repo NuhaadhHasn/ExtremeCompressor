@@ -108,6 +108,15 @@ class FileInfo:
     # are neutral so a hand-built FileInfo (tests, planner fixtures) stays valid.
     sample_ratio: float = 1.0
     sample_ratio_max: float = 1.0
+    #: K2: the source file's modification time, in nanoseconds.
+    #:
+    #: Carried from the one `stat()` `analyze_file` already performs, rather
+    #: than re-stat-ed in the engine - on a 55,000-file tree over a slow
+    #: external drive that second walk is minutes, not milliseconds.
+    #:
+    #: ``0`` means "unknown", which is what a hand-built FileInfo (tests,
+    #: planner fixtures) gets and what makes the field safe to add.
+    mtime_ns: int = 0
 
 
 def _looks_like_zlib(head: bytes) -> bool:
@@ -182,7 +191,8 @@ def sample_entropy(path: Path, sample: int = _SAMPLE) -> float:
 
 def analyze_file(path: Path) -> FileInfo:
     path = Path(path)
-    size = path.stat().st_size
+    st = path.stat()
+    size = st.st_size
     with path.open("rb") as fh:
         head = fh.read(4096)
     stats = sample_stats(path)
@@ -194,6 +204,7 @@ def analyze_file(path: Path) -> FileInfo:
         zlib_stream=_looks_like_zlib(head),
         sample_ratio=stats.ratio,
         sample_ratio_max=stats.ratio_max,
+        mtime_ns=st.st_mtime_ns,
     )
 
 
@@ -212,5 +223,93 @@ def iter_files(root: Path) -> list[Path]:
     return [p for p in sorted(root.rglob("*")) if p.is_file()]
 
 
+def iter_empty_dirs(root: Path) -> list[Path]:
+    """Every directory under ``root`` that holds nothing at all (K2).
+
+    :func:`iter_files` keeps only ``p.is_file()``, so a directory with no files
+    in it never reaches the ledger and there is nothing in the manifest to
+    recreate. Restoring a folder used to silently drop them.
+
+    Only *wholly* empty directories are returned, and that is sufficient rather
+    than a simplification: a directory holding files is already implied by
+    those files' relative paths, and a chain like ``deep/empty/chain`` is
+    rebuilt from its deepest member with ``mkdir(parents=True)``. Recording the
+    shallow ones too would repeat information the paths already carry, which is
+    the redundancy K1 spent a whole phase removing.
+
+    ``root`` itself is never returned - the restore recreates the top-level
+    directory regardless, and an archive of one empty folder has no ledger and
+    no reason to exist.
+    """
+    root = Path(root)
+    if root.is_file():
+        return []
+    out = []
+    for p in sorted(root.rglob("*")):
+        if not p.is_dir():
+            continue
+        try:
+            next(p.iterdir())
+        except StopIteration:
+            out.append(p)
+        except OSError:
+            # Unreadable directory: K3's problem, not this function's. Saying
+            # nothing is right here - a directory we cannot list is not a
+            # directory we can call empty.
+            continue
+    return out
+
+
 def analyze_tree(root: Path) -> list[FileInfo]:
     return [analyze_file(p) for p in iter_files(root)]
+
+
+def describe_unreadable(path: Path, exc: OSError,
+                        label: str | None = None) -> str:
+    """One human-readable line for a file we could not read (K3).
+
+    ``label`` is the archive-relative path when the caller has one, and it
+    matters more than it looks: a `node_modules` tree holds hundreds of
+    ``index.js``, so a message built from ``path.name`` alone identified
+    nothing and two different skipped files produced byte-identical sentences.
+    A name the user cannot resolve to a file is most of the way back to the
+    silence this report exists to prevent - they cannot go and re-archive what
+    they cannot find.
+
+    The stdlib text for a share-mode denial is "Permission denied", which on
+    Windows is actively misleading: the user's permissions are usually fine
+    and the real cause is that another program is holding the file open. Say
+    that instead, because the user's next action depends on knowing it -
+    closing Excel fixes it, changing an ACL does not.
+    """
+    who = label or path.name
+    if isinstance(exc, PermissionError):
+        return (f"{who}: in use by another program (or not readable), "
+                f"so it was skipped")
+    if isinstance(exc, FileNotFoundError):
+        return f"{who}: disappeared while the job was running, so it was skipped"
+    return f"{who}: could not be read ({exc.strerror or exc}), so it was skipped"
+
+
+def analyze_tree_safe(root: Path) -> tuple[list[FileInfo], list[tuple[Path, str]]]:
+    """:func:`analyze_tree`, but a file it cannot read is skipped, not fatal.
+
+    K3: `analyze_file` opens the file to sniff its category and sample its
+    entropy, so a file held with ``dwShareMode=0`` - what Outlook and Excel do
+    - raised `PermissionError` here and took the whole job down with it,
+    including the files that *were* readable. Every other archiver skips,
+    continues, and reports at the end.
+
+    Returns the analyses that succeeded and ``(path, reason)`` for each that
+    did not. Both halves are needed by the caller: the second is not an error
+    log, it is part of the job's result, because a skip nobody is told about is
+    worse than a failure.
+    """
+    infos: list[FileInfo] = []
+    skipped: list[tuple[Path, str]] = []
+    for p in iter_files(root):
+        try:
+            infos.append(analyze_file(p))
+        except OSError as exc:
+            skipped.append((p, describe_unreadable(p, exc)))
+    return infos, skipped

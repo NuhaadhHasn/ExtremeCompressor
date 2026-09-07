@@ -29,13 +29,13 @@ archive is fully restored and hashed before it is renamed into place.
 
 from __future__ import annotations
 
-import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .analyzer import analyze_tree
 from .planner import Profile, plan as make_plan, store_reason
+from .tempclean import rmtree_force
 from .stages.base import StageContext, StageError
 from .stages.sevenzip import SevenZipStage
 from .tools import ToolInfo, find_tools
@@ -114,7 +114,7 @@ def convert_archive(source: Path, out_path: Path, profile: Profile,
     finally:
         # The staging copy is the size of their whole archive. Leaving it
         # behind would quietly cost the user that space twice.
-        shutil.rmtree(work, ignore_errors=True)
+        rmtree_force(work)
 
     gain = (source_bytes - archive_bytes) / source_bytes if source_bytes else 0.0
     improved = gain > MEANINGFUL_GAIN

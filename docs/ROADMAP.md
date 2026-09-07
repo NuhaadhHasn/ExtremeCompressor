@@ -1,7 +1,9 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-01**. **552 tests** (551 pass + 1 strict-xfail).
-> Everything below is **merged to `main`**; nothing is awaiting review.
+> Status date: **2026-09-07**. **947 tests** (945 pass + 1 skip + 1 strict-xfail;
+> the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
+> Everything below is merged to `main` except **`phase-i3-i8-i10`** and
+> **`phase-k1-manifest-v2`**, which are stacked and awaiting review.
 >
 > **Done:** engine core · Phase A (GUI) · Phase D0 (security hotfix) ·
 > Phase J part 1 (estimates before compressing, scored on two real corpora) ·
@@ -117,26 +119,104 @@ measurement taken on this laptop against the real corpora. They are listed
 before every remaining feature because three of them affect data the user
 already has.
 
-### K1. A real folder cannot be archived at all ⛔ **do this first**
+### K1. A real folder cannot be archived at all ✅ **DONE 2026-09-04**
 
-`MAX_MANIFEST_BYTES = 8 << 20` (`excmp/manifest.py:27`). Measured against the
-live tree:
+Branch `phase-k1-manifest-v2`, every number in
+[benchmarks/2026-09-04-k1](benchmarks/2026-09-04-k1-manifest-v2.md).
+`MAX_MANIFEST_BYTES` was `8 << 20` (`excmp/manifest.py:27`); it is now
+`64 << 20`, the schema is v2, and the check happens before any work starts.
 
-| folder | files | manifest | outcome |
-|---|---:|---:|---|
-| `5React, ReactNative` | **57,020** | **~29 MiB** | ⛔ **refused** |
-| `7Python` | 12,701 | 5.4 MiB | ok |
-| `Mosh Hamedani - All Courses Pack` | 2,272 | 1.1 MiB | ok |
+**Three things the implementation corrected against this plan, all measured:**
 
-**1 of the 21 tutorial folders is un-archivable today**, and `node_modules` is
-exactly the shape that does it. Worse, the refusal lands *after* the whole job
-has run: `_verify_before_publish` → `verify_archive` → `_read_manifest`, where
-the cap is checked. The user waits through a full compress and then loses it.
-Three things inflate the manifest and all three are avoidable: `routes[].files`
-duplicates every relative path, `store_reasons` stores a whole English sentence
-per file, and the container is written `ZIP_STORED` so the JSON costs its full
-uncompressed size. Needs `SCHEMA_VERSION = 2` and a pre-check *before* the work
-starts, not after.
+**(1) The manifest was far bigger than "~29 MiB".** The authoritative figure is
+from a real end-to-end archive of the `node_modules` subtree that broke —
+55,477 files — with its v1 document reconstructed from the v2 manifest that job
+produced, so the *real* routing decides who carries a store reason:
+
+| the same real job | bytes | | vs the old 8 MiB cap |
+|---|---:|---|---|
+| **v1 manifest** | 22,611,183 | **21.56 MiB** | ⛔ 2.7× over |
+| **v2 manifest** | 12,782,745 | **12.19 MiB** | ok |
+| **v2, deflated in the container** | 2,720,064 | 2.59 MiB | — |
+
+**22,611,183 is byte-for-byte the number in the pre-K1 build's own error
+message**, which is how we know the reconstruction is faithful and that this is
+the folder that failed. Modelling the whole 57,020-file tree with *every* file
+stored puts v1 at 40.87 MiB and v2 at 14.77 MiB — a worst case, not what a real
+job writes.
+
+**(2) Schema v2 alone does not fix K1 — the cap had to rise.** The reason is
+structural: those relative paths average **152 bytes** each, so **8.67 MB of the
+document is pure path text** and clears an 8 MiB cap before a single other field
+is written. No field-trimming reaches 8 MiB.
+
+So the cap is now measured rather than guessed. Its whole purpose is to stop an
+unbounded `json.loads` on attacker bytes being a free memory bomb, and that
+costs **1.2–1.7 s and 32.1 MiB resident for 14.8 MiB of JSON** — 2.2× the bytes,
+590 B per file. `64 << 20` is therefore ~139 MiB and ~5 s worst case, covers
+~250,000 files at these path lengths, and is still a hard bound. The old 8 MiB
+was over-tight by an order of magnitude.
+
+**(3) It was never one folder.** `7Python` (12,701 files) sat at **7.11 MiB
+against an 8 MiB cap** — one folder-growth from breaking — and the whole
+tutorial corpus as a single selection (74,648 files, ~46 MiB) was refused too.
+
+**Shipped:** `SCHEMA_VERSION = 2`; `routes[].files` replaced by a `count`
+(the ledger already carried a route per file); store reasons interned into a
+`reasons` table indexed from the ledger entry (`planner.store_reason` can emit
+at most **12** distinct sentences — one media sentence plus one per two-decimal
+entropy value from the 7.9 threshold to 8.00 — so the table is **1,232 bytes**
+at any file count, and the real end-to-end archive used 7); compact JSON
+separators; `manifest.json` written **DEFLATED**, the one compressed member of
+the container. v1 archives still load and restore — `store_reasons` stays on
+the dataclass because `from_json` splats `cls(**data)`, and `Manifest.reason_for`
+reads v2, then v1, then the route summary. A missing schema check was added
+too: an archive from a newer build is now refused instead of quietly misread.
+The cap is enforced on the **write** side as well, which is the asymmetry that
+caused this: `compress` built an archive its own reader refused and only found
+out from inside the publish gate, after every byte had been written.
+`engine._check_manifest_size` refuses at the front, before the first `mkdtemp`.
+
+**Proven end to end, on the folder that could not be archived.** 55,477 files,
+354,988,110 B, profile `normal`:
+
+```
+354,988,110 -> 101,576,020 B   71.39% saved     compress 137.5 min
+excmp verify : OK, 55,477 restored, 55,477 hashes verified   24.5 min
+excmp extract: 55,477 files, 55,477 hashes OK                18.3 min
+independent SHA-256 tree comparison: 0 missing, 0 extra, 0 differing
+                                     -> BYTE-IDENTICAL
+```
+
+**Two further defects were found while auditing K1 before committing it**, both
+fixed here with a failing test first, both variants of the same mistake — *the
+preflight was modelling a manifest that is not the one that gets written*:
+
+1. **It under-read by 24% on duplicate-heavy stored data.** `write_container`
+   stamps `same_as` (a whole relative path) and `codec` onto the ledger *after*
+   the estimate is taken. Under-reading re-creates K1 exactly: accepted at the
+   front, refused at the end. Now budgeted at the worst case.
+2. **It under-read by up to 45% on non-ASCII names.** `json.dumps` defaults to
+   `ensure_ascii=True`, so a Dhivehi path costs 6 bytes per character while the
+   estimate charged its 2–3 UTF-8 bytes. Fixed by writing the manifest as real
+   UTF-8, which is also *smaller* for those trees. This product has an explicit
+   Dhivehi/Japanese/Cyrillic/emoji edge-case matrix (D2), so it was in scope.
+
+And one constant was wrong for a related reason: `_MANIFEST_DEFLATE_FACTOR` had
+been calibrated on a manifest full of placeholder hashes (`"0" * 64`), which
+deflate to nothing. Real sha256s measure **0.213**, not 0.045 — so 0.10 was
+*under*-booking disk in a preflight whose entire job is to over-book it. Now
+0.30. The reason table's documented bound was wrong by 4× as well (12 sentences
+and 1,232 bytes, not "~52 and ~5.3 KB" — that is the figure for a 7.5 entropy
+threshold, and the planner uses 7.9); it is now enumerated and pinned by a test.
+
+**A defect found while doing it, and fixed here:** `gui/queue_manager.py`'s
+J7 self-calibration derived its piped byte count by stat-ing `routes[].files`.
+Those are archive-*relative* paths, so they resolved against the process
+working directory, `piped` was always 0, and **J7 had never recorded anything
+from the GUI**. Reproduced: the pre-K1 expression returned `0` where the ledger
+said `30,000`. The engine now reports `CompressResult.piped_bytes` from the
+ledger, exactly, with no filesystem access.
 
 ### K2. Stored files come back dated today
 
@@ -189,10 +269,46 @@ cap first and unconditionally (it is a ceiling; existing 27-window archives
 still read), then raise the compress default separately. Then both directions
 interoperate.
 
-- [ ] K1. Manifest schema v2 + a pre-flight cap check **(do first — blocks real data)**
+### K5. Every job that touches a git repo leaks temp forever 🆕 **found 2026-09-06**
+
+Not from a test — from *looking at the disk* after the K1 end-to-end run. Two
+abandoned scratch directories were sitting in temp, each holding exactly the
+same 11 files:
+
+```
+excmp-verify-i05n75qg/restore/.../rn_first_app/.git/objects/18/1f3cee...
+    attrs = ReadOnly, Archive
+```
+
+**Git creates loose objects read-only, and `shutil.rmtree(ignore_errors=True)`
+cannot delete a read-only file on Windows — it swallows the error and leaves
+it.** Reproduced directly, independent of this codebase:
+
+```python
+os.chmod(f, stat.S_IREAD)
+shutil.rmtree(d, ignore_errors=True)
+d.exists()          # -> True, with objects/18/deadbeef still in it
+```
+
+So any compress or extract of a tree containing a `.git` directory — or any
+read-only file at all — leaves debris behind on every run, and `ignore_errors`
+guarantees nobody is told. **11 call sites**, all with the same flag:
+`engine.py` ×7 (589, 706, 757, 834, 1141, 1175, 1211, 1310), `convert.py:117`,
+`stages/zpaqfranz.py` ×2.
+
+D3 already asserts "temp is clean" and D2 already round-trips read-only
+attributes; neither crosses the two, which is why 945 tests are green over a
+defect that fires on ordinary input. **Fix:** one shared `rmtree_force` that
+clears the read-only bit and retries (`onexc=` on 3.12, `onerror=` below), used
+at all 11 sites — plus the D3 test the existing ones imply, with a read-only
+file in the fixture.
+
+- [x] K1. ✅ Manifest schema v2, a 64 MiB cap measured against its own parse
+      cost, a deflated manifest, and a pre-flight that refuses at the front
 - [ ] K2. Preserve mtimes on the store route; restore empty directories
 - [ ] K3. Skip an unreadable file, record it, finish the job, report at the end
 - [ ] K4. zstd `window_log` 27→31, decompress cap first
+- [ ] K5. `rmtree_force`: a read-only file must not strand a scratch directory
 
 ---
 

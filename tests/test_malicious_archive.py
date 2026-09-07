@@ -25,7 +25,8 @@ from pathlib import Path
 import pytest
 
 from excmp import engine
-from excmp.manifest import (MANIFEST_NAME, ContainerError, Manifest,
+from excmp.manifest import (MANIFEST_NAME, MAX_MANIFEST_BYTES,
+                            ContainerError, Manifest,
                             extract_stored, read_container, write_container)
 from excmp.safepath import UnsafePathError
 from excmp.stages.base import StageContext
@@ -241,10 +242,36 @@ def test_read_container_refuses_hostile_payload_name(tmp_path):
 
 def test_read_container_caps_manifest_size(tmp_path):
     """``manifest.json`` is parsed before anything is validated, so an
-    unbounded ``json.loads`` is a cheap memory bomb. Cap it first."""
+    unbounded ``json.loads`` is a cheap memory bomb. Cap it first.
+
+    Sized from the cap rather than from a literal: this test spelled `9 << 20`
+    against an 8 MiB limit and silently stopped testing anything the moment K1
+    raised that limit to 64 MiB.
+    """
     out = _out_dir(tmp_path)
-    huge = json.dumps({**_manifest_dict(), "warnings": ["A" * (9 << 20)]})
+    over = MAX_MANIFEST_BYTES + (1 << 20)
+    huge = json.dumps({**_manifest_dict(), "warnings": ["A" * over]})
+    assert len(huge) > MAX_MANIFEST_BYTES
     arc = _hostile_zip(tmp_path / "evil.excmp", [], manifest_raw=huge)
+    with pytest.raises(ContainerError):
+        read_container(arc, out)
+
+
+def test_read_container_caps_a_deflated_manifest_too(tmp_path):
+    """K1 made `manifest.json` the one DEFLATED member of the container, so a
+    liar now gets amplification for free: 65 MiB of repeated bytes ships as a
+    few KB. The cap is enforced on the decompressed stream, not on the header,
+    which is what makes that a refusal rather than a 65 MiB allocation."""
+    out = _out_dir(tmp_path)
+    over = MAX_MANIFEST_BYTES + (1 << 20)
+    huge = json.dumps({**_manifest_dict(), "warnings": ["A" * over]})
+    arc = tmp_path / "deflate-bomb.excmp"
+    with zipfile.ZipFile(arc, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(MANIFEST_NAME, huge)
+    with zipfile.ZipFile(arc) as zf:
+        info = zf.getinfo(MANIFEST_NAME)
+    assert info.compress_size < (1 << 20), \
+        "the point of the test is that the container is small"
     with pytest.raises(ContainerError):
         read_container(arc, out)
 

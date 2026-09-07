@@ -149,11 +149,31 @@ _OVERRIDE_LOW = 0.30
 # than having no range.
 _PRECOMP_OPTIMISTIC = 0.30
 
-# Container overhead. Everything in the .excmp is ZIP_STORED, so manifest.json
-# counts at full size: a ledger entry per file (size, 64-hex sha256, route) plus
-# the routes list naming every file a second time, plus zip headers per stored
-# entry. Only material for very small archives.
+# Container overhead: a ledger entry per file (size, 64-hex sha256, route) plus
+# zip headers per stored entry. Only material for very small archives.
+#
+# K1 changed both halves of this. The manifest no longer names every file a
+# second time under `routes[].files`, so the name term went from three copies
+# to two (ledger key + zip header); and `manifest.json` is now the one DEFLATED
+# member of the container, so its share arrives compressed.
+#
+# The factor is measured on a **real archive**, which matters more than it
+# sounds. This constant was first set to 0.10 against a benchmark that deflated
+# 14.54 MiB of manifest to 0.65 MiB - a factor of 0.045 - but that document was
+# built with a placeholder sha256 (`"0" * 64` on every entry), and a column of
+# identical hashes compresses to nothing. Real hashes are random hex and are
+# very close to incompressible: 64 chars x N files sets a hard floor no
+# deflater can go under.
+#
+# Measured 2026-09-06 on the 55,477-file end-to-end archive, with real hashes:
+#
+#     manifest.json  12,782,745 B  ->  2,720,064 B deflated  =  0.213
+#
+# So 0.045 was optimistic by ~5x and 0.10 by ~2x - i.e. it *under*-booked disk,
+# which is the one direction this file is not allowed to err in. 0.30 restores
+# the intended pessimism with room for a manifest that is mostly hashes.
 _LEDGER_BYTES_PER_FILE = 150
+_MANIFEST_DEFLATE_FACTOR = 0.30
 _ZIP_ENTRY_BYTES = 76
 _CONTAINER_BASE = 512
 
@@ -302,13 +322,26 @@ def _piped_ratios(info: FileInfo, factor: float,
 
 
 def _overhead(infos: list[FileInfo], stored_count: int) -> int:
-    """Manifest + zip headers. Everything in the container is ZIP_STORED."""
+    """Manifest + zip headers. The manifest is deflated; everything else in the
+    container is ZIP_STORED.
+
+    `names` uses the *basename*, not the archive-relative path that actually
+    lands in the manifest - measured on a `node_modules` tree those are 20 and
+    152 bytes, so this term under-reads a deep tree ~7x. It is left alone
+    because `_overhead` is not given the relmap, and because deflating the
+    manifest shrinks the whole term by another order of magnitude: 8.5 MB of
+    ledger for 57,020 files becomes ~850 KB against a multi-gigabyte archive.
+    `manifest.manifest_size_estimate` is the function that has to be exact,
+    and it takes the real relative paths.
+    """
     if not infos:
         return 0
     names = sum(len(i.path.name) for i in infos)
+    manifest = (_LEDGER_BYTES_PER_FILE * len(infos)
+                + names)                             # ledger key
     return (_CONTAINER_BASE
-            + _LEDGER_BYTES_PER_FILE * len(infos)
-            + 3 * names                              # ledger, routes, zip header
+            + int(manifest * _MANIFEST_DEFLATE_FACTOR)
+            + names                                  # zip header per entry
             + _ZIP_ENTRY_BYTES * (stored_count + 2))  # + manifest and payload
 
 

@@ -20,11 +20,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import jpeg
+# Imported as a module as well as by name: `write_container` reads the cap from
+# the module global, so the compress-side preflight has to read the same one or
+# the two can disagree about what is writable.
+from . import manifest as _manifest
 from .analyzer import Category, FileInfo, analyze_tree
 from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
-                       read_container, write_container)
+                       manifest_size_estimate, read_container, write_container)
 from .planner import Plan, Profile, plan as make_plan, precomp_inflation, store_reason
 from .safepath import resolve_within, safe_relpath
 from .slt import classify_failure
@@ -171,6 +175,37 @@ def _check_compress_space(out_path: Path, temp_dir: Path, infos: list[FileInfo],
     return warnings
 
 
+def _check_manifest_size(relmap: dict[Path, str], the_plan: Plan) -> list[str]:
+    """K1: refuse a selection whose manifest we could not read back.
+
+    The cap exists because `manifest.json` is parsed before anything in it can
+    be validated. It was only ever enforced on the *read* side, which put the
+    refusal at the bottom of `_verify_before_publish` -> `verify_archive` ->
+    `extract` -> `read_container` - i.e. after the whole archive had been
+    built. A user with a `node_modules` tree waited out a full compress and
+    then lost it.
+
+    Nothing about that was the user's mistake, so the message names the count
+    and points at the way out. Two thresholds, matching
+    `_check_compress_space`: warn when the manifest is close enough that a
+    growing folder will hit the wall, refuse when it is already through it.
+    """
+    cap = _manifest.MAX_MANIFEST_BYTES
+    stored = sum(len(r.files) for r in the_plan.routes if r.action == "store")
+    projected = manifest_size_estimate(relmap.values(), stored_count=stored)
+    if projected > cap:
+        raise RuntimeError(
+            f"this selection has {len(relmap):,} file(s), whose names and "
+            f"hashes need about {projected / 2**20:.1f} MiB of manifest - past "
+            f"the {cap / 2**20:.1f} MiB an archive may carry. Archive the "
+            f"subfolders separately.")
+    if projected > cap * 4 // 5:
+        return [f"the manifest for these {len(relmap):,} file(s) will be about "
+                f"{projected / 2**20:.1f} MiB, near the {cap / 2**20:.1f} MiB "
+                f"ceiling - a much larger selection would be refused"]
+    return []
+
+
 def _wait_if_paused(ctx: StageContext) -> None:
     """Block while the caller holds ``ctx.pause``. Called only at stage
     boundaries: a half-finished tool cannot be suspended safely, so pausing
@@ -265,6 +300,14 @@ class CompressResult:
     # second file nobody asked for beside every archive is exactly the kind of
     # surprise output this engine has refused since its first commit.
     sidecar: Path | None = None
+    #: Original bytes that actually went through the codec chain, as opposed to
+    #: the stored bucket. This is the only figure J7's self-calibration may
+    #: learn from - a store-only job is disk-bound and says nothing about how
+    #: fast a codec runs. Reported here because the engine has the ledger in
+    #: hand and knows it exactly; the GUI used to reconstruct it by stat-ing
+    #: archive-relative paths against its own working directory, which never
+    #: worked (K1).
+    piped_bytes: int = 0
 
     @property
     def ratio(self) -> float:
@@ -576,6 +619,8 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     # twin of the check extract() has done since D0.)
     the_plan.warnings.extend(
         _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
+    # ...and will the manifest itself be readable? (K1.)
+    the_plan.warnings.extend(_check_manifest_size(relmap, the_plan))
 
     # B7: the branch filter is decided from what will actually be *piped*,
     # not from the whole input. A folder of installers is mostly stored, and
@@ -670,8 +715,11 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             warnings=the_plan.warnings,
             store_reasons={relmap[i.path]: reason for i in infos
                            if (reason := store_reason(i))},
-            routes=[{"action": r.action, "stages": r.stages, "reason": r.reason,
-                     "files": [relmap[f] for f in r.files]} for r in the_plan.routes],
+            # No `files` list: it repeated every relative path a second time,
+            # and the ledger above already records a route per file.
+            # `Manifest.new` derives the count from it (K1).
+            routes=[{"action": r.action, "stages": r.stages, "reason": r.reason}
+                    for r in the_plan.routes],
         )
         stored_map = {relmap[f]: f for f in (store_route.files if store_route else [])}
         # With a password the plaintext container is built inside temp; without
@@ -725,6 +773,8 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         routes=manifest.routes,
         warnings=the_plan.warnings,
         elapsed_s=time.monotonic() - t0,
+        piped_bytes=sum(m["size"] for m in ledger.values()
+                        if m.get("route") == "pipeline"),
     )
 
 
@@ -819,26 +869,32 @@ def list_archive(archive: Path) -> ArchiveListing:
     with zipfile.ZipFile(archive) as zf:
         manifest = _read_manifest(zf, archive)
 
-    reasons: dict[str, tuple[str, str]] = {}
+    # The route comes from the ledger, which has carried one per file for as
+    # long as `_extract_selected` and `extract` have read it from there. v1
+    # also listed every name under `routes[].files`; that is the fallback for
+    # the oldest archives, whose ledger entries predate the `route` key.
+    summary = {r.get("action", ""): r.get("reason", "") for r in manifest.routes}
+    legacy: dict[str, str] = {}
     for route in manifest.routes:
         for name in route.get("files", []):
-            reasons[name] = (route.get("action", ""), route.get("reason", ""))
+            legacy[name] = route.get("action", "")
 
-    entries = [
-        ArchiveEntry(
+    def _entry(name: str, meta: dict) -> ArchiveEntry:
+        route = meta.get("route") or legacy.get(name, "")
+        return ArchiveEntry(
             name=name,
             size=meta.get("size", 0),
             sha256=meta.get("sha256", ""),
-            route=reasons.get(name, ("", ""))[0],
-            # Per-file first; fall back to the route's joined summary only for
-            # archives written before `store_reasons` existed. Only a stored
-            # file needs explaining - a pipelined one shrank.
-            reason=(manifest.store_reasons.get(name)
-                    or reasons.get(name, ("", ""))[1])
-            if reasons.get(name, ("", ""))[0] == "store" else "",
+            route=route,
+            # Only a stored file needs explaining - a pipelined one shrank.
+            # `reason_for` reads v2's interned index, then v1's per-file
+            # sentence, then the route's joined summary, which is all the
+            # oldest archives ever had.
+            reason=(manifest.reason_for(name, summary.get("store", ""))
+                    if route == "store" else ""),
         )
-        for name, meta in manifest.inputs.items()
-    ]
+
+    entries = [_entry(name, meta) for name, meta in manifest.inputs.items()]
     entries.sort(key=lambda e: e.size, reverse=True)
     return ArchiveListing(
         archive=archive,

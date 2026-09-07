@@ -1,10 +1,13 @@
-"""The .excmp container: a STORED zip holding manifest.json + one payload blob.
+"""The .excmp container: a zip holding manifest.json + one payload blob.
 
 The manifest records the exact stage chain (in the order it ran), tool
 versions, and a SHA-256 ledger of every original input file, so extraction
 can replay the chain in reverse and prove the restore is byte-identical.
-The zip layer is STORED (no compression) because the payload is already
-maximally compressed by the final stage.
+
+The payload and the ``stored/`` tree are STORED (no compression) because a
+real codec has already had its turn at them. ``manifest.json`` is the one
+DEFLATED member: it is JSON, and on the real 55,477-file archive K1 was
+measured against that is the difference between 12.19 MiB and 2.59 MiB.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import json
 import stat
 import zipfile
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,12 +23,64 @@ from pathlib import Path
 from . import jpeg
 from .safepath import UnsafePathError, resolve_within, safe_relpath
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MANIFEST_NAME = "manifest.json"
 
 # manifest.json is parsed before anything in it can be validated, so an
 # unbounded json.loads on attacker-supplied bytes is a free memory bomb.
-MAX_MANIFEST_BYTES = 8 << 20
+#
+# K1: this was `8 << 20`, and it was a guess that refused real data. Archiving
+# a live 55,477-file `node_modules` tree produces 12.19 MiB of manifest **after**
+# every redundancy has been squeezed out of the schema - the same job needed
+# 21.56 MiB under v1 - because those relative paths average 152 bytes each and
+# millions of bytes of the document are therefore pure path text. No amount of
+# field-trimming reaches 8 MiB; the cap was simply too low.
+#
+# This number is now measured rather than guessed. Parsing 14.8 MiB of manifest
+# (57,020 entries) costs **1.2-1.7 s and 32.1 MiB resident** - 2.2x the JSON
+# size, 590 B per file. So 64 MiB is ~139 MiB and ~5 s in the worst case, on a
+# target machine that already budgets ~2 GB for a single LZMA2 dictionary, and
+# it covers roughly a quarter of a million files at this corpus's path lengths.
+# Still a hard bound, and now one with a reason.
+MAX_MANIFEST_BYTES = 64 << 20
+
+# Per-ledger-entry cost of the v2 document, excluding the relative path itself:
+# the two quotes and the colon around the key, the braces, `"size":<up to 11
+# digits>`, `"sha256":"<64 hex>"`, `"route":"pipeline"` and the separating
+# comma. Counted from the format rather than fitted to a corpus, and rounded up
+# - `manifest_size_estimate` decides whether a job is refused, so it must err
+# high. A stored entry additionally carries `,"reason":<index>`.
+_MANIFEST_ENTRY_BYTES = 120
+_MANIFEST_REASON_BYTES = 16
+# `write_container` mutates the same ledger again *after* the estimate has been
+# taken and the job has been allowed to start, so these have to be budgeted for
+# here or the preflight waves through a job that dies at the very end - which is
+# the K1 defect itself, reached by a different route. Measured at 0.758x the
+# estimate before this term existed.
+#
+#   `,"same_as":"<relpath>"`   G9, on every duplicate stored entry: 13 + the
+#                              whole relative path of the entry holding the bytes
+#   `,"codec":"lepton"`        B2, on every packed JPEG
+#
+# Never both on one entry - the packing loop skips anything already carrying a
+# `same_as` - so the allowance is the larger of the two, and the path it points
+# at is bounded only by the longest name in the selection.
+_MANIFEST_SAME_AS_BYTES = 13
+_MANIFEST_CODEC_BYTES = 17
+# The fixed head: schema/created/profile/payload_name, the stage records, the
+# routes, the warnings, and the interned reason table. The table is the only
+# part that grows, and it cannot pass **12** entries: `planner.store_reason`
+# emits one fixed media sentence plus one per two-decimal entropy value from
+# `ENTROPY_STORE_THRESHOLD` (7.9) to 8.00 inclusive, which is 11. Enumerated,
+# the whole table is **1,232 bytes** however many files there are - so 12 KiB
+# of head covers it eight times over.
+#
+# An earlier revision of this comment said "~52 entries, ~5.3 KB". That is the
+# figure for a 7.5 threshold, which is not the one the planner uses; it was
+# never measured. `test_the_reason_table_cannot_grow_past_twelve_sentences`
+# now pins the real bound, so moving ENTROPY_STORE_THRESHOLD fails loudly here
+# instead of silently invalidating the budget.
+_MANIFEST_BASE_BYTES = 12 << 10
 
 # Floor for the payload budget, so tiny archives (where container overhead
 # dominates the declared size) are not tripped up by their own arithmetic.
@@ -65,18 +121,65 @@ class Manifest:
     payload_name: str
     warnings: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
-    # relpath -> why THIS file was stored. The route-level reason is a joined
-    # summary of every distinct reason in the group, so attributing it to an
-    # individual file says "7.99 bits/byte; 7.98 bits/byte" about a file that
-    # measured one of them. Defaulted, so archives written before this field
-    # existed still load - `from_json` passes **data and the default fills in.
+    #: **v1 only.** relpath -> why THIS file was stored, as a whole English
+    #: sentence per file. The route-level reason is a joined summary of every
+    #: distinct reason in the group, so attributing it to an individual file
+    #: says "7.99 bits/byte; 7.98 bits/byte" about a file that measured one of
+    #: them - hence the per-file record.
+    #:
+    #: v2 interns the same information into :attr:`reasons` and an index on the
+    #: ledger entry, which is 13 MiB smaller on a 57,020-file tree because it
+    #: does not repeat every relative path a second time. The field stays here,
+    #: and stays empty in what we write, because `from_json` splats the raw
+    #: document into `cls(**data)`: deleting it would turn every v1 archive
+    #: into a `TypeError` and an unreadable file. Read it through
+    #: :meth:`reason_for`, never directly.
     store_reasons: dict[str, str] = field(default_factory=dict)
+    #: v2: the distinct store reasons, referenced by index from
+    #: ``inputs[rel]["reason"]``. Bounded at 12 strings by construction.
+    reasons: list[str] = field(default_factory=list)
 
     @classmethod
     def new(cls, profile: str, stages: list[StageRecord], inputs: dict[str, dict],
             payload_name: str, warnings: list[str] | None = None,
             routes: list[dict] | None = None,
             store_reasons: dict[str, str] | None = None) -> "Manifest":
+        """Build a v2 manifest. ``store_reasons`` is still taken as
+        ``{relpath: sentence}`` - that is the shape the planner produces - and
+        interned here, so exactly one place knows the storage format.
+
+        ``inputs`` is **mutated**: each stored entry gains a ``reason`` index.
+        `write_container` mutates the same dict again (``same_as``, ``codec``)
+        before serialising, so this is the established contract rather than a
+        new one.
+        """
+        table: list[str] = []
+        seen: dict[str, int] = {}
+        for rel, sentence in (store_reasons or {}).items():
+            meta = inputs.get(rel)
+            # Only a *stored* file needs explaining; a pipelined one shrank.
+            # v1 recorded a sentence for every high-entropy file whether or not
+            # it ended up stored - Precomp can claim a file the entropy check
+            # would have stored - and `list_archive` then suppressed it on the
+            # way out. Those entries were pure weight.
+            if meta is None or meta.get("route") != "store":
+                continue
+            idx = seen.get(sentence)
+            if idx is None:
+                idx = seen[sentence] = len(table)
+                table.append(sentence)
+            meta["reason"] = idx
+
+        # `routes[].files` named every file a second time; the ledger above
+        # already carries a route per file, and a count is all any reader
+        # wanted from the list. Derived here so the two can never disagree.
+        lean_routes = []
+        for route in (routes or []):
+            route = {k: v for k, v in route.items() if k != "files"}
+            route["count"] = sum(1 for meta in inputs.values()
+                                 if meta.get("route") == route.get("action"))
+            lean_routes.append(route)
+
         return cls(
             schema=SCHEMA_VERSION,
             created_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -85,18 +188,55 @@ class Manifest:
             inputs=inputs,
             payload_name=payload_name,
             warnings=warnings or [],
-            routes=routes or [],
-            store_reasons=store_reasons or {},
+            routes=lean_routes,
+            store_reasons={},
+            reasons=table,
         )
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), indent=2)
+        # Compact: the cap is measured in uncompressed bytes and `indent=2` was
+        # 12% of the budget - 2.2 MiB on the tree that could not be archived.
+        #
+        # `ensure_ascii=False` is load-bearing, not cosmetic. The default emits
+        # every non-ASCII character as a 6-byte `\uXXXX` escape - 12 for an
+        # astral pair - which is 3x what a 2-byte Cyrillic character costs in
+        # UTF-8 and 3x for an emoji. `manifest_size_estimate` costs a path at
+        # its UTF-8 length, so with escaping on it under-read a pipelined tree
+        # of Dhivehi names by 45% (0.55x) and would have let the job start and
+        # then die at `write_container` - K1's own failure, in a language this
+        # product has an explicit edge-case test for. Writing real UTF-8 makes
+        # the estimate's model true *and* makes those manifests smaller.
+        #
+        # Safe on both sides: `zipfile.writestr` encodes a str member as UTF-8,
+        # and `_read_manifest` decodes UTF-8. Pinned by
+        # `test_non_ascii_names_survive_the_container`.
+        return json.dumps(asdict(self), separators=(",", ":"), ensure_ascii=False)
 
     @classmethod
     def from_json(cls, text: str) -> "Manifest":
         data = json.loads(text)
+        schema = data.get("schema", 0)
+        # There was no check here at all, so an archive from a future build
+        # loaded and was quietly misread. Saying so is the honest failure.
+        if isinstance(schema, int) and schema > SCHEMA_VERSION:
+            raise ContainerError(
+                f"this archive declares manifest schema {schema}, and this "
+                f"build understands up to {SCHEMA_VERSION} - it was written by "
+                f"a newer version of ExtremeCompressor")
         data["stages"] = [StageRecord(**s) for s in data.get("stages", [])]
         return cls(**data)
+
+    def reason_for(self, relpath: str, fallback: str = "") -> str:
+        """Why this file was stored, whichever schema wrote the archive.
+
+        v2's interned index first, then v1's per-file sentence, then whatever
+        the caller offers - in practice the route's joined summary, which is
+        all the oldest archives ever had.
+        """
+        idx = self.inputs.get(relpath, {}).get("reason")
+        if isinstance(idx, int) and 0 <= idx < len(self.reasons):
+            return self.reasons[idx]
+        return self.store_reasons.get(relpath) or fallback
 
 
 #: A lepton member is always smaller than the JPEG it restores to, but a
@@ -110,6 +250,36 @@ STORED_PREFIX = "stored/"
 def declared_total(ledger: dict[str, dict]) -> int:
     """Total restored size the manifest's own ledger promises."""
     return sum(int(meta.get("size", 0)) for meta in ledger.values())
+
+
+def manifest_size_estimate(relpaths: Iterable[str], stored_count: int = 0) -> int:
+    """How large the manifest for this selection will be, in bytes.
+
+    Public and pure so the answer is available *before* any work starts, and
+    testable without building a 57,000-file archive - the same split as
+    ``engine.compress_space_needs`` against ``_check_compress_space``.
+
+    K1 exists because the cap was only ever checked on the way back **in**:
+    `compress` wrote the manifest unchecked, and the refusal arrived from
+    `_read_manifest` at the bottom of the D9 publish gate, after the entire
+    archive had been built. This is the number that lets the refusal happen at
+    the front instead.
+
+    Biased high on purpose. Refusing a job that would have worked is bad;
+    accepting one that cannot finish is the defect being fixed. The same logic
+    forces the worst case on the `same_as` term below: which stored files turn
+    out to be duplicates of each other is not knowable until every one of them
+    has been hashed, which is most of the job.
+    """
+    total = _MANIFEST_BASE_BYTES + stored_count * _MANIFEST_REASON_BYTES
+    longest = 0
+    for rel in relpaths:
+        encoded = len(rel.encode("utf-8"))
+        longest = max(longest, encoded)
+        total += encoded + _MANIFEST_ENTRY_BYTES
+    # The keys write_container stamps on after this number has been taken.
+    return total + stored_count * max(_MANIFEST_SAME_AS_BYTES + longest,
+                                      _MANIFEST_CODEC_BYTES)
 
 
 def _payload_budget(ledger: dict[str, dict]) -> int:
@@ -212,12 +382,36 @@ def write_container(archive_path: Path, manifest: Manifest,
         for rel in stored_norm:
             manifest.inputs.get(rel, {}).pop("codec", None)
 
+    # K1: the cap used to be enforced only on the way back in, so `compress`
+    # would build an archive its own reader refused and find out at the bottom
+    # of the publish gate - after every byte had been written. Checked here the
+    # asymmetry is gone, and the docstring's promise above ("we can never
+    # produce an archive our own reader would refuse") covers size as well as
+    # names. `engine.compress` has a preflight that catches this before any
+    # work starts; this is the backstop that makes it impossible.
+    document = manifest.to_json()
+    encoded = document.encode("utf-8")
+    if len(encoded) > MAX_MANIFEST_BYTES:
+        raise ContainerError(
+            f"this archive's manifest would be {len(encoded)} bytes, over the "
+            f"{MAX_MANIFEST_BYTES} byte limit its reader enforces - refusing to "
+            f"write a container we could not open ({len(manifest.inputs)} files)")
+
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED,
                          allowZip64=True) as zf:
         # The manifest goes in first and now carries both the `same_as`
         # pointers and the settled `codec` keys, so both passes above have to
         # run before this line.
-        zf.writestr(MANIFEST_NAME, manifest.to_json())
+        #
+        # DEFLATED, unlike everything else in the container: the payload and
+        # the stored tree are already packed by a real codec, but this is JSON.
+        # Measured 12.19 MiB -> 2.59 MiB on the real 55,477-file archive (a
+        # synthetic ledger deflates far better; real sha256s barely do). It does not
+        # widen the bomb surface - `_read_manifest` bounds the *decompressed*
+        # stream at MAX + 1 bytes, and `info.file_size` is the uncompressed
+        # size either way.
+        zf.writestr(MANIFEST_NAME, document,
+                    compress_type=zipfile.ZIP_DEFLATED)
         if payload_path is not None:
             zf.write(payload_path, arcname=manifest.payload_name)
         for rel, src in stored_norm.items():

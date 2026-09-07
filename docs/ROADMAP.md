@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-07**. **1,010 tests** (1,008 pass + 1 skip + 1 strict-xfail;
+> Status date: **2026-09-07**. **1,045 tests** (1,043 pass + 1 skip + 1 strict-xfail;
 > the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
 > Everything below is merged to `main` except **`phase-i3-i8-i10`** and
 > **`phase-k1-manifest-v2`**, which are stacked and awaiting review.
@@ -646,20 +646,52 @@ display scaling — both need a human at the machine.
       multiplier, with a test that strips the field and restores one.
       Also: `precomp_inflation()` is now per-type and byte-weighted, because a
       flat 5x under-reserved temp for PNG by an order of magnitude.
-- [ ] B4. **WAV specialist**: FLAC 1.5 `-8 -j N`; TAK/OptimFROG as detected-only
-      opt-ins (closed freeware — never bundled)
-      ✅ **Test material CONFIRMED present 2026-09-07** (an earlier note in
-      this file said the opposite — that was a bad search, not a fact).
-      `C:\Users\nuhaa\Desktop\Downloads-1` holds **610 `.flac` and 110 `.wav`**,
-      including a `Songs` folder. No `.aiff`/`.ape`/`.wv`, and no FLAC binary
-      yet — E1 can now fetch one.
-      **Measure the baseline first.** Three times running (B3 oxipng, B5
-      qpdf, K4's window on real data) a roadmap-named specialist lost to the
-      existing `precomp → 7z` route once real files went through both. WAV is
-      the one case where a specialist plausibly wins outright, because raw PCM
-      is genuinely uncompressed rather than already-deflated — but that is a
-      hypothesis until measured, and FLAC must also come back
-      **byte-identical** to survive the ledger.
+- [x] B4. ✅ **DONE 2026-09-07** — FLAC, and **the first specialist in this
+      project that beats the route already present**. Measured in
+      [benchmarks/2026-09-07-b4](benchmarks/2026-09-07-b4-wav-flac.md) on 4
+      real WAVs (335,536,808 B):
+
+      | method | saved | lossless |
+      |---|---:|:--:|
+      | store (what shipped) | **0.00%** | n/a |
+      | `7z -mx=9 -mf=Delta:4` | 3.07% | yes |
+      | `7z -mx=9` default | 9.45% | yes |
+      | **`flac -8 --keep-foreign-metadata`** | **43.15%** | **yes, 4/4** |
+
+      **The baseline was 0% and the explanation was false.** `.wav` is
+      `Category.AUDIO`, `AUDIO` is in `_MEDIA`, so 5.07 GiB of real audio was
+      stored verbatim and told "already compressed by its codec". A WAV has no
+      codec. Its entropy is genuinely high (7.70–7.88 bits/byte,
+      `sample_ratio_max` 0.991–1.000), so no entropy heuristic could ever have
+      caught this — only the *format* says an audio predictor will halve it.
+      New `_UNCOMPRESSED_AUDIO` set in `planner`, the audio twin of B3's
+      `_DEFLATE_MEDIA`.
+      **7-Zip's Delta filter, which exists for this, made it 3× worse.**
+      Mastered music is loud, so consecutive samples are far apart and
+      differencing raises the entropy it was meant to lower.
+      **`--keep-foreign-metadata` is mandatory, and plain `flac -8` would have
+      made B4 a Phase C item.** Without it: 43.79% saved and **0 of 4**
+      byte-identical. The `data` chunk matched exactly (`0x031899f0` both
+      sides) while the file came back **458,114 bytes short** — these WAVs
+      carry non-audio RIFF chunks that `flac -d` silently drops. FLAC is
+      lossless about *audio*; the ledger is about *files*. The flag costs 0.64
+      points of ratio and buys byte-identity.
+      **End to end:** 201,976,638 → 116,227,778 B (42.45%), 3/3 verified,
+      byte-identical under an independent SHA-256 walk.
+      Implementation follows B2's lepton pattern exactly (`excmp/flacaudio.py`):
+      pack, **immediately unpack and compare**, return `None` otherwise — so a
+      file FLAC would mishandle is caught while storing it raw is free. The
+      `codec` key in the container is now a **registry** rather than a
+      hardcoded `"lepton"`, which was spelled out in six places across writer
+      and reader.
+      **The 610 `.flac` files are a separate question**, deliberately untouched:
+      they are already FLAC, so the issue is "does anything beat storing it",
+      which is where the analyzer already routes them.
+      ⚠️ **A process note.** This item was recorded as "BLOCKED on test
+      material" by an earlier session that searched the two corpus folders and
+      `~/Music` and never checked `Desktop\Downloads-1`. The user corrected it.
+      **A negative search result is only as good as the search**, and that one
+      was written down with the confidence of a measurement.
 - [x] B5. ✅ **DONE 2026-09-07** — and it was not the job this item
       describes. Measured in
       [benchmarks/2026-09-07-b5](benchmarks/2026-09-07-b5-pdf-office.md) on
@@ -987,6 +1019,24 @@ display scaling — both need a human at the machine.
       entry (zip-slip refused 4 ways), re-hash before use so a tampered binary
       is not handed back, a per-tool minimum-version floor, a 512 MiB download
       ceiling, and PATH never touched.
+      🔴 **A critical hole was found by auditing E1 after it shipped, and is
+      fixed (2026-09-07).** `verify_installed` hashed `exe_relpath` and nothing
+      else — on the real qpdf install, **19,456 of 87,686,094 bytes (0.02%)**,
+      because `qpdf.exe` is a launcher and the 7.4 MB `qpdf30.dll` beside it
+      holds the code. Windows searches the application directory first for a
+      non-KnownDLL, so replacing a sibling is code execution in the process
+      the engine spawns. **Live rather than theoretical thanks to B4**:
+      `flac.exe` is 339 KB next to a 522 KB `libFLAC.dll` and `flacaudio`
+      spawns it — reproduced, `verify_installed` returned True with the DLL
+      replaced.
+      The first repair made it no better and is worth recording: the digest
+      was written to `.pinned-sha256` **beside the binary**, so the same write
+      that swaps a DLL rewrites the marker. Hashing the whole tree into that
+      file fails identically. The anchor now lives in source
+      (`ToolSpec.exe_dir_sha256`), covers every file in the executable's own
+      directory, compares case-insensitively (Windows resolves DLLs that way),
+      and **refuses extra files** — planting `version.dll` modifies nothing
+      pinned and Windows would still load it.
       Original item: **SHA-pinned tool downloader** — THE lightweight strategy: core app small,
       specialists fetched when a profile first needs them (whole fleet minus FFmpeg
       is only **~15 MB**). Manifest entry = `{name, version, url, sha256, size,

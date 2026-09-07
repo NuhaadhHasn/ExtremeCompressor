@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .safepath import resolve_within
+from .safepath import UnsafePathError, resolve_within
 from .tempclean import rmtree_force
 
 #: Read size for the download and the hash. One buffer, streamed - a tool is
@@ -76,6 +76,32 @@ class ToolSpec:
     min_version: str = ""
     #: Where the pin came from, for the human who bumps it next.
     source: str = ""
+    #: ``(filename, sha256)`` for **every** file in the directory holding
+    #: `exe_relpath`, pinned here in source.
+    #:
+    #: An audit found the first version of this module hashing `exe_relpath`
+    #: and nothing else, which on the real qpdf install guarded 19,456 of
+    #: 87,686,094 bytes - 0.02%. `qpdf.exe` is a launcher; the 7.4 MB
+    #: `qpdf30.dll` beside it holds the code. Windows searches the
+    #: application directory first for a non-KnownDLL, so replacing a sibling
+    #: is code execution inside the process the engine spawns, and
+    #: `verify_installed` returned True throughout. It was live rather than
+    #: theoretical: `flac.exe` is 339 KB next to a 522 KB `libFLAC.dll`, and
+    #: `flacaudio` spawns it.
+    #:
+    #: **Why in source and not in a file on disk.** The first version wrote
+    #: the expected digest to `.pinned-sha256` next to the binary, so the same
+    #: write that replaces a DLL can rewrite the marker - verified, it left
+    #: `verify_installed` returning True. Hashing the whole tree into that
+    #: marker fixes nothing for the same reason. The anchor has to live
+    #: somewhere the attack cannot reach, which is here, beside the archive
+    #: hash that is already trusted this way.
+    #:
+    #: Scoped to the executable's own directory rather than the whole tree
+    #: because that is the DLL search path that grants execution, and it keeps
+    #: the check cheap enough to run before every spawn: measured 0.66 s for
+    #: qpdf's 12-file bin directory against 1.66 s for all 87 MB.
+    exe_dir_sha256: tuple[tuple[str, str], ...] = ()
 
     def version_tuple(self) -> tuple[int, ...]:
         return _version_tuple(self.version)
@@ -119,6 +145,54 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
         exe_relpath="qpdf-12.4.1-msvc64/bin/qpdf.exe",
         license="Apache-2.0",
         source="github.com/qpdf/qpdf release asset digest, confirmed on fetch",
+        exe_dir_sha256=(
+            ("concrt140.dll", "54716f0738af891f283d213b5c8d11b25896bb8ee3097d301eae718560cf974e"),
+            ("fix-qdf.exe", "2872497dad0af0fcfd2e92b650067042519ee0108922b9b36eaa1a1b511b43fc"),
+            ("msvcp140.dll", "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca"),
+            ("msvcp140_1.dll", "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982"),
+            ("msvcp140_2.dll", "d50d7883f20d1dc6191768d3746f52dd9cac89c346ffaed5be1f110c2f34a838"),
+            ("msvcp140_atomic_wait.dll", "3d0cbfaa1bf3eecf5a3f4491d2960ee803cb994f30292c6adc4a07c498f60e2b"),
+            ("msvcp140_codecvt_ids.dll", "8a65c7596ef2e6938731f5a1058e7e40145b6d97967cc649231a076b9a608d78"),
+            ("qpdf.exe", "57c003e868fb66cd343fd5afb91be8c2277f56434eea8635762499731bf9f60d"),
+            ("qpdf30.dll", "36fe5b2023f244e5785d96b8372dba26b75ea51b63adf4d4f1e66ad0aa1c8a61"),
+            ("vcruntime140.dll", "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"),
+            ("vcruntime140_1.dll", "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"),
+            ("zlib-flate.exe", "6898b9fd9e253c410efd28742d4f78919855f4eb0fc2261361f188bf67aa1602"),
+        ),
+    ),
+    # B4's WAV specialist, and the one specialist in this project that beats
+    # the existing route: 43.15% on 4 real WAVs against 7-Zip's 9.45% and the
+    # 0.00% that shipped, all four byte-identical.
+    #
+    # The hash did NOT come from GitHub: this release predates the per-asset
+    # `digest` field and the API returns null for it. Pinning a hash computed
+    # from our own download would be circular - it would only prove we hashed
+    # what we downloaded - so it is taken from Microsoft's winget-pkgs
+    # manifest for the identical URL, and `fetch_tool` then confirmed the
+    # downloaded bytes against it. Two independent parties, which is the
+    # standard this item asks for when a release offers no digest of its own.
+    #
+    # Licence note: libFLAC is BSD-3-Clause but the `flac` CLI is GPL-2.0. We
+    # drive it as a subprocess and never link it, and this repo is private
+    # with no distribution - but if it is ever made public, CLAUDE.md's OSI
+    # rule comes back and this needs revisiting first.
+    "flac": ToolSpec(
+        name="flac",
+        version="1.5.0",
+        url=("https://github.com/xiph/flac/releases/download/1.5.0/"
+             "flac-1.5.0-win.zip"),
+        sha256="53f1500f0d6e7c61379d7fee50d4a9f7f504c650009506d9ba015530d76c0dde",
+        size=1318000,
+        exe_relpath="flac-1.5.0-win/Win64/flac.exe",
+        license="GPL-2.0 (flac CLI; libFLAC itself is BSD-3-Clause)",
+        source=("microsoft/winget-pkgs Xiph.FLAC 1.5.0 manifest - the GitHub "
+                "asset digest is null for this release"),
+        exe_dir_sha256=(
+            ("flac.exe", "ff23d9cbc11d18c02f262c3ee455830ea13fbe8d9876249f0bdf101e3ad66709"),
+            ("libFLAC++.dll", "3d0a7c31f6326370bd1abec5fe247a4ebdf9e76bad743a73afd7576151ddc163"),
+            ("libFLAC.dll", "f93499172875fc2c0df80b57086f32e3f39e835283952ee2a59a3d4ffb097644"),
+            ("metaflac.exe", "4f1653fbfc88a2328f92eb9f856dcf0feb3b303b216d1b573a6d57b21a6e296f"),
+        ),
     ),
 }
 
@@ -174,23 +248,66 @@ def _sha256_of(path: Path) -> str:
 
 
 def verify_installed(spec: ToolSpec) -> bool:
-    """Is the pinned executable present *and* still the bytes we pinned?
+    """Is the pinned tool present, unmodified, and free of planted siblings?
 
-    Re-hashed on every call rather than trusted from install time: a binary
-    that verified on Tuesday can be replaced on Wednesday, and this is the
-    only thing standing between that and running it.
+    Re-checked on every call rather than trusted from install time: a binary
+    that verified on Tuesday can be replaced on Wednesday, and this is the only
+    thing standing between that and executing it.
+
+    Three questions, and the first version of this function only asked a
+    weaker form of the first:
+
+    1. does every pinned file still hash to its pinned digest;
+    2. is there **nothing extra** in the executable's directory - planting
+       `version.dll` needs no modification of any pinned file, and Windows
+       will load it;
+    3. compared **case-insensitively**, because Windows resolves DLL names
+       that way and `LIBFLAC.DLL` would otherwise read as an extra file while
+       satisfying the loader.
+
+    An unpinned spec answers ``False``: with nothing in source to compare
+    against there is no way to tell a good install from a tampered one, and
+    guessing is what this function exists to avoid.
+    `test_every_pinned_tool_declares_its_directory_digests` keeps that from
+    being the normal case.
     """
-    exe = install_dir(spec) / Path(spec.exe_relpath)
-    if not exe.is_file():
-        return False
-    marker = install_dir(spec) / ".pinned-sha256"
-    if not marker.is_file():
+    if not spec.exe_dir_sha256:
         return False
     try:
-        expected = marker.read_text(encoding="ascii").strip()
+        exe = _exe_in(install_dir(spec), spec)
+    except UnsafePathError:
+        return False
+    if not exe.is_file():
+        return False
+
+    pinned = {name.lower(): digest for name, digest in spec.exe_dir_sha256}
+    try:
+        present = {p.name.lower(): p for p in exe.parent.iterdir() if p.is_file()}
     except OSError:
         return False
-    return bool(expected) and _sha256_of(exe) == expected
+    if set(present) != set(pinned):
+        return False
+    for lowered, path in present.items():
+        try:
+            if _sha256_of(path) != pinned[lowered]:
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def pin_exe_dir(spec: ToolSpec) -> tuple[tuple[str, str], ...]:
+    """Compute the `exe_dir_sha256` tuple for an install already on disk.
+
+    Used once by a human when pinning or bumping a tool: fetch it, run this,
+    paste the result into `TOOL_MANIFEST`, commit. The bootstrap is sound
+    because `fetch_tool` has already verified the *archive* against a
+    source-pinned hash, so the tree it just unpacked is trustworthy at that
+    moment - this only records what it found.
+    """
+    exe = _exe_in(install_dir(spec), spec)
+    return tuple(sorted(
+        (p.name, _sha256_of(p)) for p in exe.parent.iterdir() if p.is_file()))
 
 
 def installed_path(spec: ToolSpec) -> Path | None:
@@ -323,7 +440,9 @@ def fetch_tool(spec: ToolSpec, *, allow_insecure: bool = True,
             f"{spec.name} {spec.version} is older than the {spec.min_version} "
             f"minimum this project requires - refusing to install it")
 
-    if not force:
+    if not force and spec.exe_dir_sha256:
+        # Only skip the download when there is something in source to verify
+        # the existing install against.
         existing = installed_path(spec)
         if existing is not None:
             return existing
@@ -343,11 +462,10 @@ def fetch_tool(spec: ToolSpec, *, allow_insecure: bool = True,
         _unpack(archive, unpacked, spec)
         archive.unlink(missing_ok=True)
 
-        # The pin travels with the install, so `verify_installed` re-checks
-        # against what was pinned at fetch time rather than against whatever
-        # a future manifest happens to say.
-        exe_digest = _sha256_of(_exe_in(unpacked, spec))
-        (unpacked / ".pinned-sha256").write_text(exe_digest, encoding="ascii")
+        # Deliberately no marker file written. The first version recorded the
+        # expected digest beside the binary, which made it self-certifying:
+        # whoever can overwrite the binary can rewrite the marker. The anchor
+        # is `spec.exe_dir_sha256`, in source. See `verify_installed`.
 
         final.parent.mkdir(parents=True, exist_ok=True)
         if final.exists():

@@ -449,6 +449,48 @@ def test_non_ascii_names_survive_the_container(tmp_path):
     assert list(back.inputs) == names
 
 
+def test_the_size_estimate_counts_the_empty_directory_list():
+    """K2 added `dirs`, an unbounded top-level field of full relative paths -
+    and the preflight only ever saw *file* paths.
+
+    Measured before this was fixed: 20,000 empty directories beside 10 files
+    predicted 14,498 B against 1,550,859 B actually written - **0.009x, a 100x
+    under-read**. The `dirs` field alone was 1,548,889 B of it.
+
+    This is K1's defect for the third time, and this time it was introduced by
+    the very phase that had just documented the rule: *a preflight has to model
+    the artifact that is actually produced.* Every new manifest field costs
+    bytes, and the estimate is what stands between a job and a refusal that
+    arrives after all the work.
+    """
+    stem = "project/node_modules/@scope/package-name-here/dist/esm/internal"
+    dirs = [f"{stem}/empty-{i}" for i in range(20_000)]
+    inputs = {f"{stem}/f{i}.js": {"size": 10, "sha256": "a" * 64,
+                                  "route": "pipeline"}
+              for i in range(10)}
+
+    predicted = manifest_size_estimate(inputs.keys(), stored_count=0, dirs=dirs)
+    m = Manifest.new(profile="fast", stages=[], inputs=inputs, payload_name="",
+                     dirs=dirs)
+    actual = len(m.to_json().encode("utf-8"))
+
+    assert predicted >= actual, (
+        f"estimate {predicted:,} under-reads the {actual:,} bytes written - "
+        f"{predicted / actual:.3f}x")
+
+
+def test_the_size_estimate_still_holds_with_no_directories():
+    """The default has to stay harmless: `dirs` is optional and almost every
+    real job has none."""
+    inputs = {f"a/b/c/file{i}.txt": {"size": 1, "sha256": "a" * 64,
+                                     "route": "pipeline"}
+              for i in range(200)}
+    predicted = manifest_size_estimate(inputs.keys(), stored_count=0)
+    actual = len(Manifest.new(profile="fast", stages=[], inputs=inputs,
+                              payload_name="").to_json().encode("utf-8"))
+    assert predicted >= actual
+
+
 # --------------------------------------------------------------------------
 # the tree that could not be archived, measured against the real thing
 # --------------------------------------------------------------------------

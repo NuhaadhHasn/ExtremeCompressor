@@ -1,19 +1,23 @@
 # 🚦 START HERE — handoff (written 2026-09-07)
 
-> **Start with K2.** Restore a folder today and every stored file is dated
-> today, and empty directories do not come back at all. Section 3.
+> **The whole K series is done.** All four confirmed defects from 2026-09-04
+> plus a fifth found on the way are fixed, measured and merged. Nothing is
+> awaiting review.
 >
-> **Two branches are stacked and awaiting review**: `phase-i3-i8-i10`, then
-> `phase-k1-manifest-v2` on top of it. Merge in that order — section 1.
+> **Start with B4 or B5** — the next real feature work. Section 3 explains why
+> those two and not B6.
 
-**947 tests: 945 pass + 1 skip + 1 strict-xfail.**
+**994 tests: 991 pass + 1 skip + 2 strict-xfail.**
+
+The second xfail is new and deliberate: K4 left the Fast estimator's range
+excluding the truth on a duplicate-heavy corpus. It is B8's to close - see
+section 5.
 
 ```
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-The skip is the 57,020-file corpus walk, which costs ~20 s of drive metadata
-latency and is therefore opt-in:
+The skip is the 57,020-file corpus walk, ~20 s of drive metadata latency:
 
 ```
 set EXCMP_SLOW_CORPUS=1
@@ -22,37 +26,54 @@ set EXCMP_SLOW_CORPUS=1
 
 ---
 
-## 0. The working rule for this project
+## 0. The working rule, and the thing it caught three times
 
-**Confirm, do not hypothesise.** Every claim in this document was reproduced on
-this machine before it was written down.
+**Confirm, do not hypothesise.** Every claim here was reproduced on this
+machine before it was written down.
 
-K1 is now the clearest demonstration of why, and it demonstrated it **twice**.
+The K series produced the sharpest version of this lesson so far, and it is
+worth reading before touching the manifest again. **The preflight kept
+modelling something other than the artifact it protects** — three times, in
+three different ways, across two sessions:
 
-*First:* the roadmap's plan for K1 was specific, plausible, and **would not have
-worked**. It named three savings that together still left the manifest 1.8× over
-the cap. Only serialising the real thing revealed that.
+| where | the estimate missed | measured error |
+|---|---|---|
+| K1, `same_as` | keys `write_container` adds *after* the estimate | 0.758× |
+| K1, non-ASCII | `json.dumps` escaping to `\uXXXX`, 6 B per char | 0.55× |
+| **K2, `dirs`** | a whole new top-level field | **0.009×** |
 
-*Second, and more useful:* the K1 implementation was **finished, green, and
-wrong in three places**. A 945-test suite passed over all three. What found them
-was auditing the diff against the artifact it actually produces, and then
-looking at the disk:
+The third is the instructive one: K1 had *written the rule down* beside the
+constant — "any new ledger key has to be added here" — and K2 followed it to
+the letter for `mtime_ns` while adding a second, unbounded field the rule did
+not name. A 100-fold under-read, predicted before it was looked for, caught
+before the commit.
 
-| found by | defect |
-|---|---|
-| Comparing the estimate to a *mutated* ledger | preflight under-read by **24%** on dedup |
-| Trying non-ASCII names against it | preflight under-read by **45%** on Dhivehi |
-| Asking where a constant came from | deflate factor calibrated on placeholder hashes |
-| **Listing the temp directory after a run** | every job touching a `.git` leaks temp (K5) |
+**So the durable defence is not another constant.** It is the three tests that
+now compare the estimate against a *genuinely serialised* manifest
+(`test_the_size_estimate_*` in `tests/test_manifest_v2.py`). If you add a
+manifest field, add it to those.
 
-Three of those four are the same mistake: **a check that models something other
-than the artifact it is protecting.** Carry that into K2, where the temptation
-will be to assert on the ledger rather than on the restored file's `st_mtime`.
+### Things that were measured and turned out different from the plan
+
+Five, this session. Full detail in
+[benchmarks/2026-09-07-k2-k5](benchmarks/2026-09-07-k2-k5-defects.md):
+
+- K4's "half the size and 2.1× faster" is **49.9% and 1.54×** synthetically,
+  **4.40% and no speedup** on two real installer versions, and **0%** in the
+  real pipeline, where already-compressed input is routed to `store` and never
+  reaches zstd at all.
+- K4's "peak working set fell" was wrong in direction: pinned at window 31 it
+  **rose** 1,002 → 1,813 MiB. Fitting the window to the input gets the identical
+  output for 1,045 MiB.
+- K3's fix does not belong where the plan implies (the copy); it belongs in
+  `analyze_file`, which opens every file long before the copy exists.
+- K2's fix does not belong in the store route; it belongs after MOTW
+  propagation, which rewrites the timestamp you just restored.
 
 ### Your data is not at risk from the suite — verified, not assumed
 
-Three tests read from the real corpora. All are read-only, and rather than trust
-that, `tools/corpus_guard.py` proves it:
+Three tests read from the real corpora, read-only, and `tools/corpus_guard.py`
+proves it rather than asking you to trust it:
 
 ```
 .venv\Scripts\python.exe tools\corpus_guard.py snapshot
@@ -60,179 +81,116 @@ that, `tools/corpus_guard.py` proves it:
 .venv\Scripts\python.exe tools\corpus_guard.py compare
 ```
 
-165 files under `Programs` and `My Graphical Projects`, size and mtime. Run
-twice on 2026-09-06/07: **clean both times — nothing added, removed or
-modified.** Run it after any change that touches the tests.
+165 files under `Programs` and `My Graphical Projects`. Clean on every run this
+session.
+
+### One process rule, learned the hard way
+
+**Do not run memory benchmarks and the test suite at the same time.** The suite
+failed once with `zstd decompress error: Allocation error : not enough memory`
+on a *tiny* file; it passes in isolation. The cause was this session's own
+1.8 GiB benchmark plus a 642 MiB end-to-end on a 2-core machine. A transient
+allocation failure in a compression test is exactly the kind of thing that gets
+misdiagnosed as a real defect. Serialise the heavy runs.
 
 ---
 
-## 1. What is on `main`, and what is waiting
+## 1. What is on `main`
 
-`main` has everything up to and including J5–J7. The app does: verified
-byte-identical restore · per-file routing with reasons · duplicate-file dedup ·
-split volumes · PAR2 recovery records · AES-256-GCM + Argon2id encryption with
-keyfiles · Mark-of-the-Web propagation · foreign-archive listing and extraction
-· convert-and-shrink · plain `.7z`/`.zip` export · self-calibrating time
-estimates · persisted history · treemap · Ctrl+K.
+Everything. `main` now carries I3/I8/I10, K1, and K2–K5; nothing is unmerged and
+nothing is awaiting review.
 
-**Unmerged, stacked, in this order:**
-
-```
-git checkout main
-git merge --no-ff phase-i3-i8-i10        # I3 + I8 + I10, and the 7-Zip floor
-git merge --no-ff phase-k1-manifest-v2   # K1
-```
-
-K1 is stacked on `phase-i3-i8-i10` deliberately: `tools/corpus_guard.py` and
-`tests/restored.py` exist only on that branch and `CLAUDE.md` mandates running
-the guard, and both branches change `gui/queue_manager.py`.
+The app does: verified byte-identical restore · per-file routing with reasons ·
+duplicate-file dedup · split volumes · PAR2 recovery records · AES-256-GCM +
+Argon2id encryption with keyfiles · Mark-of-the-Web propagation ·
+foreign-archive listing and extraction · convert-and-shrink · plain
+`.7z`/`.zip` export · self-calibrating time estimates · persisted history ·
+treemap · Ctrl+K · **preserved timestamps and empty directories** ·
+**locked files skipped and reported** · **a manifest that scales to a
+`node_modules` tree**.
 
 ---
 
-## 2. What K1 shipped, proven end to end
+## 2. What the K series shipped
 
-Full numbers: [benchmarks/2026-09-04-k1](benchmarks/2026-09-04-k1-manifest-v2.md).
+| item | what it fixes | proof |
+|---|---|---|
+| **K1** | a 57k-file folder could not be archived at all | 55,477 files, 71.39% saved, byte-identical |
+| **K2** | stored files came back dated today; empty folders vanished | real installers restored to 2023-11-14 and 2025-08-10, exact |
+| **K3** | one locked file destroyed the whole job | 5 of 6 archived, the 6th reported by name |
+| **K4** | zstd could not see past 128 MiB, and could not *read* wider than it writes | window fitted to input; read ceiling decoupled |
+| **K5** | every job touching a `.git` leaked a temp directory | `rmtree_force` at all 11 sites |
 
-**The folder that could not be archived, archived.** 55,477 files, 338.5 MiB —
-the `node_modules` subtree of the corpus that broke:
-
-```
-354,988,110 -> 101,576,020 B    71.39% saved      compress 137.5 min
-excmp verify : OK, 55,477 restored, 55,477 hashes verified    24.5 min
-excmp extract: 55,477 files, 55,477 hashes OK                 18.3 min
-independent SHA-256 tree comparison, both trees walked:
-    0 missing, 0 extra, 0 differing  ->  BYTE-IDENTICAL
-```
-
-**The manifest, v1 vs v2 on that same job** — the v1 document reconstructed from
-the v2 one, so the real routing decides who carries a store reason:
-
-| | bytes | | |
-|---|---:|---|---|
-| v1 | 22,611,183 | 21.56 MiB | ⛔ 2.7× over the old 8 MiB cap |
-| v2 | 12,782,745 | 12.19 MiB | ok against 64 MiB |
-| v2 deflated in the container | 2,720,064 | 2.59 MiB | |
-
-**22,611,183 is byte-for-byte the number in the pre-K1 build's own error
-message.** That is what confirms this is the folder that failed *and* that the
-reconstruction is exact rather than approximate.
-
-**What changed:** schema v2 (interned store reasons — 12 possible sentences,
-1,232 bytes, of which this archive used 7; `routes[].count` instead of a second
-copy of every relative path; compact separators; and the document now written as
-real UTF-8), `manifest.json` DEFLATED, `MAX_MANIFEST_BYTES` 8 → 64 MiB against a
-*measured* parse cost, the cap enforced on the write side too, and
-`engine._check_manifest_size` refusing at the front before the first `mkdtemp`.
-v1 archives still load and restore, pinned by a test that rewrites a real
-archive's manifest back into genuine v1 shape.
-
-**Also fixed here, all found by audit before the commit** — details in the
-ROADMAP's K1 entry:
-
-- the preflight under-read by **24%** on dedup-heavy stored data and by up to
-  **45%** on non-ASCII names (either would have re-created K1: accepted at the
-  front, refused at the end);
-- `_MANIFEST_DEFLATE_FACTOR` was calibrated on placeholder hashes and therefore
-  *under*-booked disk — real hashes measure 0.213, not 0.045;
-- J7 self-calibration had **never recorded anything** from the GUI, because it
-  stat-ed archive-relative paths against the process working directory.
+Benchmarks: [K1](benchmarks/2026-09-04-k1-manifest-v2.md) ·
+[K2–K5](benchmarks/2026-09-07-k2-k5-defects.md).
 
 ---
 
-## 3. The next job: K2, timestamps and empty directories
+## 3. The next job: B4 or B5, not B6
 
-**Reproduced 2026-09-04.** Two files given an mtime of 2023-07-31, compressed,
-restored:
+**B6 (xtool + Oodle) is still the biggest ratio gap and still the wrong thing
+to start.** It is blocked on test material: there is no game with Oodle data on
+this machine, and research/24 §2 established that no open-source Oodle
+*encoder* exists, so the `oo2core` DLL is permanent rather than temporary. The
+roadmap's own audit note puts it at 3–4 sessions. Do not open it without a real
+game folder to test against.
 
-```
-text.txt  (pipeline route)  ->  2023-07-31   ✅ tar carries mtime
-rand.bin  (store route)     ->  2026-09-04   ❌ today
-emptydir/                   ->  did not come back at all
-```
+**B4 (WAV/FLAC) and B5 (PDF/Office) are the right size and have test material
+already on this machine.** Both follow a pattern the codebase has run three
+times now (B2 lepton, B3 PNG-through-Precomp, B7 BCJ2):
 
-The two routes disagree, and the reason is confirmed by reading the code:
-**there is no `mtime`, `utime` or `st_mtime` anywhere in `excmp/`.** Nothing in
-the engine ever preserves or restores a timestamp. The pipeline route gets it
-for free only because `tarfile` records one; the store route goes through
-`write_container`'s `zf.write` (which keeps a zip timestamp no reader applies)
-and `extract_stored`'s `target.open("wb")`, which sets nothing.
+1. measure the specialist against the current route on *real* files;
+2. keep it only if it is byte-lossless — B3 is the precedent, where `oxipng`
+   saved 31.79% and produced **0 byte-identical files**, and the lossless
+   `precomp → 7z` route beat it anyway at 38.41%;
+3. route it per-file with a reason the GUI can show.
 
-Empty directories are lost one layer up: `analyzer.analyze_tree` is
-`[analyze_file(p) for p in iter_files(root)]`, so a directory with no files in
-it never enters the ledger, and there is nothing in the manifest for
-`extract_stored` to recreate. Fixing mtimes will not fix this; it needs its own
-field.
+**B5 has a specific trap worth knowing before starting:** docx/xlsx/pptx are
+just ZIPs, so the roadmap's plan is to unpack their members into the solid
+stage. That changes the *file count* in the manifest — one `.docx` becomes
+dozens of ledger entries — which lands straight on the preflight described in
+section 0. Add it to the serialised-manifest tests.
 
-The bytes *are* identical, so the lossless claim holds literally — but restore a
-photo archive and every file is dated today, which breaks sort-by-date and looks
-like data loss to anyone who did not read the fine print.
-
-**Where to work:**
-
-- `excmp/manifest.py` — the ledger entry needs an mtime, `extract_stored` needs
-  to apply it (**and `_read_lepton_member`'s branch too**, which writes through
-  `target.write_bytes` and is easy to miss), and empty directories need
-  somewhere to live. Schema v2 just shipped, so **add to v2 rather than minting
-  v3**: a defaulted field costs nothing and `Manifest.from_json`'s `cls(**data)`
-  fills it in for older archives. Follow how `reasons` was added.
-- `excmp/analyzer.py` — `iter_files` is where empty directories are dropped.
-- `excmp/verify.py` — decide **deliberately** whether `verify_restore` compares
-  mtimes. Today it compares bytes; if it starts comparing timestamps, every
-  pre-K2 archive fails verification, so it almost certainly must not.
-
-**Two things K1 learned that apply directly to K2:**
-
-1. **Assert on the restored file, not on the ledger.** Three of the four defects
-   in section 0 were checks that modelled something other than the artifact.
-   `os.stat` the file that came back.
-2. **A new ledger key costs manifest bytes, and there is now a preflight that
-   has to know.** `_MANIFEST_ENTRY_BYTES = 120` in `manifest.py` is counted from
-   the format, not fitted; an `mtime` field has to be added to it or
-   `manifest_size_estimate` starts under-reading again.
-   `test_the_size_estimate_survives_what_write_container_adds_afterwards` will
-   catch it, but only if you keep its worst case honest.
-
-**Then K5, K3, K4** — all specified with measurements in `ROADMAP.md`.
-**K5 is the cheapest**: a shared `rmtree_force` across 11 call sites, found by
-this session's end-to-end when a read-only git object stranded a whole scratch
-directory because `rmtree(ignore_errors=True)` silently gives up. K4 (zstd
-window) is the biggest free win — **half the size and 2.1× faster** — but read
-the warning: raising only the compress side produces archives older builds
-cannot read.
+**Also worth doing cheaply:** `excmp/ram.py` models LZMA2 dictionaries only, so
+the GUI's peak-RAM column says nothing about the Fast profile — and K4 just made
+zstd's compress memory data-dependent (up to ~1.8 GiB). That is now a visible
+gap in a shipped column.
 
 ---
 
 ## 4. Verify before you believe anything here
 
 ```
-# K1's cap
-.venv\Scripts\python.exe -c "from excmp.manifest import MAX_MANIFEST_BYTES; print(MAX_MANIFEST_BYTES)"
-
-# K2 - set an mtime, round-trip, look at the date; and grep for yourself:
-findstr /S /I "st_mtime utime" excmp\*.py
-
-# K3 - lock a file with CreateFileW(dwShareMode=0), then compress the folder
-# K4 - 300 MiB with a duplicate half 150 MiB away, wl=27 vs wl=31
-# K5 - chmod a file read-only, shutil.rmtree(d, ignore_errors=True), d.exists()
+# the K series, each with its own suite
+.venv\Scripts\python.exe -m pytest tests\test_manifest_v2.py -q     # K1
+.venv\Scripts\python.exe -m pytest tests\test_timestamps.py -q      # K2
+.venv\Scripts\python.exe -m pytest tests\test_locked_files.py -q    # K3
+.venv\Scripts\python.exe -m pytest tests\test_zstd_window.py -q     # K4
+.venv\Scripts\python.exe -m pytest tests\test_tempclean.py -q       # K5
 ```
 
 If a number here disagrees with what you measure, **trust your measurement and
-correct the doc.** That happened four times this session.
+correct the doc.** That happened nine times across the last two sessions.
 
 ---
 
 ## 5. Still open, in the order they are worth doing
 
-1. **K2, K5, K3, K4** — confirmed defects, all with reproductions in `ROADMAP.md`
-2. **B6** (Oodle/AAA games) — the biggest ratio gap, ~3-4 sessions.
-   **Blocked on test material**: there is no game with Oodle data on this
-   machine, and research/24 §2 proved there is no open-source Oodle encoder,
-   so the `oo2core` DLL is unavoidable and permanent
-3. **I6** (compare presets on a real sample), **I7** (translations — the
-   loader exists, a `.ts` file does not; **do not invent Dhivehi**, set up the
-   pipeline and let the user translate)
-4. **I5** (Explorer context menu) — **ask first**, it writes to HKCU
-5. **B12** (LOLZ), **C** (video shrink, needs ~90 MB FFmpeg), **D4–D8**,
+1. **B4** (WAV/FLAC), **B5** (PDF/Office) — right-sized, test material present
+2. **B8** — re-benchmark and replace every `(est.)` with a measurement. It now
+   has a **failing test waiting for it**: K4 left the Fast estimator's range
+   excluding the truth on a duplicate-heavy corpus (measured 0.677x the
+   optimistic end), pinned as a strict xfail in `tests/test_zstd_window.py`.
+   Two cheap fixes were tried and measured and both cost more than they buy —
+   the roadmap entry says which and why, so start there rather than
+   re-discovering it
+3. **`ram.py` for zstd** — small, and now a visible gap (section 3)
+4. **B6** (Oodle/AAA games) — biggest gap, blocked on test material
+5. **I6** (compare presets on a real sample), **I7** (translations — the loader
+   exists, a `.ts` file does not; **do not invent Dhivehi**, set up the pipeline
+   and let the user translate)
+6. **I5** (Explorer context menu) — **ask first**, it writes to HKCU
+7. **B12** (LOLZ), **C** (video shrink, needs ~90 MB FFmpeg), **D4–D8**,
    **E1–E5** (only if this is ever shared)
 
 ### From the tool survey, still unevaluated
@@ -251,23 +209,25 @@ bug · incremental/versioned archives.
   less — several newly-permitted tools are known-unreliable.
 - **Never weaken verification to fit a tool in.** The D9 gate caught a broken
   archive on the first codec added after the rules relaxed.
-- **zpaqfranz is not tree-capable here**, deliberately — it stores absolute
-  paths and `add` has no relative-path switch.
+- **zpaqfranz is not tree-capable here**, deliberately — absolute paths, and
+  `add` has no relative-path switch.
 - **SREP stays out.** Permitted now, but zpaqfranz buys the same points and
   SREP failed its own checksum 1 run in 3.
-- **Four top-level tabs is the ceiling.** A fifth costs the tab bar its reason
-  to exist.
-- **`MAX_MANIFEST_BYTES` is 64 MiB and that number is measured** — 2.2× parse
-  cost against the real tree. Do not trim it back on principle; if it ever needs
-  to move, measure again.
-- **`manifest.json` is the one DEFLATED member of the container**, and it is
-  written with `ensure_ascii=False`. Both are load-bearing: the payload and the
-  `stored/` tree stay STORED because a real codec has already had its turn at
-  them, and the UTF-8 is what makes `manifest_size_estimate` truthful about
-  non-ASCII names.
-- **The preflight is deliberately pessimistic** — 2.08× on an all-stored tree,
-  but only 1.09× on the real end-to-end job. Refusing a job that would have
-  worked is bad; accepting one that cannot finish is the defect K1 exists to
-  fix. Do not "tighten" it without re-reading benchmarks §4b.
+- **Four top-level tabs is the ceiling.**
+- **`MAX_MANIFEST_BYTES` is 64 MiB and that number is measured.** Do not trim it
+  back on principle; measure again if it must move.
+- **`manifest.json` is the one DEFLATED member of the container**, written with
+  `ensure_ascii=False`. Both are load-bearing — see section 0.
+- **The manifest preflight is deliberately pessimistic** (2.08× on an
+  all-stored tree, 1.09× on the real end-to-end job). Refusing a job that would
+  have worked is bad; accepting one that cannot finish is the defect K1 exists
+  to fix.
+- **`verify_restore` does not compare timestamps**, on purpose. Every pre-K2
+  archive lacks them, and failing those archives' verification would be far
+  worse than a wrong date.
+- **The zstd window is fitted to the input, not pinned at 31.** Byte-identical
+  output at 29/30/31 on the same corpus, for 769 MiB less memory. The *read*
+  ceiling is a separate constant and must stay independent of the write
+  setting — that coupling was K4's actual bug.
 - **Run `tools/qa_sweep.py` and look at the images** before calling any GUI
   change done. It has caught defects no test could.

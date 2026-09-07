@@ -48,6 +48,7 @@ import shutil
 from pathlib import Path
 
 from ..tools import find_tools, require
+from ..tempclean import rmtree_force
 from .base import Stage, StageContext, StageError, run_tool
 
 #: zpaqfranz reports progress as a running percentage on its status line.
@@ -143,7 +144,7 @@ class ZpaqfranzStage(Stage):
         dst.mkdir(parents=True, exist_ok=True)
         scratch = Path(ctx.temp_dir) / f"zx-{src.stem}"
         if scratch.exists():
-            shutil.rmtree(scratch, ignore_errors=True)
+            rmtree_force(scratch)
         scratch.mkdir(parents=True, exist_ok=True)
 
         run_tool(self.build_extract_cmd(src, scratch, self._exe()),
@@ -164,7 +165,7 @@ class ZpaqfranzStage(Stage):
         if len(str(source)) >= 250 and not str(source).startswith("\\\\?\\"):
             source = Path("\\\\?\\" + str(source.resolve()))
         shutil.move(str(source), str(out))
-        shutil.rmtree(scratch, ignore_errors=True)
+        rmtree_force(scratch)
         return out
 
     # -- the tool's own opinion, which is not the deciding one --------------

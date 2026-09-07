@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .analyzer import analyze_tree
+from .analyzer import analyze_tree_safe
 from .planner import Profile, plan as make_plan
 from .stages.base import StageContext
 from .tools import find_tools
@@ -25,9 +25,18 @@ def _fmt_size(n: int) -> str:
 def cmd_analyze(args: argparse.Namespace) -> int:
     tools = find_tools()
     infos: list = []
+    unreadable: list[str] = []
     for inp in args.inputs:
-        infos.extend(analyze_tree(Path(inp)))
+        # K3: the analysis pass must never fail for a reason the compress it
+        # precedes can survive. `analyze_file` opens every file, so one open
+        # spreadsheet used to abort the whole analysis.
+        got, skipped = analyze_tree_safe(Path(inp))
+        infos.extend(got)
+        unreadable.extend(reason for _p, reason in skipped)
     the_plan = make_plan(infos, Profile(args.profile), tools)
+    if not args.json:
+        for line in unreadable:
+            print(f"warning: {line}")
     if args.json:
         print(json.dumps({
             "files": [{"path": str(i.path), "size": i.size, "category": i.category.value,
@@ -142,6 +151,9 @@ def cmd_compress(args: argparse.Namespace) -> int:
         "saved_percent": round((1 - result.ratio) * 100, 2),
         "elapsed_s": round(result.elapsed_s, 1),
         "warnings": result.warnings,
+        # K3: the names, structured, for anything driving this from a script.
+        # The human-readable summary is in `warnings` and prints below.
+        "skipped": result.skipped,
         "sidecar": str(result.sidecar) if result.sidecar else None,
     }
     # G3: split only after compress() has published, which means only after
@@ -196,6 +208,9 @@ def _compress_standard(args, engine, ctx: StageContext) -> int:
         "verified": result.verified,
         "has_ledger": result.has_ledger,
         "note": result.note,
+        # K3: a plain export has no ledger, so this list is the only record
+        # that a file was left out of it.
+        "skipped": result.skipped,
     }
     # Format-agnostic post-publication steps. These act on the finished file,
     # so a plain .7z/.zip gets them exactly as an .excmp does; an earlier
@@ -210,6 +225,8 @@ def _compress_standard(args, engine, ctx: StageContext) -> int:
               f"({payload['saved_percent']}% saved) in {payload['elapsed_s']}s")
         print(f"verified {result.verified} file(s) by extracting and hashing")
         print(f"note: {result.note}")
+        for line in result.skipped:
+            print(f"warning: {line}")
         _report_post_publish(args, payload)
     return 0
 

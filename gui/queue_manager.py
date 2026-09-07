@@ -26,7 +26,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-from excmp.analyzer import analyze_file, iter_files
+from excmp.analyzer import analyze_file, describe_unreadable, iter_files
 from excmp.planner import Profile, plan as make_plan
 from excmp.stages.base import StageContext
 from excmp.tools import ToolInfo, find_tools
@@ -67,6 +67,10 @@ class AnalysisSignals(QObject):
     ready = Signal(object, object)   # list[FileInfo], AnalysisSummary
     progress = Signal(int, int)      # files read, files found
     failed = Signal(str)
+    # K3: one line per file the analysis could not read. A *note*, not a
+    # failure - losing the estimate for a whole folder because one
+    # spreadsheet is open is exactly what this replaced.
+    note = Signal(str)
 
 
 # At most this many progress emissions per scan, however big the tree. On the
@@ -109,9 +113,26 @@ class AnalysisWorker(QRunnable):
             tick = _scan_tick(total)
             infos = []
             for index, file in enumerate(files, start=1):
-                infos.append(analyze_file(file))
+                try:
+                    infos.append(analyze_file(file))
+                except OSError as exc:
+                    # K3: `analyze_file` opens the file, so one open Excel or
+                    # Outlook document raised here, the bare `except` below
+                    # emitted `failed`, and the user lost the size estimate,
+                    # the route breakdown, the store reasons and the profile
+                    # recommendation for the *entire* selection - shown as the
+                    # raw stdlib "[Errno 13] Permission denied", the very
+                    # wording `describe_unreadable` exists to replace.
+                    #
+                    # The analysis pass must never be able to fail for a
+                    # reason the compress it precedes can survive.
+                    self.signals.note.emit(describe_unreadable(file, exc))
                 if index % tick == 0 or index == total:
                     self.signals.progress.emit(index, total)
+            if not infos:
+                raise ValueError(
+                    "none of the selected files could be read - they may be "
+                    "open in another program")
 
             the_plan = make_plan(infos, self.profile, self.tools)
             reference = make_plan(infos, strongest_profile(self.tools), self.tools)
@@ -249,10 +270,17 @@ class CompressWorker(_EngineWorker):
                     self.inputs, self.out_path, self.archive_format, self.ctx,
                     self.tools, password=self.password)
                 self._note(std.note)
+                # K3: a plain export carries no ledger, so `skipped` is the
+                # only record that a file was left out. Rebuilding the
+                # CompressResult with `warnings=[]` discarded it, which is how
+                # the GUI came to publish a partial archive silently.
+                for line in std.skipped:
+                    self._note(line)
                 result = engine.CompressResult(
                     archive=std.archive, orig_bytes=std.orig_bytes,
-                    final_bytes=std.final_bytes, routes=[], warnings=[],
-                    elapsed_s=std.elapsed_s)
+                    final_bytes=std.final_bytes, routes=[],
+                    warnings=list(std.skipped), elapsed_s=std.elapsed_s,
+                    skipped=list(std.skipped))
             else:
                 result = engine.compress(
                     self.inputs, self.out_path, self.profile, self.ctx,

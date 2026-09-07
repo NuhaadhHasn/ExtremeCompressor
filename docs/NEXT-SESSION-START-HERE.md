@@ -4,12 +4,11 @@
 > plus a fifth found on the way are fixed, measured and merged. Nothing is
 > awaiting review.
 >
-> **B4, B5 and E1 are all done too.** The next job is **finishing the E1
-> audit** — section 3, and read it before picking anything: 18 reported
-> findings against the module that downloads and executes binaries are
-> **unverified**, because the audit ran out of session mid-run.
+> **B4, B5, E1 and the E1 audit are all done.** Nothing is outstanding and
+> nothing is awaiting review. Pick from section 5 — **B8** is the most useful
+> next step.
 
-**1,045 tests: 1,043 pass + 1 skip + 1 strict-xfail.**
+**1,056 tests: 1,053 pass + 2 skip + 1 strict-xfail.**
 
 The only xfail left is research/23 §2.4's 300px page budget, which §2.4 and
 §3.3 contradict each other about - not a to-do. K4's estimator xfail is gone:
@@ -147,65 +146,41 @@ specialist.
 
 ---
 
-## 3. The next job: finish the E1 audit
+## 3. The E1 audit is finished — what it taught
 
-**E1 was audited after it shipped, and the audit found a critical hole. That
-one is fixed. Eighteen further findings were reported and never verified**,
-because 38 of the 44 audit agents died on a session limit mid-run.
+E1 shipped, was audited adversarially, and the audit reported **39 findings**
+before running out of session with 6 of its 44 agents done. Every remaining
+lead has now been checked by running it:
+[benchmarks/2026-09-07-e1-audit](benchmarks/2026-09-07-e1-audit.md).
 
-They are leads, not facts. This project's own rule is that an unverified
-finding is worth nothing until reproduced, and on past form roughly half do not
-survive contact with the code. But they are *specific* leads about the one
-module that downloads and then executes binaries, so they are the
-highest-value work available.
+**10 of 12 distinct claims reproduced and are fixed. 2 did not. And 2 more were
+the verification harness being stale, not the code being wrong** — which is the
+same lesson inverted, and the one worth carrying forward.
 
-The verified one, for calibration, because it shows the class of mistake:
-`verify_installed` hashed `exe_relpath` and nothing else — **0.02% of the real
-qpdf install**, since `qpdf.exe` is a 19 KB launcher and `qpdf30.dll` is 7.4 MB.
-Live because of B4: `flac.exe` sits beside `libFLAC.dll` and gets spawned.
-Fixed by moving the digests into source, covering the whole executable
-directory, and refusing extra files. Write-up:
-[benchmarks/2026-09-07-b4](benchmarks/2026-09-07-b4-wav-flac.md) §5.
+The three findings that generalise beyond E1:
 
-### The unverified eighteen, worst-if-true first
+**A ceiling on the compressed side is not a ceiling.** A 204,060-byte download
+installed 209,715,202 bytes — 1028× — with no refusal. Then the *replacement*
+ceiling was set to 768 MiB, above the 209 MB bomb that had just been measured,
+so it caught nothing. **Check a new limit against the thing it is meant to
+stop**, or it is decoration.
 
-Reproduce each before believing or fixing it.
+**A trust anchor inside the thing it protects is not an anchor.**
+`verify_installed`'s expected digest was written beside the binary, so the same
+write that swaps a DLL rewrites the marker. Hashing the whole tree into that
+file fails identically. It lives in source now.
 
-1. **Only the last redirect hop is checked** — intermediate hops possibly
-   followed to any host over any scheme. If true, both the https-only rule and
-   the per-origin allowlist are weaker than they read.
-2. **No bound on the *unpacked* size.** `MAX_DOWNLOAD_BYTES` caps the
-   download; nothing obviously caps what the zip expands to — the classic
-   asymmetry.
-3. **`fetch_tool(allow_insecure=True)` is the default** while `ensure_tool`
-   defaults to False, reportedly the wrong way round, making "https only"
-   opt-in on the low-level call.
-4. **`ensure_tool` raises what its docstring says it swallows**
-   (`UnsafePathError`, `BadZipFile`, `UnicodeDecodeError`), which would turn a
-   missing tool into a crashed job rather than a graceful degrade.
-5. **No deadline on the whole transfer** — `timeout=60` is per socket read, so
-   a drip-feeding server could hang a job indefinitely.
-6. **A re-install destroys the existing install and then fails**, because
-   `rmtree_force` never raises — so a failed re-fetch could leave nothing.
-7. **`spec.size` is not used as a streaming bound**, so up to 512 MiB of
-   unverified bytes may be written before the size check fires.
-8. Also reported: unverified download bytes landing inside the install root and
-   never swept; `_redirect_ok` comparing `netloc` rather than `hostname`, so a
-   legitimate `:443` would be refused; duplicate and case-colliding archive
-   entries; the manifest consistency test accepting an uppercase hash that
-   `_download_to` will always reject; and `find_tools` not looking at the
-   layout E1 actually installs into.
+**An availability bug inside a security check is a security bug**, because that
+is how checks get switched off. `_redirect_ok` compared `netloc`, so
+`github.com → release-assets.githubusercontent.com:443` was refused — a
+perfectly legitimate GitHub redirect.
 
-The audit script is saved and re-runnable, which is the cheapest way to begin —
-resume it rather than re-deriving the list:
+Nothing here is outstanding. The audit script is saved if it is ever worth
+re-running against a changed `toolfetch`:
 
 ```
-Workflow({scriptPath: ".../workflows/scripts/e1-toolfetch-audit-wf_8697f7a5-44e.js",
-          resumeFromRunId: "wf_8697f7a5-44e"})
+.claude/.../workflows/scripts/e1-toolfetch-audit-wf_8697f7a5-44e.js
 ```
-
-**After that, B8** — re-benchmark and replace the remaining `(est.)` figures.
-B6 (Oodle) is still blocked on test material and still 3–4 sessions.
 
 ---
 

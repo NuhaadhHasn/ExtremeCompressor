@@ -1,7 +1,10 @@
 """Discovery of the external CLI tools the engine can orchestrate.
 
-Tools are looked up in well-known install locations first, then on PATH,
-then in the app-managed ``tools/bin`` directory. A missing tool is not an
+Tools are looked up in well-known install locations first, then in the flat
+``tools/bin`` directory, then in E1's nested
+``tools/bin/<name>/<version>/`` layout (via `toolfetch.installed_path`, so a
+hash-pinned tool is only reported when it still matches its pin), then on
+PATH. A missing tool is not an
 error at discovery time — profiles degrade gracefully; stages that need a
 missing tool raise :class:`ToolMissingError` when actually used.
 """
@@ -113,10 +116,36 @@ def _probe_version(name: str, path: str) -> str:
         return ""
 
 
+def _pinned_tool(name: str) -> str | None:
+    """An E1-installed tool's path, if it is present and still verifies.
+
+    Imported lazily: `toolfetch` imports `tempclean` and `safepath`, and
+    `tools` is imported by nearly everything, so a module-level import would
+    be a cycle waiting to happen.
+    """
+    try:
+        from . import toolfetch
+    except ImportError:                      # pragma: no cover
+        return None
+    spec = toolfetch.TOOL_MANIFEST.get(name)
+    if spec is None:
+        return None
+    found = toolfetch.installed_path(spec)
+    return str(found) if found is not None else None
+
+
 def find_tools(with_versions: bool = False) -> dict[str, ToolInfo | None]:
     """Locate every known tool. Returns a dict with an entry per tool name."""
     found: dict[str, ToolInfo | None] = {}
-    for name, paths in CANDIDATES.items():
+    # E1-pinned tools are not in CANDIDATES - they have no well-known install
+    # location, which is the whole reason they are fetched - so the loop has
+    # to consider them too or they can never be discovered. `dict.fromkeys`
+    # keeps CANDIDATES' order and appends only the pinned names not already
+    # listed there.
+    from . import toolfetch
+    names = dict.fromkeys([*CANDIDATES, *toolfetch.TOOL_MANIFEST])
+    for name in names:
+        paths = CANDIDATES.get(name, ())
         located: str | None = None
         for p in paths:
             if Path(p).is_file():
@@ -126,6 +155,18 @@ def find_tools(with_versions: bool = False) -> dict[str, ToolInfo | None]:
             app_exe = APP_BIN / f"{name}.exe"
             if app_exe.is_file():
                 located = str(app_exe)
+        if located is None:
+            # E1's own layout, which is nested rather than a flat
+            # `tools/bin/<name>.exe`: `<root>/<name>/<version>/<exe_relpath>`.
+            # An audit pointed out that this docstring promised to look "in
+            # the app-managed tools/bin directory" while never looking at the
+            # shape E1 actually installs into - so a hash-pinned tool was
+            # invisible to normal discovery and only reachable by asking
+            # `toolfetch` directly, which is what `flacaudio` happens to do.
+            #
+            # Routed through `installed_path`, so a fetched tool is only
+            # reported when it still hashes to what was pinned.
+            located = _pinned_tool(name)
         if located is None:
             located = shutil.which(name)
         if located is None:

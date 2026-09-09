@@ -1,9 +1,9 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-09**. **1,059 tests** (1,056 pass + 2 skip + 1 strict-xfail;
+> Status date: **2026-09-09**. **1,077 tests** (1,074 pass + 2 skip + 1 strict-xfail;
 > the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
-> Everything below is merged to `main` except **`phase-i3-i8-i10`** and
-> **`phase-k1-manifest-v2`**, which are stacked and awaiting review.
+> Everything below is merged to `main` except **`phase-d8-atomic-publish`**,
+> which is awaiting review.
 >
 > **Done:** engine core · Phase A (GUI) · Phase D0 (security hotfix) ·
 > Phase J part 1 (estimates before compressing, scored on two real corpora) ·
@@ -1005,7 +1005,48 @@ display scaling — both need a human at the machine.
       Linux-only); optional Linux CI job running Atheris
 - [ ] D7. **CI**: GitHub Actions `windows-latest` (7-Zip preinstalled!) — matrix
       Python 3.11–3.13, `setup-python` pip cache, SHA-keyed tool cache; badge in README
-- [ ] D8. Atomic-write upgrade: temp + `fsync` + read-back hash + `os.replace`
+- [x] D8. ✅ **DONE 2026-09-09** (branch `phase-d8-atomic-publish`).
+      Atomic-write upgrade: temp + `fsync` + read-back hash + `os.replace`,
+      as `excmp/atomic.py` — `publish()`, `atomic_write_text/bytes()`,
+      `fsync_file()` — behind every output the program writes: both archive
+      publishes, both sidecars, the calibration store and the history file.
+      18 tests in `tests/test_atomic_publish.py`; numbers in
+      [benchmarks/2026-09-09-d8](benchmarks/2026-09-09-d8-atomic-publish.md).
+      **The defect it was worth doing for was in the half that already
+      existed:** `compress()` did `out_path.unlink()` and *then* `replace()`,
+      so a failure at the rename — the one moment a whole job is on the line
+      — left the user with neither yesterday's archive nor today's. There
+      since the engine's first commit, survived D9 and the K series, because
+      every test asserted what the new archive looked like and none asserted
+      what happened to the old one.
+      **Measured cost, Silesia/normal (48.7 MB archive, 116 s job):** flush
+      5.3 ms, read-back 266.5 ms at 182.7 MB/s, **0.234% of the job** — and
+      **0.0046% with `--sidecar`**, because the read-back digest is the one
+      the sidecar used to re-read the whole archive to compute. The split
+      path got *faster*: digests measured while writing each part make the
+      volumes sidecar **13.9×** cheaper (218.2 ms → 15.7 ms), ~4.2 s per GB.
+      **Four things the implementation corrected:** (1) an expectation on the
+      read-back is vacuous on the plain path — nothing runs between the write
+      and the rename, so it was two passes to compare a file with itself; it
+      is kept only for the password path, where a separate pass reads the
+      plaintext out of temp and writes a different file, and `encrypt_file`
+      now proves it read exactly the bytes the D9 gate accepted. (2) Windows
+      has no directory handle to flush, so rename durability is the
+      filesystem's business and the docstring says so. (3) The
+      destination-identity check after the rename uses `(st_dev, st_ino,
+      st_size)` rather than a second hash — the Windows file ID survives
+      `os.replace`, measured. (4) `calibrate` and `gui.history` were leaking
+      a `.tmp` on every failed write - **and, found by auditing the finished
+      work, both promise never to raise while catching only
+      `(OSError, ValueError, TypeError)`, so D8's own `PublishError` (a
+      RuntimeError) had quietly given a finished job a new way to be reported
+      as failed.** Adding a check to a path adds a failure mode to it; every
+      caller catching by type needed re-reading, not just the write site.
+      **And an anchor for every future benchmark:** the same job run twice
+      gives the same archive *size* but a different payload CRC32, and
+      `created_utc` moves the deflated manifest by up to 3 bytes — so B8's
+      48,689,445 and today's 48,689,446 are the same compression result.
+      **Compare payload size, never the archive digest, across runs.**
 - [x] D9. ✅ **DONE 2026-08-02** (branch `phase-b11-d9-integrity`).
       `_verify_before_publish` fully restores the archive in temp and runs the
       real `extract()` + `verify_restore()` before the atomic rename — no hash

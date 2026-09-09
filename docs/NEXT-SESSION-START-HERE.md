@@ -1,79 +1,217 @@
-# 🚦 START HERE — handoff (written 2026-09-08)
+# 🚦 START HERE — handoff (written 2026-09-09)
 
-> **The whole K series is done.** All four confirmed defects from 2026-09-04
-> plus a fifth found on the way are fixed, measured and merged. Nothing is
-> awaiting review.
+> **D8 is done, and the defect was in the half that already existed.** The
+> publish path had a `.tmp` twin, a rename, and since D9 a full verified
+> restore in front of them — and it still deleted the destination *before*
+> renaming onto it. A failure at that one step left the user with neither
+> yesterday's archive nor today's. Fixed, measured, pinned.
 >
-> **B8 is done, and it found the estimator was wrong by 14-19 points.**
-> Nothing is awaiting review. Section 3 has the two things B8 left open and
-> the one rule worth carrying forward.
+> **Next phase: D7 (CI on `windows-latest`).** Section 3 has the one decision
+> to make before starting it, because D7 is the first item in this project
+> whose acceptance gate does not live on this machine.
 
-**1,059 tests: 1,056 pass + 2 skip + 1 strict-xfail.**
-
-The only xfail left is research/23 §2.4's 300px page budget, which §2.4 and
-§3.3 contradict each other about - not a to-do.
+**1,077 tests: 1,074 pass + 2 skip + 1 strict-xfail.** (+18 from D8.)
 
 ```
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-The skip is the 57,020-file corpus walk, ~20 s of drive metadata latency:
+Two things about that command, both learned this session:
 
-```
-set EXCMP_SLOW_CORPUS=1
-.venv\Scripts\python.exe -m pytest tests\test_manifest_v2.py -q -k 57k -s
-```
+- **A clean full pass took 1 h 07 m**, measured 2026-09-09, not the few
+  minutes the count suggests — and `pytest -q` buffers everything when stdout
+  is not a terminal, so it looks hung for the whole hour. Check it is alive
+  with `Get-Process python | Select Name,Id,CPU` rather than waiting on
+  output. (An earlier 31-minute figure was a run where two tests failed early
+  on ENOSPC and never did their work — see below.)
+- **Serialise it against any benchmark.** Still true, still the rule from the
+  K series: a 2-core machine running both produces allocation failures in
+  compression tests that look exactly like real defects.
+- **Clear `%TEMP%\pytest-of-nuhaa` before a run.** Measured this session: the
+  suite leaves **400-770 MB per run** there and pytest keeps the last three,
+  and an *aborted* run leaves its tree behind on top of those. Four leftovers
+  had eaten 2 GB, `C:` fell to 0.92 GB free, and the suite failed with
+  `OSError: [Errno 28] No space left on device` inside
+  `tests/test_zstd_window.py` — which reads exactly like a real defect in the
+  K4 window code and is not one. All 13 passed on a re-run with space free.
+
+The only xfail left is research/23 §2.4's 300px page budget, which §2.4 and
+§3.3 contradict each other about — not a to-do. The skip is the 57,020-file
+corpus walk (`set EXCMP_SLOW_CORPUS=1`).
 
 ---
 
-## 0. The working rule, and the thing it caught three times
+## 0. What is on `main`, and what is not
 
-**Confirm, do not hypothesise.** Every claim here was reproduced on this
-machine before it was written down.
+`main` carries everything through B8. **`phase-d8-atomic-publish` is the one
+branch awaiting review**:
 
-The K series produced the sharpest version of this lesson so far, and it is
-worth reading before touching the manifest again. **The preflight kept
-modelling something other than the artifact it protects** — three times, in
-three different ways, across two sessions:
+```
+git merge --no-ff phase-d8-atomic-publish
+```
 
-| where | the estimate missed | measured error |
+The docs commit (this file, the ROADMAP tick, the benchmark) went straight to
+`main` per the working agreement; the code is on the branch.
+
+---
+
+## 1. What D8 shipped
+
+New module `excmp/atomic.py` — `publish()`, `atomic_write_text/bytes()`,
+`fsync_file()`, `hash_and_size()` — now behind **every** output the program
+writes: both archive publishes (`.excmp` and the plain `.7z`/`.zip` export),
+both sidecars, the volume parts, the calibration store and the history file.
+
+| what | before | after |
 |---|---|---|
-| K1, `same_as` | keys `write_container` adds *after* the estimate | 0.758× |
-| K1, non-ASCII | `json.dumps` escaping to `\uXXXX`, 6 B per char | 0.55× |
-| **K2, `dirs`** | a whole new top-level field | **0.009×** |
+| durability | `os.replace` only, bytes still in the OS cache | `fsync` **then** rename |
+| verification | nothing re-read the artifact | SHA-256 read back off the filesystem after the flush |
+| the destination | `unlink()` then `replace()` — a window with neither file | `os.replace` alone, which overwrites atomically |
+| the digest | the sidecar re-read the whole archive | the read-back's digest, in `CompressResult.sha256` |
 
-The third is the instructive one: K1 had *written the rule down* beside the
-constant — "any new ledger key has to be added here" — and K2 followed it to
-the letter for `mtime_ns` while adding a second, unbounded field the rule did
-not name. A 100-fold under-read, predicted before it was looked for, caught
-before the commit.
+**Measured cost, Silesia/normal** (48.7 MB archive, 116 s job, full numbers in
+[benchmarks/2026-09-09-d8](benchmarks/2026-09-09-d8-atomic-publish.md)):
 
-**So the durable defence is not another constant.** It is the three tests that
-now compare the estimate against a *genuinely serialised* manifest
-(`test_the_size_estimate_*` in `tests/test_manifest_v2.py`). If you add a
-manifest field, add it to those.
+- flush **5.3 ms**, read-back **266.5 ms** (182.7 MB/s) → **0.234%** of the job
+- **0.0046% with `--sidecar`**, because the read-back replaces a hash the
+  sidecar was already paying for
+- the volumes sidecar got **13.9× cheaper** (218.2 ms → 15.7 ms), because
+  `split_file` now records each part's digest from the bytes it writes
 
-### Things that were measured and turned out different from the plan
+Restore verified 12/12 byte-identical.
 
-Five, this session. Full detail in
-[benchmarks/2026-09-07-k2-k5](benchmarks/2026-09-07-k2-k5-defects.md):
+---
 
-- K4's "half the size and 2.1× faster" is **49.9% and 1.54×** synthetically,
-  **4.40% and no speedup** on two real installer versions, and **0%** in the
-  real pipeline, where already-compressed input is routed to `store` and never
-  reaches zstd at all.
-- K4's "peak working set fell" was wrong in direction: pinned at window 31 it
-  **rose** 1,002 → 1,813 MiB. Fitting the window to the input gets the identical
-  output for 1,045 MiB.
-- K3's fix does not belong where the plan implies (the copy); it belongs in
-  `analyze_file`, which opens every file long before the copy exists.
-- K2's fix does not belong in the store route; it belongs after MOTW
-  propagation, which rewrites the timestamp you just restored.
+## 2. Four findings worth not rediscovering
 
-### Your data is not at risk from the suite — verified, not assumed
+### The archive is not byte-reproducible, and that is by design
 
-Three tests read from the real corpora, read-only, and `tools/corpus_guard.py`
-proves it rather than asking you to trust it:
+B8 recorded Silesia/normal at 48,689,445 B. This session measured
+**48,689,446** — one byte, on the corpus that exists to make comparisons
+possible. It took three measurements to close:
+
+1. The container is `manifest.json` (2,299 B raw, ~1,005 deflated) plus
+   `payload.7z` (48,688,221 B, **stored**) plus 220 B of zip overhead. All the
+   compression is in the payload.
+2. Substituting only `created_utc` moves the deflated manifest by up to 3
+   bytes. Sweeping all 86,400 timestamps of 2026-09-08: **67 of them deflate
+   to exactly 1,004 B, giving exactly B8's 48,689,445.**
+3. Two runs today: same total, same payload size, **different payload CRC32**
+   (`f516777a` vs `5f4ddd7c`). 7-Zip's output here is length-deterministic and
+   not byte-deterministic.
+
+**So: compare payload size, never the archive digest, across benchmark runs.**
+A few bytes of difference is a clock. Payload size is the number that means
+something and it was not being recorded before this session — record it.
+`result.sha256` is the identity of one file for verification, **not** a build
+fingerprint.
+
+### An `fsync` costs what the file's *recency* costs, not its size
+
+| file | bytes | fsync |
+|---|---:|---:|
+| the archive | 48,689,446 | 5.3 ms |
+| its 80-byte sidecar | 80 | **26.3 ms** |
+
+The archive's pages had been draining to disk for two minutes; the sidecar was
+milliseconds old and paid the whole barrier. Do not reason about where a flush
+is "too expensive" from file size.
+
+### A check can be mechanically vacuous in one branch and load-bearing in the other
+
+The first version of D8 hashed the archive after the D9 gate and passed that
+digest to `publish` for the read-back to compare — two full passes to compare a
+file with itself, since nothing runs between them and Python raises on a full
+volume rather than short-writing. Removed: it would have doubled D8's cost for
+zero detection.
+
+The identical check is kept **with a password**, where a second pass really
+does read the plaintext out of temp and write a different file. `encrypt_file`
+now takes `expect_src_sha256` (free — it streams those bytes anyway) and
+reports the ciphertext digest, which the publish read-back verifies. That
+closed a hole nothing had covered: **the D9 gate proves a plaintext restores,
+and what ships is a ciphertext produced afterwards by something the gate never
+saw.**
+
+This is B8's rule from the other side. B8: a mechanically *correct* proxy can
+cost more than it buys. D8: a check can be *mechanically empty* in one branch
+while being essential in the branch beside it, and the resemblance between the
+two is exactly what makes it look uniformly worthwhile.
+
+### Adding a check to a path adds a failure mode to it
+
+Caught by auditing the finished work, not by the suite. `calibrate.record()`
+and `history.append()` both promise **never to raise** — they run after a job
+has already succeeded — and both caught `(OSError, ValueError, TypeError)`.
+`PublishError` is a **RuntimeError**, so D8's own read-back had quietly given a
+finished job a new way to be reported as failed. Two tests now pin it
+(`*_never_raises_on_a_bad_readback`).
+
+The write site was the obvious thing to review; the callers catching **by
+exception type** were the thing that actually broke. If you route another
+write through `excmp.atomic`, re-read what its caller catches.
+
+---
+
+## 3. The next phase: D7 — CI on `windows-latest`
+
+`docs/ROADMAP.md` D7: GitHub Actions `windows-latest` (7-Zip preinstalled),
+matrix Python 3.11–3.13, `setup-python` pip cache, SHA-keyed tool cache, badge
+in README.
+
+### The one question to settle first
+
+**D7 is the first item whose acceptance gate is not on this machine.** A
+workflow file that has never run is not evidence of anything, and this
+project's rule is not to write down a behaviour that has not been reproduced.
+Proving it means **pushing the branch to GitHub and reading the run** — an
+outward-facing action on a private repo that also spends Actions minutes.
+
+So decide at the start: **push the D7 branch to see it run, or land it
+unproven with that stated in the commit message?** If the answer is "not
+yet", do **E2** instead (below) — it is docs-only, needs nothing off this
+machine, and is the item that has become *more* necessary rather than less.
+
+### Things already known about D7
+
+- 7-Zip is preinstalled on `windows-latest`, so the core suite can run without
+  `toolfetch`. Precomp, zstd, zpaqfranz and `flac` are not — E1's hash-pinned
+  fetcher exists and its cache key should be the `exe_dir_sha256` already in
+  source, not a version string.
+- **Three tests read the user's real corpora** and must be skipped or gated in
+  CI; they are already corpus-gated, but confirm that the gate is an
+  environment check and not a path that happens to be absent.
+- The suite takes **1 h 07 m** here on 2 cores. A 3-version matrix will not
+  fit comfortably in one job each — GitHub's default job timeout is 6 h, but
+  three hour-long jobs per push is a lot of minutes on a private repo.
+  Consider splitting the slow tests behind a marker and running the full set
+  on a schedule rather than on every push.
+- `tools/corpus_guard.py` has nothing to guard in CI and should not run there.
+
+### After D7, in order
+
+**E2** — THIRD-PARTY-NOTICES.md. Genuinely needed now: E1 downloads GPL
+`flac` and Apache `qpdf`. Docs-only, straight to `main`.
+**D4** — disk-full simulation on a VHDX/`subst` volume. D8 raised its value:
+`publish()`'s short-write refusal has a unit test but has never met a real
+ENOSPC, and **C: has 2.9 GB free**, so a VHDX is the only way to test it
+without endangering the machine.
+**I6** — "compare presets on this input"; the estimator is trustworthy enough
+since B8 to make it honest.
+
+---
+
+## 4. Verify before you believe anything here
+
+```
+.venv\Scripts\python.exe -m pytest tests\test_atomic_publish.py -q   # D8, 18 tests
+.venv\Scripts\python.exe -m pytest tests\test_publish_gate.py -q     # D9
+.venv\Scripts\python.exe -m pytest tests\test_volumes.py -q          # G3 + both sidecars
+.venv\Scripts\python.exe -m pytest tests\test_crypto.py -q           # F1/F2
+```
+
+And your data is not at risk from the suite — verified this session, not
+assumed:
 
 ```
 .venv\Scripts\python.exe tools\corpus_guard.py snapshot
@@ -81,263 +219,110 @@ proves it rather than asking you to trust it:
 .venv\Scripts\python.exe tools\corpus_guard.py compare
 ```
 
-165 files under `Programs` and `My Graphical Projects`. Clean on every run this
-session.
+165 files under `Programs` and `My Graphical Projects`, clean.
 
-### One process rule, learned the hard way
-
-**Do not run memory benchmarks and the test suite at the same time.** The suite
-failed once with `zstd decompress error: Allocation error : not enough memory`
-on a *tiny* file; it passes in isolation. The cause was this session's own
-1.8 GiB benchmark plus a 642 MiB end-to-end on a 2-core machine. A transient
-allocation failure in a compression test is exactly the kind of thing that gets
-misdiagnosed as a real defect. Serialise the heavy runs.
+If a number here disagrees with what you measure, **trust your measurement and
+correct the doc.**
 
 ---
 
-## 1. What is on `main`
+## 5. Session mechanics
 
-Everything. `main` carries I3/I8/I10, K1, K2–K5, B5, E1, B4 and B8; nothing
-is unmerged and nothing is awaiting review.
-
-The app does: verified byte-identical restore · per-file routing with reasons ·
-duplicate-file dedup · split volumes · PAR2 recovery records · AES-256-GCM +
-Argon2id encryption with keyfiles · Mark-of-the-Web propagation ·
-foreign-archive listing and extraction · convert-and-shrink · plain
-`.7z`/`.zip` export · self-calibrating time estimates · persisted history ·
-treemap · Ctrl+K · **preserved timestamps and empty directories** ·
-**locked files skipped and reported** · **a manifest that scales to a
-`node_modules` tree** · **WAV packed with FLAC, 43% and byte-identical** ·
-**hash-pinned tool downloads**.
-
----
-
-## 2. What the K series shipped
-
-| item | what it fixes | proof |
-|---|---|---|
-| **K1** | a 57k-file folder could not be archived at all | 55,477 files, 71.39% saved, byte-identical |
-| **K2** | stored files came back dated today; empty folders vanished | real installers restored to 2023-11-14 and 2025-08-10, exact |
-| **K3** | one locked file destroyed the whole job | 5 of 6 archived, the 6th reported by name |
-| **K4** | zstd could not see past 128 MiB, and could not *read* wider than it writes | window fitted to input; read ceiling decoupled |
-| **K5** | every job touching a `.git` leaked a temp directory | `rmtree_force` at all 11 sites |
-
-Benchmarks: [K1](benchmarks/2026-09-04-k1-manifest-v2.md) ·
-[K2–K5](benchmarks/2026-09-07-k2-k5-defects.md) ·
-[B5](benchmarks/2026-09-07-b5-pdf-office.md) ·
-[B4 + E1](benchmarks/2026-09-07-b4-wav-flac.md).
-
-### And what B4/B5/E1 added after it
-
-| item | finding | proof |
-|---|---|---|
-| **B5** | the estimator showed Extreme beating Normal by 4 points where the truth is 40 | 13.78% → 46.32% predicted vs 50.36% measured |
-| **E1** | hash-pinned tool downloads; its own first fetch found its redirect rule refused GitHub | 24 tests |
-| **B4** | WAV was stored at **0%** and told "already compressed by its codec" — it has no codec | **43.15%**, 4/4 byte-identical |
-
-**B4 is the first specialist in this project that beat the route already
-present.** B3's `oxipng`, B5's `qpdf` and K4's wide window all lost to
-`precomp → 7z` on real files. The reason B4 differs is structural: a PDF or a
-docx is already deflate output one layer down, which Precomp reaches, while a
-WAV is genuinely uncompressed and no general-purpose compressor models audio.
-Keep that test — "is this format actually already compressed?" — for the next
-specialist.
-
----
-
-## 3. What B8 left open, and the rule it produced
-
-Full numbers: [benchmarks/2026-09-08-b8](benchmarks/2026-09-08-b8-rebenchmark.md).
-
-B8 re-benchmarked Silesia across all four profiles (every restore
-byte-identical) and then found the *estimator* was excluding the truth on 3 of
-4 profiles, off by 14-19 points. Fixed: **1/4 -> 4/4 in range**, error now
-+2.6..+3.5 points and conservative.
-
-### The rule, because it has now cost two sessions
-
-**A proxy is valid or invalid according to the mechanism, not the
-resemblance.**
-
-In B5 I credited same-size files against the *zstd* long-range window,
-reasoning that two files of different lengths cannot be duplicates. B8's shape
-matrix destroyed it: the bound went **negative** on files that merely happened
-to share a size, while genuine cross-file sharing across *different* sizes got
-no credit at all. zstd matches **substrings**, so equal length implies nothing.
-
-The identical proxy is *mechanically correct* for G9 dedup, because G9 matches
-**whole files** - equal length really is a necessary condition there. So it was
-implemented, closed all 50 points of shape C, and **was reverted anyway**: it
-broke the exactness guarantee, giving `low = 10 MB` for five 10,000,000-byte
-videos that are not duplicates.
-
-That is the sharper version of the rule. The same proxy failed twice for two
-*different* reasons - against zstd because the mechanism is wrong (substrings,
-so equal length implies nothing), against G9 because the mechanism is right and
-the **cost** is unacceptable. Being correct about the mechanism is necessary
-and not sufficient; the second question is what the approximation costs
-everywhere it is not needed.
-
-### Three things left open, all with their measurements
-
-**B8's shape matrix ended at 3/6, and two of those misses had working fixes
-that were thrown away because they cost more than they bought.** That is the
-result, not a shortfall.
-
-**1. Shape C (50 points): G9 dedup is not modelled.** 20 MiB of random data
-duplicated once is predicted to compress by nothing; the real archive halves.
-A same-size credit fixes it exactly and **breaks the exactness guarantee** -
-five 10,000,000-byte non-duplicate videos gave `low = 10 MB` against a true
-50 MB. Exactness wins. `_dedup_credit` is still in the file as the docstring
-explaining why it is unused. If you want this, you need a signal stronger than
-size, and hashing is what the analysis pass exists to avoid.
-
-**2. Shape B (7.6 points): long-range matching on 7-Zip.** Its mx9 dictionary
-is 256 MiB and finds duplicates 120 MiB apart. Extending the floor to 7-Zip
-fixes it and sets `low` to 10% of piped bytes for *every* ordinary estimate.
-Do not re-apply it globally; if it is worth doing, it needs to be conditional
-on evidence that a duplicate exists.
-
-**3. Shapes D/E (2,093 bytes, 0.0017%).** Start with the **harness**, not
-`_overhead`: it reports 3,553 bytes of real overhead for a 6x20 MiB shape
-where a direct measurement gives 1,455, and `_overhead` already over-books
-(1,429/1,455 real vs 1,460 modelled). Raising `_ZIP_ENTRY_BYTES` was tried and
-measurement contradicted it.
-
-### Also worth not re-deriving
-
-**Insane is data-dependent, not stronger.** B1 measured it *losing* to Extreme
-on installers (40.77% vs 41.75%, at 2.3x the time). Silesia has it winning by
-2.50 points. Both are true; the profile pays on compressible self-similar
-material and not on already-compressed blobs. Any UI copy that implies a single
-ordering is wrong.
-
----
-
-## 3b. Session mechanics (agreed 2026-09-09)
-
-**Corpora kept on disk for reuse — do not re-download or rebuild:**
+**Corpora kept on disk — do not re-download or rebuild:**
 
 | path | what | why keep |
 |---|---|---|
-| `C:\excmp-bench\silesia` | 202 MB, 12 files | B8's anchor. Any estimator change should be re-checked against it; the measured actuals are in the B8 benchmark doc, so a re-run needs no recompression to compare |
-| `...\Downloads-1\Songs` | 610 `.flac`, 110 `.wav` (5.07 GiB) | B4's material. The 610 FLACs are still an *unexamined* question (already FLAC, so "does anything beat storing them?") |
-| `Downloads-1\PalluVaapaHDD\0No Need To Check\Programs` | 721 MB, 42 installers | the estimator backtest pins exact sizes; a changed file voids the comparison |
+| `C:\excmp-bench\silesia` | 202 MB, 12 files, **211,938,580 B** | the anchor. Payload size for normal is **48,688,221 B** — compare *that*, not the archive digest |
+| `...\Downloads-1\Songs` | 610 `.flac`, 110 `.wav` (5.07 GiB) | B4's material; the 610 FLACs are still an unexamined question |
+| `Downloads-1\PalluVaapaHDD\0No Need To Check\Programs` | 721 MB, 42 installers | the estimator backtest pins exact sizes |
 
-**Plan mode is NOT needed for the normal `/next` flow** - the handoff names the
-phase and carries the decisions, and `CLAUDE.md` says not to ask which one.
-Turn it on for exactly two things:
+**Disk space is now a constraint.** `C:` has **2.9 GB** free; `D:` has 13 GB.
+The Silesia job does not fit on `C:` with its temp — put `StageContext(temp_dir=...)`
+on `D:` and only the archive on `C:`. That also means the total job time is not
+comparable to B8's 2.5 m (this session measured 116 s with temp on `D:`).
 
-- **B6**, because its DLL-bootstrap flaw is an architecture decision that
-  affects the lossless guarantee and must be settled before any code.
-- **Phase H**, because it is large and H5 conflicts with B6.
+**Plan mode is NOT needed for the normal `/next` flow.** Turn it on for
+exactly two things: **B6** (its DLL-bootstrap flaw is an architecture decision
+touching the lossless guarantee) and **Phase H** (large, and H5 conflicts with
+B6). Skip it for D7, E2, D4, F5, I6.
 
-Skip it for D7, E2, D8, F5, I6 - small and already specified.
-
-**Re-judge B6's size.** The "3-4 sessions" estimate was made when context could
-not hold its five sub-items at once. Sessions now run with ~1M context, so that
-figure is inherited rather than measured - and this project's own rule is not to
-carry a number forward on plausibility. Read the audit note, then size it.
-
----
-
-## 4. Verify before you believe anything here
-
-```
-# the K series, each with its own suite
-.venv\Scripts\python.exe -m pytest tests\test_manifest_v2.py -q     # K1
-.venv\Scripts\python.exe -m pytest tests\test_timestamps.py -q      # K2
-.venv\Scripts\python.exe -m pytest tests\test_locked_files.py -q    # K3
-.venv\Scripts\python.exe -m pytest tests\test_zstd_window.py -q     # K4
-.venv\Scripts\python.exe -m pytest tests\test_tempclean.py -q       # K5
-```
-
-If a number here disagrees with what you measure, **trust your measurement and
-correct the doc.** That happened nine times across the last two sessions.
+**Re-judge B6's size.** The "3-4 sessions" estimate was made when context
+could not hold its five sub-items at once. Read the audit note, then size it —
+this project does not carry a number forward on plausibility.
 
 ---
 
-## 5. Everything still open, grouped by what it costs
+## 6. Everything still open
 
-**35 open items, and 5 were closed on 2026-09-09 as already-done** (G1, G6,
-G8, I1 were shipped in UI v3 / G2 and never ticked; I2 shipped *inside* the
-Extract tab because four tabs is the ceiling). If an item looks suspiciously
-easy, check whether it already exists before building it.
+**Nothing left is a defect.** D8 closed the last one found by inspection. What
+remains is hardening, polish, or a big optional phase.
 
-### Small, self-contained, real value
+### Small, self-contained
 
 | item | what |
 |---|---|
-| **D8** | atomic-write upgrade: temp + `fsync` + read-back hash + `os.replace` |
+| **E2** | THIRD-PARTY-NOTICES.md — needed now that E1 fetches GPL `flac` and Apache `qpdf` |
 | **D5** | `excmp verify --deep`: zpaqfranz-style `t` + `v -ssd` split, plus an order-independent tree hash |
 | **G7** | RAM-limited extraction mode (mirror FitGirl's "limit to 2 GB") |
 | **F5** | honest UI copy for encryption: "lost password = lost data" |
 | **E6** | CONTRIBUTING.md, issue templates, CHANGELOG |
-| **E2** | THIRD-PARTY-NOTICES.md — **now genuinely needed**, since E1 fetches GPL `flac` and Apache `qpdf` |
 | **B10** | already satisfied by B2's wheel; confirm and close |
 
 ### Medium
 
 | item | what | note |
 |---|---|---|
-| **D7** | CI on `windows-latest` | 7-Zip is preinstalled there; would catch what this laptop cannot |
-| **D4** | disk-full simulation on a VHDX/subst volume | the one failure path never exercised |
+| **D7** | CI on `windows-latest` | **next phase** — see section 3 |
+| **D4** | disk-full simulation on a VHDX/`subst` volume | D8 gave it a specific target: `publish()`'s short-write refusal has never met a real ENOSPC |
 | **D6** | fuzzing the `.excmp` parser (HypoFuzz on Windows) | D0 hardened it by hand; nothing has fuzzed it |
-| **I6** | "compare presets on this input" | the estimator is now trustworthy enough to make this honest |
-| **I7** | i18n pipeline (`.ts` + Language menu) | **do not invent Dhivehi** — build the pipeline, let the user translate |
-| **B9** | finish the RAM estimator formula | `-md=192m` and `-mqs` are settled; only the exact formula is left |
-| **B12** | LOLZ as an optional final codec | unverified ~5-10%; **B8's rule applies — measure the baseline first** |
+| **I6** | "compare presets on this input" | the estimator is trustworthy enough since B8 |
+| **I7** | i18n pipeline (`.ts` + Language menu) | **do not invent Dhivehi** — build the pipeline |
+| **B9** | finish the RAM estimator formula | `-md=192m` and `-mqs` settled; only the formula is left |
+| **B12** | LOLZ as an optional final codec | unverified ~5-10%; **measure the baseline first** |
 
 ### Large, or blocked
 
 | item | what | status |
 |---|---|---|
-| **B6** | xtool + Oodle | **blocked on test material.** No Oodle game folder here. Read the audit note first: the DLL-bootstrap flaw means archives would only restore on the machine that made them. 3-4 sessions |
-| **Phase C** | C1-C7: FFmpeg fetch, ffprobe, AV1 encode, honest ETA, `oxipng`, `qpdf` | the whole opt-in lossy phase. C6/C7 are already measured and waiting |
-| **Phase H** | H1-H6: Inno Setup installer generation | large, and H5 conflicts with B6 (a proprietary DLL cannot ship in a redistributable installer) |
-| **E3-E5** | PyInstaller build, signing, auto-update | **only if this is ever shared.** E4 is retired while the repo is private |
+| **B6** | xtool + Oodle | **blocked on test material.** No Oodle game folder here; the DLL-bootstrap flaw means archives would only restore on the machine that made them |
+| **Phase C** | C1-C7: FFmpeg fetch, ffprobe, AV1 encode, honest ETA, `oxipng`, `qpdf` | the whole opt-in lossy phase; C6/C7 measured and waiting |
+| **Phase H** | H1-H6: Inno Setup installer generation | large, and H5 conflicts with B6 |
+| **E3-E5** | PyInstaller build, signing, auto-update | **only if this is ever shared**; E4 retired while private |
 | **D0.6** | Windows process mitigations for subprocesses | deferred to its own session by design |
 | **I5** | Explorer context menu | **ask first** — writes to HKCU |
 
-### The honest read
-
-Nothing left is a *defect*. The K series cleared the confirmed ones, and B4/B5/
-E1/B8 closed the specialists and the estimator. What remains is either
-**hardening** (D4-D8), **polish** (F5, I6, I7, E2, E6), or **big optional
-phases** (B6, C, H, E3-E5).
-
-**If you want the highest value per session:** D7 (CI) and D8 (atomic writes),
-then E2 — the licence file is the one item that has become *more* necessary
-rather than less, because E1 now downloads GPL and Apache binaries.
-
 ---
 
-## 6. Things not to re-litigate
+## 7. Things not to re-litigate
 
 - **The repo is private and the OSI rule is retired** (2026-09-01). Any tool
-  may be used. The lossless guarantee is *more* important as a result, not
-  less — several newly-permitted tools are known-unreliable.
-- **Never weaken verification to fit a tool in.** The D9 gate caught a broken
-  archive on the first codec added after the rules relaxed.
-- **zpaqfranz is not tree-capable here**, deliberately — absolute paths, and
-  `add` has no relative-path switch.
-- **SREP stays out.** Permitted now, but zpaqfranz buys the same points and
-  SREP failed its own checksum 1 run in 3.
+  may be used; the lossless guarantee is *more* important as a result, not
+  less.
+- **Never weaken verification to fit a tool in.**
+- **`os.replace` needs no `unlink()` first**, on Windows or POSIX. It
+  overwrites atomically. Adding one back would restore the D8 defect.
+- **The read-back is not paired with an expectation on the plain path**, and
+  that is measured, not an omission. See section 2.
+- **Windows cannot flush a directory.** Contents are flushed; rename metadata
+  durability is the filesystem's. Stated in `excmp/atomic.py`'s docstring.
+- **`split_file` writes parts at their final names, not through `.tmp`** — the
+  numbering and the sidecar already reject an incomplete set, and its failure
+  path removes what it wrote.
+- **`publish()`'s `(st_dev, st_ino, st_size)` check never refuses on its own.**
+  `st_ino` is a real file index on NTFS and synthesised on FAT32/exFAT, which
+  is what a USB stick arrives formatted as. A disagreement re-hashes the
+  destination; only differing *content* refuses.
+- **zpaqfranz is not tree-capable here**, deliberately.
+- **SREP stays out.** Permitted now, but it failed its own checksum 1 run in 3.
 - **Four top-level tabs is the ceiling.**
-- **`MAX_MANIFEST_BYTES` is 64 MiB and that number is measured.** Do not trim it
-  back on principle; measure again if it must move.
+- **`MAX_MANIFEST_BYTES` is 64 MiB and that number is measured.**
 - **`manifest.json` is the one DEFLATED member of the container**, written with
-  `ensure_ascii=False`. Both are load-bearing — see section 0.
-- **The manifest preflight is deliberately pessimistic** (2.08× on an
-  all-stored tree, 1.09× on the real end-to-end job). Refusing a job that would
-  have worked is bad; accepting one that cannot finish is the defect K1 exists
-  to fix.
-- **`verify_restore` does not compare timestamps**, on purpose. Every pre-K2
-  archive lacks them, and failing those archives' verification would be far
-  worse than a wrong date.
-- **The zstd window is fitted to the input, not pinned at 31.** Byte-identical
-  output at 29/30/31 on the same corpus, for 769 MiB less memory. The *read*
-  ceiling is a separate constant and must stay independent of the write
-  setting — that coupling was K4's actual bug.
+  `ensure_ascii=False`. Both are load-bearing — and its `created_utc` is why
+  the archive is not byte-reproducible.
+- **The manifest preflight is deliberately pessimistic.** If you add a manifest
+  field, add it to `test_the_size_estimate_*` in `tests/test_manifest_v2.py`.
+- **`verify_restore` does not compare timestamps**, on purpose.
+- **The zstd window is fitted to the input, not pinned at 31**, and the *read*
+  ceiling stays independent of the write setting — that coupling was K4's bug.
 - **Run `tools/qa_sweep.py` and look at the images** before calling any GUI
-  change done. It has caught defects no test could.
+  change done.

@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-468%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1074%20passing-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 Most archivers run one algorithm over everything. ExtremeCompressor works like a
@@ -145,7 +145,7 @@ methodology in [`docs/benchmarks/`](docs/benchmarks/).
 │   ├── mainwindow.py       # the single-window flow
 │   ├── icons.py            # theme-tinted Fluent SVGs (MIT, vendored)
 │   └── widgets/            # dropzone, analysis card, chooser, queue, results, banner
-├── tests/                  # 468 pytest tests incl. real-tool roundtrips
+├── tests/                  # 1,077 pytest tests incl. real-tool roundtrips
 ├── tools/
 │   ├── bench.py            # profile benchmark harness
 │   ├── shots.py            # regenerates docs/images/ from the real app

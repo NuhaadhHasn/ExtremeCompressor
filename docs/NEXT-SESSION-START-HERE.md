@@ -214,6 +214,33 @@ ordering is wrong.
 
 ---
 
+## 3b. Session mechanics (agreed 2026-09-09)
+
+**Corpora kept on disk for reuse — do not re-download or rebuild:**
+
+| path | what | why keep |
+|---|---|---|
+| `C:\excmp-bench\silesia` | 202 MB, 12 files | B8's anchor. Any estimator change should be re-checked against it; the measured actuals are in the B8 benchmark doc, so a re-run needs no recompression to compare |
+| `...\Downloads-1\Songs` | 610 `.flac`, 110 `.wav` (5.07 GiB) | B4's material. The 610 FLACs are still an *unexamined* question (already FLAC, so "does anything beat storing them?") |
+| `... No Need To Check\Programs` | 721 MB, 42 installers | the estimator backtest pins exact sizes; a changed file voids the comparison |
+
+**Plan mode is NOT needed for the normal `/next` flow** - the handoff names the
+phase and carries the decisions, and `CLAUDE.md` says not to ask which one.
+Turn it on for exactly two things:
+
+- **B6**, because its DLL-bootstrap flaw is an architecture decision that
+  affects the lossless guarantee and must be settled before any code.
+- **Phase H**, because it is large and H5 conflicts with B6.
+
+Skip it for D7, E2, D8, F5, I6 - small and already specified.
+
+**Re-judge B6's size.** The "3-4 sessions" estimate was made when context could
+not hold its five sub-items at once. Sessions now run with ~1M context, so that
+figure is inherited rather than measured - and this project's own rule is not to
+carry a number forward on plausibility. Read the audit note, then size it.
+
+---
+
 ## 4. Verify before you believe anything here
 
 ```

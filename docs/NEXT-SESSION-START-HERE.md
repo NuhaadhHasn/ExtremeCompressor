@@ -1,18 +1,17 @@
-# 🚦 START HERE — handoff (written 2026-09-07)
+# 🚦 START HERE — handoff (written 2026-09-08)
 
 > **The whole K series is done.** All four confirmed defects from 2026-09-04
 > plus a fifth found on the way are fixed, measured and merged. Nothing is
 > awaiting review.
 >
-> **B4, B5, E1 and the E1 audit are all done.** Nothing is outstanding and
-> nothing is awaiting review. Pick from section 5 — **B8** is the most useful
-> next step.
+> **B8 is done, and it found the estimator was wrong by 14-19 points.**
+> Nothing is awaiting review. Section 3 has the two things B8 left open and
+> the one rule worth carrying forward.
 
-**1,056 tests: 1,053 pass + 2 skip + 1 strict-xfail.**
+**1,059 tests: 1,056 pass + 2 skip + 1 strict-xfail.**
 
 The only xfail left is research/23 §2.4's 300px page budget, which §2.4 and
-§3.3 contradict each other about - not a to-do. K4's estimator xfail is gone:
-it was fixed rather than deferred to B8, see section 2.
+§3.3 contradict each other about - not a to-do.
 
 ```
 .venv\Scripts\python.exe -m pytest -q
@@ -98,8 +97,8 @@ misdiagnosed as a real defect. Serialise the heavy runs.
 
 ## 1. What is on `main`
 
-Everything. `main` carries I3/I8/I10, K1, K2–K5, B5, E1 and B4; nothing is
-unmerged and nothing is awaiting review.
+Everything. `main` carries I3/I8/I10, K1, K2–K5, B5, E1, B4 and B8; nothing
+is unmerged and nothing is awaiting review.
 
 The app does: verified byte-identical restore · per-file routing with reasons ·
 duplicate-file dedup · split volumes · PAR2 recovery records · AES-256-GCM +
@@ -146,41 +145,72 @@ specialist.
 
 ---
 
-## 3. The E1 audit is finished — what it taught
+## 3. What B8 left open, and the rule it produced
 
-E1 shipped, was audited adversarially, and the audit reported **39 findings**
-before running out of session with 6 of its 44 agents done. Every remaining
-lead has now been checked by running it:
-[benchmarks/2026-09-07-e1-audit](benchmarks/2026-09-07-e1-audit.md).
+Full numbers: [benchmarks/2026-09-08-b8](benchmarks/2026-09-08-b8-rebenchmark.md).
 
-**10 of 12 distinct claims reproduced and are fixed. 2 did not. And 2 more were
-the verification harness being stale, not the code being wrong** — which is the
-same lesson inverted, and the one worth carrying forward.
+B8 re-benchmarked Silesia across all four profiles (every restore
+byte-identical) and then found the *estimator* was excluding the truth on 3 of
+4 profiles, off by 14-19 points. Fixed: **1/4 -> 4/4 in range**, error now
++2.6..+3.5 points and conservative.
 
-The three findings that generalise beyond E1:
+### The rule, because it has now cost two sessions
 
-**A ceiling on the compressed side is not a ceiling.** A 204,060-byte download
-installed 209,715,202 bytes — 1028× — with no refusal. Then the *replacement*
-ceiling was set to 768 MiB, above the 209 MB bomb that had just been measured,
-so it caught nothing. **Check a new limit against the thing it is meant to
-stop**, or it is decoration.
+**A proxy is valid or invalid according to the mechanism, not the
+resemblance.**
 
-**A trust anchor inside the thing it protects is not an anchor.**
-`verify_installed`'s expected digest was written beside the binary, so the same
-write that swaps a DLL rewrites the marker. Hashing the whole tree into that
-file fails identically. It lives in source now.
+In B5 I credited same-size files against the *zstd* long-range window,
+reasoning that two files of different lengths cannot be duplicates. B8's shape
+matrix destroyed it: the bound went **negative** on files that merely happened
+to share a size, while genuine cross-file sharing across *different* sizes got
+no credit at all. zstd matches **substrings**, so equal length implies nothing.
 
-**An availability bug inside a security check is a security bug**, because that
-is how checks get switched off. `_redirect_ok` compared `netloc`, so
-`github.com → release-assets.githubusercontent.com:443` was refused — a
-perfectly legitimate GitHub redirect.
+The identical proxy is *mechanically correct* for G9 dedup, because G9 matches
+**whole files** - equal length really is a necessary condition there. So it was
+implemented, closed all 50 points of shape C, and **was reverted anyway**: it
+broke the exactness guarantee, giving `low = 10 MB` for five 10,000,000-byte
+videos that are not duplicates.
 
-Nothing here is outstanding. The audit script is saved if it is ever worth
-re-running against a changed `toolfetch`:
+That is the sharper version of the rule. The same proxy failed twice for two
+*different* reasons - against zstd because the mechanism is wrong (substrings,
+so equal length implies nothing), against G9 because the mechanism is right and
+the **cost** is unacceptable. Being correct about the mechanism is necessary
+and not sufficient; the second question is what the approximation costs
+everywhere it is not needed.
 
-```
-.claude/.../workflows/scripts/e1-toolfetch-audit-wf_8697f7a5-44e.js
-```
+### Three things left open, all with their measurements
+
+**B8's shape matrix ended at 3/6, and two of those misses had working fixes
+that were thrown away because they cost more than they bought.** That is the
+result, not a shortfall.
+
+**1. Shape C (50 points): G9 dedup is not modelled.** 20 MiB of random data
+duplicated once is predicted to compress by nothing; the real archive halves.
+A same-size credit fixes it exactly and **breaks the exactness guarantee** -
+five 10,000,000-byte non-duplicate videos gave `low = 10 MB` against a true
+50 MB. Exactness wins. `_dedup_credit` is still in the file as the docstring
+explaining why it is unused. If you want this, you need a signal stronger than
+size, and hashing is what the analysis pass exists to avoid.
+
+**2. Shape B (7.6 points): long-range matching on 7-Zip.** Its mx9 dictionary
+is 256 MiB and finds duplicates 120 MiB apart. Extending the floor to 7-Zip
+fixes it and sets `low` to 10% of piped bytes for *every* ordinary estimate.
+Do not re-apply it globally; if it is worth doing, it needs to be conditional
+on evidence that a duplicate exists.
+
+**3. Shapes D/E (2,093 bytes, 0.0017%).** Start with the **harness**, not
+`_overhead`: it reports 3,553 bytes of real overhead for a 6x20 MiB shape
+where a direct measurement gives 1,455, and `_overhead` already over-books
+(1,429/1,455 real vs 1,460 modelled). Raising `_ZIP_ENTRY_BYTES` was tried and
+measurement contradicted it.
+
+### Also worth not re-deriving
+
+**Insane is data-dependent, not stronger.** B1 measured it *losing* to Extreme
+on installers (40.77% vs 41.75%, at 2.3x the time). Silesia has it winning by
+2.50 points. Both are true; the profile pays on compressible self-similar
+material and not on already-compressed blobs. Any UI copy that implies a single
+ordering is wrong.
 
 ---
 

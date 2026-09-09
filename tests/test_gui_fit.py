@@ -115,7 +115,25 @@ def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size):
 # so re-opening it is a deliberate act.
 # ---------------------------------------------------------------------------
 
-POPULATED_PAGE_MEASURED = 420     # 2026-08-07, real fonts, after the QA pass (415)
+# 2026-08-07 this measured 415 and the guard sat at 420. B8 moved it to 447,
+# and the cause is worth recording because it is not drift:
+#
+# Before B8 the estimator's `low` and `high` collapsed to the same value on
+# this fixture, so `suggest._span` returned "" and each profile row rendered a
+# single number with no range line. B8 made the codec factor depend on
+# compressibility - fixing an estimate that had been excluding the truth on 3
+# of 4 profiles - and the ranges are no longer degenerate, so every row now
+# carries the second line it always should have.
+#
+# The alternative was to suppress the range to keep the page short. That was
+# rejected: J1 exists so the product stops presenting a guess as a single
+# number, and hiding the uncertainty to save 27px would undo the phase.
+# `_span` was compacted instead ("38.1 - 85.9 MB", one unit rather than two),
+# which is where some of the width went back.
+#
+# Kept at the exact measured height rather than rounded up, so any *further*
+# growth still trips this.
+POPULATED_PAGE_MEASURED = 447
 POPULATED_PAGE_TARGET = 300       # research/23 §2.4
 
 

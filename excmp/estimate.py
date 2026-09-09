@@ -52,16 +52,70 @@ from .tools import ToolInfo
 # 60 MB/s shifted the derived codec rates by only ~7%.
 _IO_RATE = 100e6
 
-# Multiplier turning the zstd-3 worst-sample probe into the chain's real ratio.
-# Fitted at 0.947 for a plain 7z chain on the reference corpus; ordered by chain
-# strength rather than fitted per profile, which would over-fit one corpus's
-# composition. All near 1.0, which is the sign the *structure* is right - the
-# mean-sample model needed 1.28 here and 1.07 on the same run's other profile.
-_CODEC_FACTOR: Mapping[str, float] = MappingProxyType({
-    "zstd": 0.960,
-    "sevenzip": 0.947,
-    "precomp+sevenzip": 0.941,
+# How much better than the zstd-3 probe the real chain does - and it is **not a
+# constant**, which is what B8 found.
+#
+# The old model was a single multiplier per chain, all near 1.0, fitted on the
+# 721 MB Programs corpus. That corpus is installers: the probe reads
+# ratio_max = 0.91-0.97, there is almost nothing left to compress, and a real
+# chain can only match the probe. Near 1.0 was correct *there* and was mistaken
+# for a property of the chain.
+#
+# Silesia says otherwise. Measured 2026-09-08, 12 files / 211,938,580 B, all
+# four profiles, every restore byte-identical:
+#
+#     chain                probe   real ratio   implied factor
+#     zstd                0.4047       0.2482            0.613
+#     sevenzip            0.4047       0.2297            0.568
+#     precomp+sevenzip    0.4047       0.2195            0.542
+#     precomp+zpaqfranz   0.4047       0.1945            0.481
+#
+# So on compressible text the real chains beat the probe by ~2x, the constant
+# was wrong by that factor, and the estimator's range excluded the truth on
+# 3 of 4 profiles.
+#
+# **The fit is anchored by physics, not just by two points.** At probe = 1.0 the
+# data is incompressible, so a real codec cannot beat the probe either and the
+# factor must be 1.0. Fitting a line through the two measured anchors gives
+# exactly that, without being told to:
+#
+#     normal   installers 0.9126 -> 0.9465 | silesia 0.4047 -> 0.5676
+#              => factor(r) = 0.2657 + 0.7460 r   ... at r=1.0 -> 1.0117
+#     extreme  installers 0.9700 -> 0.9798 | silesia 0.4047 -> 0.5424
+#              => factor(r) = 0.2292 + 0.7738 r   ... at r=1.0 -> 1.0030
+#
+# Landing within 1.2% of 1.0 from two independent corpora is the sign the
+# *shape* is right. So the shipped form is the (1.0, 1.0)-anchored one -
+# `factor(r) = (1 - k) + k*r` - with `k` from the Silesia anchor and the
+# installer anchor kept as the cross-check it turned out to be:
+#
+#     chain               k      predicted at installer probe   measured
+#     sevenzip            0.726                        0.937      0.9465
+#     precomp+sevenzip    0.769                        0.977      0.9798
+#
+# `zstd` and `precomp+zpaqfranz` have only the Silesia anchor plus the physical
+# constraint; there is no installer measurement for Fast or Insane on that
+# corpus. Recorded as one anchor, not two.
+#
+# Applied **per file** rather than to the aggregate: a file whose own probe
+# says 1.0 gets factor 1.0 and is predicted not to shrink, which is right, and
+# a mixed selection is no longer averaged into a single wrong slope.
+_CODEC_SLOPE: Mapping[str, float] = MappingProxyType({
+    "zstd": 0.650,                  # Silesia anchor only
+    "sevenzip": 0.726,              # two anchors, cross-checked to 1.1%
+    "precomp+sevenzip": 0.769,      # two anchors, cross-checked to 0.3%
+    "precomp+zpaqfranz": 0.873,     # Silesia anchor only
 })
+
+
+def codec_factor(slope: float, probe_ratio: float) -> float:
+    """The probe-to-reality multiplier at this compressibility.
+
+    ``(1 - k) + k*r``, so incompressible data (r = 1.0) gets 1.0 by
+    construction - the one point on this curve that is not a measurement but a
+    fact about compression.
+    """
+    return (1.0 - slope) + slope * max(0.0, min(1.0, probe_ratio))
 
 # Bytes/s through the chain, piped bytes only - geometric means of every real
 # measurement we have, because they disagree by a lot and no single run deserves
@@ -91,7 +145,12 @@ _CODEC_RATE: Mapping[str, float] = MappingProxyType({
     "precomp+sevenzip": 1.41e6,
 })
 
-_FALLBACK_FACTOR = 0.95
+# For a chain with no anchor of its own. 0.95 was carried over from when this
+# was a *factor*; as a *slope* it means something entirely different - it would
+# claim the strongest compressibility response of any chain measured. 0.650 is
+# the weakest measured slope (zstd), so an unknown chain is credited no more
+# than the least impressive thing we have actually seen.
+_FALLBACK_SLOPE = 0.650
 _FALLBACK_RATE = 2.5e6
 
 # How wide the time range has to be to stay honest. Ordinary chains vary about
@@ -168,30 +227,39 @@ _OVERRIDE_LOW = 0.30
 # than having no range.
 _PRECOMP_OPTIMISTIC = 0.30
 
-# The same problem on the zstd chain after K4, and the same remedy: the
-# optimistic end has to reach the case the per-file probe cannot see.
+# The same problem on the zstd chain after K4, and a remedy that took two
+# attempts because the first one was fitted to a single corpus.
 #
-# `_CODEC_FACTOR["zstd"]` multiplies each file's *own* worst zstd-3 sample.
-# Nothing in that shape can express "this whole file is a duplicate of one
-# 170 MiB earlier", which is precisely what K4's wide window made findable, so
-# the measured archive landed below `low` and the range excluded the truth.
+# `_CODEC_SLOPE["zstd"]` multiplies each file's *own* worst zstd-3 sample.
+# Nothing in that shape can express "this file shares 40 MiB with another one",
+# which is exactly what K4's wide window made findable, so the measured archive
+# landed below `low` and the range excluded the truth.
 #
-# Measured 2026-09-07 on 220,200,960 B in three files, the third
-# byte-identical to the first: predicted low 61,945,796 against an actual
-# 41,963,379 - the truth at **0.677x** the optimistic end.
+# **The first fix keyed a per-duplicate credit on exact file size** - the
+# reasoning being that two files of different lengths cannot be duplicates.
+# That is true of *whole-file* duplicates and false of what zstd actually
+# does, which is match **substrings**. B8 stressed it across six corpus
+# shapes and it failed in both directions at once:
 #
-# This is a *credit per duplicate byte*, not a blanket factor on the whole
-# estimate, and `_long_range_discount` only ever awards it to files that share
-# an exact size with another file. That matters twice: a selection with no
-# repeated size gets no discount at all, so ordinary estimates keep the narrow
-# range the Compress page's height budget depends on, and the credit is
-# claimed only where there is actual evidence for it rather than everywhere a
-# zstd chain happens to be planned.
+#   4x20 MiB distinct text files, equal sizes  ->  low = -33,024,744
+#   40 MiB body shared across 3 DIFFERENT sizes ->  actual 0.122 of input,
+#                                                   low 0.436, truth excluded
 #
-# Not 1.0, because same-size is a superset of same-content: two files of equal
-# length need not be duplicates. 0.9 recovers the measured corpus with margin
-# while still crediting nothing to a tree of distinct files.
-_ZSTD_LONG_RANGE_CREDIT = 0.9
+# So a coincidence of sizes bought a 90% discount per file and drove the bound
+# negative, while genuine cross-file sharing bought nothing. A per-file
+# estimator cannot see cross-file redundancy, and pretending otherwise with a
+# cheap proxy was worse than admitting it.
+#
+# What replaces it is a **floor**, applied only to chains with long-range
+# matching on, derived from the widest real saving measured across those
+# shapes: 87.84% on the cross-size corpus, i.e. 0.122 of the input. 0.10
+# clears it with margin and nothing observed goes below it.
+#
+# The cost is a wider numeric range on ordinary input, which is what this was
+# avoiding the first time round. That objection was carried from memory rather
+# than re-measured; see the height figure recorded in
+# docs/benchmarks/2026-09-08-b8-rebenchmark.md.
+_ZSTD_LONG_RANGE_FLOOR = 0.10
 
 # Container overhead: a ledger entry per file (size, 64-hex sha256, route) plus
 # zip headers per stored entry. Only material for very small archives.
@@ -218,6 +286,22 @@ _ZSTD_LONG_RANGE_CREDIT = 0.9
 # the intended pessimism with room for a manifest that is mostly hashes.
 _LEDGER_BYTES_PER_FILE = 150
 _MANIFEST_DEFLATE_FACTOR = 0.30
+# Per stored entry: a 30-byte local header plus a 46-byte central directory
+# record, plus the name twice.
+#
+# This was briefly raised to 160 on the assumption it was too small, because
+# pure-random shapes came out above the high bound. Then it was **measured**,
+# and the assumption was wrong in the opposite direction - the model already
+# over-books:
+#
+#     files   input        archive      real overhead   modelled
+#         1   2,097,152    2,097,725              573      1,044
+#         3   6,291,456    6,292,355              899      1,470
+#         6  12,582,912   12,584,278            1,366      2,108
+#
+# So the high bound already covers the container and the D/E miss has some
+# other cause, recorded as open in docs/benchmarks/2026-09-08-b8. Reverted to
+# 76 rather than left inflated on a guess that measurement contradicted.
 _ZIP_ENTRY_BYTES = 76
 _CONTAINER_BASE = 512
 
@@ -228,7 +312,7 @@ class Rates:
 
     io_rate: float = _IO_RATE
     codec: Mapping[str, float] = _CODEC_RATE
-    codec_factor: Mapping[str, float] = _CODEC_FACTOR
+    codec_factor: Mapping[str, float] = _CODEC_SLOPE
     rate_spread: float = _RATE_SPREAD
     verify: Mapping[str, float] = _VERIFY_RATE
 
@@ -245,7 +329,14 @@ class Rates:
         return self.codec.get(self.chain_key(stages), _FALLBACK_RATE)
 
     def factor_for(self, stages: Sequence[str]) -> float:
-        return self.codec_factor.get(self.chain_key(stages), _FALLBACK_FACTOR)
+        """The chain's **slope**, not a ready-made multiplier.
+
+        Renamed in spirit but not in name to keep the call sites: what comes
+        back feeds `codec_factor(slope, probe)`, because B8 established that
+        the multiplier depends on how compressible the file is. See
+        `_CODEC_SLOPE`.
+        """
+        return self.codec_factor.get(self.chain_key(stages), _FALLBACK_SLOPE)
 
     def spread_for(self, stages: Sequence[str]) -> float:
         """Precomp chains need a wider range - they have two throughput regimes."""
@@ -368,8 +459,11 @@ def _piped_ratios(info: FileInfo, factor: float,
         return (_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED,
                 min(1.0, info.sample_ratio_max * _HIGH_SLACK))
 
-    low = info.sample_ratio * factor
-    expected = info.sample_ratio_max * factor
+    # The multiplier is evaluated at *this file's* own probe reading, so a
+    # file the probe calls incompressible is predicted not to shrink while a
+    # highly compressible one gets the full benefit of the chain (B8).
+    low = info.sample_ratio * codec_factor(factor, info.sample_ratio)
+    expected = info.sample_ratio_max * codec_factor(factor, info.sample_ratio_max)
     high = min(1.0, info.sample_ratio_max * _HIGH_SLACK)
     if has_precomp:
         # The probe cannot see the deflate streams Precomp will open, so the
@@ -378,25 +472,61 @@ def _piped_ratios(info: FileInfo, factor: float,
     return low, expected, max(expected, high)
 
 
-def _long_range_discount(piped: list[FileInfo]) -> float:
-    """Bytes the wide zstd window may find as cross-file duplicates.
+def _dedup_credit(stored: list[FileInfo]) -> int:
+    """Bytes G9 *might* remove from the stored route - and **deliberately not
+    used**. Kept as the record of an attempt that was measured and rejected.
 
-    Files are grouped by exact size; every copy after the first in a group is
-    a duplicate *candidate*, and its bytes are discounted by
-    ``_ZSTD_LONG_RANGE_CREDIT``. Same-size is a superset of same-content, so
-    this can over-credit but never under-credit, which is the right direction
-    for the optimistic end of a range.
+    The tempting reasoning: `write_container` writes one copy per distinct
+    SHA-256, the estimator cannot hash, but equal size is a necessary
+    condition for whole-file identity, so crediting all but the first file in
+    each size group is an optimistic bound that can only over-credit.
 
-    The credit is not 1.0 even though a real duplicate compresses to almost
-    nothing, because a same-size pair need not be a duplicate at all. It was
-    fitted against the corpus that exposed the defect: three files, the third
-    byte-identical to the first and 170 MiB downstream, where the real archive
-    sat at 0.677x the un-discounted `low`.
+    It cost 50 points of error on a shape where 20 MiB of random data was
+    duplicated once (predicted to compress by nothing; actually halved), so it
+    looked like a clear win. **It breaks a bigger promise.** Five 10,000,000-byte
+    videos that are *not* duplicates got `low = 10 MB` against a true 50 MB,
+    and "stored bytes are exact, not estimated" is a documented product
+    property - the first test in `tests/test_estimate.py` calls it
+    load-bearing, and it is the one number here that is arithmetic rather than
+    prediction.
+
+    A store-only estimate that says "exactly this" and is right is worth more
+    than one that says "between half and all of it" to accommodate a case that
+    may not occur. So shape C stays a known limitation: **duplicates are not
+    knowable without hashing, and breaking exactness to guess at them is the
+    wrong trade.**
+
+    Note this is the *second* time the same proxy has been wrong (see
+    `_ZSTD_LONG_RANGE_FLOOR` for the first). There it failed because zstd
+    matches substrings; here the mechanism is right and the *cost* is wrong.
+    Two different reasons, one seductive proxy.
+
+    `write_container` writes one copy per distinct SHA-256 and points the rest
+    at it with a `same_as`. The estimator cannot hash - that is the whole
+    reason the analysis pass is fast - but identical size is a **necessary**
+    condition for identical content, so files sharing a size are the exact
+    superset of the set G9 will collapse. Crediting all but the first in each
+    size group is therefore an optimistic bound that can over-credit and never
+    under-credit, which is what the low end is for.
+
+    Measured before this existed: 20 MiB of random data duplicated once was
+    predicted to compress by **nothing** - random bytes route to `store`, so
+    every ratio in the model was 1.0 - while the real archive came out at
+    exactly half the input because G9 found the duplicate. A 50-point miss,
+    and the largest single error in the whole stress matrix.
+
+    This is the same size-based reasoning that was **wrong** for the zstd
+    window (see `_ZSTD_LONG_RANGE_FLOOR`), and it is right here for a reason
+    worth keeping straight: zstd matches *substrings*, so two files of
+    different lengths can still share megabytes, and equal length implies
+    nothing. G9 matches *whole files*, so equal length is exactly the right
+    filter. The mechanism decides whether the proxy is valid, not the fact
+    that both involve duplicates.
     """
     by_size: dict[int, int] = {}
-    for info in piped:
+    for info in stored:
         by_size[info.size] = by_size.get(info.size, 0) + 1
-    return sum(size * (count - 1) * _ZSTD_LONG_RANGE_CREDIT
+    return sum(size * (count - 1)
                for size, count in by_size.items() if count > 1)
 
 
@@ -450,27 +580,36 @@ def estimate_size(infos: list[FileInfo], the_plan: Plan,
 
     # K4's long-range window, on the optimistic end only.
     #
-    # Every ratio above is *per-file*: each file's own worst sample times a
-    # codec factor. Nothing in that shape can express "this whole file is a
-    # duplicate of one 170 MiB earlier", which is exactly the saving the wide
-    # window made findable - so after K4 the measured archive landed *below*
-    # `low` and the range excluded the truth, which is worse than no range.
+    # A floor rather than a computation: every ratio above is per-file, and no
+    # per-file quantity can represent redundancy *between* files. See
+    # `_ZSTD_LONG_RANGE_FLOOR` for the two ways the previous attempt - a
+    # credit keyed on matching file sizes - got this wrong.
+
+    # The floor stays **zstd-only**, and that is a measured trade rather than
+    # an oversight.
     #
-    # The obvious repair - discount `low` by a flat factor for every zstd
-    # chain - was measured and rejected: it renders a 2.2x numeric range on
-    # ordinary input, which wraps a line and pushes the populated Compress
-    # page past the height budget research/23 2.4 argues for. It also lies
-    # about corpora that hold no duplicates at all, which is most of them.
+    # 7-Zip at mx9 uses a 256 MiB dictionary, which is a long-range window
+    # under another name, and extending the floor to it did fix a synthetic
+    # shape - 30 MiB of duplicate data 120 MiB apart, previously 7.56 points
+    # below the low bound. But it also set `low` to 10% of the piped bytes for
+    # **every** ordinary 7-Zip estimate, which is a far worse statement in the
+    # common case than the miss it repaired in a rare one: it broke the
+    # exactness of a uniform file's estimate, collapsed the distinction between
+    # Normal's and Extreme's optimistic ends, and rendered a range wide enough
+    # to push the populated Compress page from 415 to 447px against a 420px
+    # guard.
     #
-    # So the discount is driven by evidence instead. Identical size is the
-    # cheapest available duplicate signal - it needs no hashing, which the
-    # analysis pass cannot afford - and it is a true *superset* of the
-    # duplicate set: two files that differ in size cannot be duplicates. That
-    # makes this an optimistic bound in the honest direction, and it collapses
-    # to zero on a selection with no repeated size, leaving those estimates
-    # exactly as they were.
+    # zstd keeps it because K4 turned long-range matching into a *deliberate*
+    # feature of that chain with the window fitted to the input, so the
+    # optimistic end genuinely has to reach for it. For 7-Zip the same saving
+    # is incidental, and shape B is recorded as a known limitation instead.
     if piped and "zstd" in stages:
-        low -= _long_range_discount(piped)
+        low = min(low, piped_bytes * _ZSTD_LONG_RANGE_FLOOR)
+
+    # Never negative, whatever the terms above did. An archive cannot be
+    # smaller than nothing, and a bound that says otherwise is not
+    # conservative - it is broken, and it renders as a nonsense number.
+    low = max(0.0, low)
 
     base = stored_bytes + overhead
     return SizeEstimate(

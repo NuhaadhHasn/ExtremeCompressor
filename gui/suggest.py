@@ -416,7 +416,18 @@ def _span(low: float, high: float, formatter) -> str:
     "16.6 MB" underneath it, and "a few seconds" twice.
     """
     lo, hi = formatter(low).lstrip("~ "), formatter(high).lstrip("~ ")
-    return "" if lo == hi else f"{lo} – {hi}"
+    if lo == hi:
+        return ""
+    # A shared unit is written once: "40.0 – 90.1 MB", not
+    # "40.0 MB – 90.1 MB". Cosmetic until B8, which made the estimator
+    # honest about compressible data and therefore widened every range - the
+    # populated Compress page went 415 -> 447px against a 420px guard, and
+    # this is where the characters went. Saying "MB" twice was never carrying
+    # information the reader did not already have from the second one.
+    lo_unit = lo.rpartition(" ")[2]
+    if lo_unit and lo_unit == hi.rpartition(" ")[2]:
+        return f"{lo.rpartition(' ')[0]} – {hi}"
+    return f"{lo} – {hi}"
 
 
 def _short_caveat(warnings: list[str]) -> str:

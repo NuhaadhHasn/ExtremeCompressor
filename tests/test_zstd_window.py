@@ -282,3 +282,69 @@ def test_the_fast_estimate_still_contains_the_truth_after_k4(tmp_path):
     assert est.low <= real <= est.high, (
         f"the estimate range {est.low:,}..{est.high:,} excludes the real "
         f"{real:,} - the calibration no longer describes the codec")
+
+
+# --------------------------------------------------------------------------
+# B8: the calibration, stressed across corpus shapes instead of fitted to one
+# --------------------------------------------------------------------------
+
+def _infos(sizes, ratio=1.0):
+    """FileInfo list with a chosen worst-sample ratio, no disk involved."""
+    from excmp.analyzer import Category, FileInfo
+
+    return [FileInfo(path=Path(f"f{i}.dat"), size=n, category=Category.BINARY,
+                     entropy_bps=4.0, sample_ratio=ratio,
+                     sample_ratio_max=ratio)
+            for i, n in enumerate(sizes)]
+
+
+def _fast_plan(infos):
+    from excmp.planner import Profile, plan as make_plan
+    return make_plan(infos, Profile.FAST, {})
+
+
+def test_the_estimate_is_never_negative():
+    """A size-keyed duplicate credit drove `low` to **-33,024,744** on four
+    distinct 20 MiB text files, because they happened to share a size and each
+    was credited 90% of itself. An archive cannot be smaller than nothing, and
+    a negative bound is not a conservative one - it is a broken one."""
+    from excmp.estimate import estimate_size
+
+    infos = _infos([20 << 20] * 4, ratio=0.25)
+    est = estimate_size(infos, _fast_plan(infos))
+    assert est.low >= 0, est.low
+    assert est.low <= est.expected <= est.high
+
+
+def test_same_size_distinct_files_are_not_credited_as_duplicates():
+    """The false positive that produced the negative bound. Six equal-sized
+    files with unrelated contents are not six duplicates, and measured on real
+    random data they deduplicated by nothing at all."""
+    from excmp.estimate import estimate_size
+
+    infos = _infos([20 << 20] * 6, ratio=1.0)
+    est = estimate_size(infos, _fast_plan(infos))
+    total = sum(i.size for i in infos)
+    # Not asserting a tight floor - just that the estimate has not been
+    # discounted into fantasy by a coincidence of file sizes.
+    assert est.low >= total * 0.05, (est.low, total)
+
+
+def test_the_optimistic_end_reaches_cross_file_deduplication():
+    """The measurement that killed the size-keyed heuristic.
+
+    Three files sharing a 40 MiB body but of **three different sizes**
+    compressed to **12.2%** of the input - 87.84% saved - while `low` sat at
+    43.6%, so the range excluded the truth by 31.41 points. Substring
+    deduplication does not care whether two files are the same length, which
+    is exactly what a size key cannot see.
+    """
+    from excmp.estimate import estimate_size
+
+    sizes = [44 << 20, 42 << 20, 40 << 20]
+    infos = _infos(sizes, ratio=0.30)
+    est = estimate_size(infos, _fast_plan(infos))
+    total = sum(sizes)
+    assert est.low <= total * 0.13, (
+        f"low={est.low} is {est.low / total:.3f} of the input; the measured "
+        f"corpus reached 0.122 and the range has to contain it")

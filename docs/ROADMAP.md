@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-07**. **1,056 tests** (1,053 pass + 2 skip + 1 strict-xfail;
+> Status date: **2026-09-09**. **1,059 tests** (1,056 pass + 2 skip + 1 strict-xfail;
 > the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
 > Everything below is merged to `main` except **`phase-i3-i8-i10`** and
 > **`phase-k1-manifest-v2`**, which are stacked and awaiting review.
@@ -816,35 +816,68 @@ display scaling — both need a human at the machine.
       filter also proved necessary — at mx9 with the MT mixer 7-Zip is
       documented to auto-select BCJ2 and plainly had not. **Never UPX** still
       stands.
-- [ ] B8. Re-benchmark everything on Silesia + a real game folder; update README table
-      ⚠️ **K4 gave B8 a concrete, failing starting point (2026-09-07).**
-      `_CODEC_FACTOR["zstd"] = 0.960` is a **per-file** multiplier on each
-      file's own worst zstd-3 sample, and nothing per-file can represent "this
-      whole file duplicates one 170 MiB earlier" - which is exactly the saving
-      K4's wide window unlocked. Measured on 220,200,960 B in three files, the
-      third byte-identical to the first:
-
-      | | bytes |
-      |---|---:|
-      | estimate `low` | 61,945,796 |
-      | estimate `expected` | 61,967,870 |
-      | **actual, post-K4** | **41,963,379** |
-
-      The truth sits at **0.677x the optimistic end**, i.e. outside the range,
-      and the calibration was *good* before K4 (`expected` was off by +0.6%).
-      Pinned as a **strict xfail**,
-      `tests/test_zstd_window.py::test_the_fast_estimate_still_contains_the_truth_after_k4`,
-      so it cannot be forgotten and closing it is a deliberate act.
-      **Two cheap fixes were tried and rejected, both measured:** widening the
-      aggregate `low` by the implied 0.5 renders a 2.2x numeric range that
-      wraps a line and pushes the populated Compress page 420 -> 431px past
-      research/23 2.4's budget; flagging zstd chains `upper_bound` breaks the
-      contract `test_only_precomp_chains_are_flagged_as_upper_bounds` pins and
-      does not fix the height either. B8 should **re-derive** the constant
-      against several corpus shapes rather than pick a floor that happens to
-      contain one, and add a corpus with a duplicate beyond 128 MiB to the
-      bench set so the next codec change cannot do this silently.
-      — this is also what replaces every *(est.)* in the doc 09 comparison table
+- [x] B8. ✅ **DONE 2026-09-08** — and the benchmark was the easy half. Full
+      numbers: [benchmarks/2026-09-08-b8](benchmarks/2026-09-08-b8-rebenchmark.md).
+      **Silesia, 211,938,580 B, four profiles, every restore byte-identical:**
+      fast `zstd` **75.18%** (2.4m) · normal `7z` **77.03%** (2.5m) · extreme
+      `precomp→7z` **78.05%** (8.8m) · **insane `precomp→zpaqfranz` 80.55%**
+      (16.7m).
+      **Insane is vindicated, conditionally.** B1 measured it *losing* to
+      Extreme on installers (40.77% vs 41.75%, 2.3× the time) and concluded the
+      CDC dedup had nothing to find. On text it wins by 2.50 points. It is
+      **data-dependent**, not weaker — and doc 09's table should never have
+      implied a single ordering.
+      **The estimator's range excluded the truth on 3 of 4 profiles**, off by
+      −14 to −19 points. `_CODEC_FACTOR` was one multiplier per chain, all near
+      1.0, fitted on the 721 MB Programs corpus — installers, where the probe
+      reads 0.91–0.97 and a real chain *cannot* beat it. Correct for that data,
+      then generalised into a property of the codec.
+      Fixed by making the factor depend on compressibility,
+      `factor(r) = (1 − k) + k·r`, **anchored at the one point that is physics
+      rather than fitting**: at probe 1.0 the data is incompressible, so the
+      factor must be 1.0. Two independent corpora produced lines passing within
+      **1.2%** of that point without being told to — that agreement, not the
+      fit, is why the shape is trusted. **1/4 → 4/4 in range**, error now
+      +2.6…+3.5 points (conservative), Programs backtest unchanged.
+      **A six-shape stress matrix found three more defects, and then killed
+      the fixes for two of them — which is the more useful result. 3/6, and
+      deliberately so.**
+      **C, worth 50 points:** no term for G9 dedup at all, so 20 MiB of random
+      data duplicated once was predicted to compress by nothing (random →
+      `store` → every ratio 1.0) while the real archive halved. A same-size
+      credit closed all 50 points **and broke the exactness guarantee** — five
+      10,000,000-byte videos that are *not* duplicates gave `low = 10 MB`
+      against a true 50 MB. "Stored bytes are exact, not estimated" is a
+      documented property and the load-bearing one; a store-only estimate that
+      says "exactly this" and is right beats one that says "between half and
+      all of it" for a case that may not occur. **Reverted.**
+      **B, worth 7.6 points:** 7-Zip's mx9 dictionary is 256 MiB and found a
+      duplicate 120 MiB away. Extending the long-range floor to 7-Zip chains
+      fixed it **and set `low` to 10% of piped bytes for every ordinary
+      estimate** — destroying a uniform file's exactness, collapsing Normal's
+      and Extreme's optimistic ends, and pushing the Compress page to 447px.
+      **Reverted**; the floor stays zstd-only, where K4 made long-range
+      matching deliberate.
+      **D/E, 2,093 bytes on a 125 MB archive:** the obvious fix was tried and
+      **measurement contradicted it** — `_ZIP_ENTRY_BYTES` raised to 160, then
+      measured at 1,429/1,455 real against 1,460 modelled, i.e. already
+      over-booking, and reverted. The harness reports 3,553 bytes where a
+      direct measurement gives 1,455, implicating the harness.
+      **The same proxy was wrong twice for different reasons**, which is the
+      lesson worth keeping: against zstd because it matches *substrings* (equal
+      length implies nothing), against G9 because the mechanism is right but
+      the cost is not.
+      **One shipped side effect:** the Compress page guard moved 420 → 447px.
+      Not drift — before B8 `low` and `high` collapsed on that fixture so no
+      range line rendered at all; honest ranges mean every profile row now
+      carries one. Suppressing the range to save 27px was rejected, since J1
+      exists to stop the product presenting a guess as a single number.
+      `suggest._span` was compacted instead ("38.1 – 85.9 MB", one unit).
+      **What could NOT be measured:** doc 09's two *game* rows stay `(est.)` —
+      no Oodle game folder on this machine, the same blocker as B6, and filling
+      them from a text corpus would be the exact failure B8 exists to correct.
+      Doc 09 also had a stale fact fixed: it described our chain as
+      `precomp→srep→7z`, and SREP left every chain in B11.
 - [~] B9. 🟡 **PARTLY DONE 2026-09-02** — `-mqs` is now always passed (measured never harmful, worth 0.13% on source trees; 7-Zip leaves it off by default). **`-md=192m` was measured and deliberately NOT adopted: zero bytes of difference on all three corpora, up to 27% more time.** It stays a user knob, not a default. Default threads is already 2. The remaining part is the exact RAM estimator formula. Original item: **RAM caps + thread defaults** (verified formulas, [research/12](research/12-lightweight-and-performance.md);
       **corrected by [19 §3](research/19-source-study-7zip.md)**):
       change default `threads` from 4 to **2** — but the reason is that at mx9 each

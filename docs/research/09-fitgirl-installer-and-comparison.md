@@ -110,14 +110,33 @@ Result class: AAA titles 30–70% smaller downloads, at the cost of multi-GB RAM
 
 Verified anchors: our 72.4% saved on the synthetic zlib-game corpus; xtool UE pak →
 40.5%; lolz ≈5–10% over LZMA; RAZOR ≈3–5% relative over 7z; FitGirl headline 30–70%.
-Everything marked *est.* is extrapolation — running the real benchmark is B8.
 
-| Scenario (same game folder) | FitGirl-class stack | Our current chain (precomp→srep→7z) | Our planned chain (+xtool, +zpaqfranz) |
+**B8 ran on 2026-09-08** ([benchmarks/2026-09-08-b8](../benchmarks/2026-09-08-b8-rebenchmark.md)).
+It replaced what it could measure and **left the two game rows marked `(est.)`
+on purpose**: there is no game folder with Oodle data on this machine, which is
+the same blocker that keeps B6 shut. Filling those cells from a text corpus
+would be inventing a figure for data that behaves nothing like text — and B8
+exists precisely because a number carried on plausibility turned out to be
+wrong by 2×.
+
+**Also corrected**: this table described our chain as `precomp→srep→7z`. SREP
+came out of every chain in B11 on 2026-08-02, so the column had been naming a
+pipeline that no longer existed.
+
+| Scenario (same game folder) | FitGirl-class stack | Our current chain (precomp→7z) | Our planned chain (+xtool, +zpaqfranz) |
 |---|---|---|---|
 | Older zlib-era game (UE3, most indies) | 60–75% saved (est.) | **50–70% (est., 72% measured on synthetic)** — genuinely close | 55–72% (est.) |
 | Modern Oodle/zstd AAA game | 50–70% (est.) | **5–15% (est.)** — precomp can't open Oodle | 40–65% (est.) — gap narrows to lolz delta + tuning |
-| Mixed personal data (docs/code/photos) | not their use case | comparable or better (routing + specialists) | better (zpaqfranz dedup + specialists) |
+| Mixed personal data (docs/code/photos) | not their use case | **measured: 77.03% on Silesia (202 MB, 12 files); 10.37% on 224 real PDF/Office files** | **measured: 80.55% on Silesia** — Insane's dedup pays on self-similar text |
 | Media (video/mp3) | store, or lossy variants | store losslessly + honest explanation | same; opt-in Shrink mode (Phase C) |
+| **Uncompressed audio (WAV)** | n/a | **measured: 43.15% via FLAC, byte-identical** (B4) | same |
+| **Already-compressed installers** | n/a | **measured: 2.80% (721 MB Programs corpus)** — honestly near-zero | 2.97% |
+
+**What B8 changed about the honest read of Insane.** B1 measured it *losing* to
+Extreme on installers (40.77% vs 41.75%, at 2.3× the time). On Silesia it wins
+by 2.50 points. So Insane is not "stronger" — it is **data-dependent**, paying
+on compressible self-similar material and not on already-compressed blobs, and
+the comparison table should never have implied a single ordering.
 
 **Where we genuinely lose:** Oodle recompression until B6 lands (the single biggest
 gap on post-2018 games — tens of percent); the lolz final codec (~5–10%, permanent,

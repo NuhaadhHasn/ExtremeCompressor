@@ -19,8 +19,8 @@ from pathlib import Path
 import pytest
 
 from excmp.analyzer import Category, FileInfo
-from excmp.estimate import (DEFAULT_RATES, Rates, compare_profiles,
-                            estimate_size, estimate_time)
+from excmp.estimate import (DEFAULT_RATES, Rates, codec_factor,
+                            compare_profiles, estimate_size, estimate_time)
 from excmp.planner import Profile, plan as make_plan
 
 ALL_TOOLS = {"7z": object(), "precomp": object(), "srep": object()}
@@ -111,10 +111,16 @@ def test_time_range_is_ordered_and_positive(profile):
 
 def test_a_uniform_file_gets_no_sampling_penalty():
     """When head, middle and tail agree, the samples are representative and the
-    estimate is just ratio x codec factor - no correction, no widened range."""
+    estimate is just ratio x codec factor - no correction, no widened range.
+
+    B8 made that factor a function of the ratio rather than a constant, so the
+    arithmetic goes through `codec_factor`; the property under test is
+    unchanged, which is why this still reads as one multiplication.
+    """
     infos = [_info("uniform.bin", 100_000_000, entropy=3.0, mean=0.30, mx=0.30)]
     est = estimate_size(infos, _plan_for(infos, Profile.NORMAL))
-    want = 100_000_000 * 0.30 * DEFAULT_RATES.factor_for(SEVENZIP)
+    slope = DEFAULT_RATES.factor_for(SEVENZIP)
+    want = 100_000_000 * 0.30 * codec_factor(slope, 0.30)
     assert est.low == est.expected
     assert est.expected == pytest.approx(want + est.overhead_bytes, rel=0.01)
 
@@ -166,12 +172,20 @@ def test_the_least_compressible_sample_drives_the_estimate():
                  mean=0.44, mx=0.78)
     est = estimate_size([stub], _plan_for([stub], Profile.NORMAL))
 
-    factor = DEFAULT_RATES.factor_for(SEVENZIP)
-    assert est.expected == pytest.approx(100_000_000 * 0.78 * factor
-                                         + est.overhead_bytes, rel=0.01)
-    assert est.low == pytest.approx(100_000_000 * 0.44 * factor
-                                    + est.overhead_bytes, rel=0.01)
+    slope = DEFAULT_RATES.factor_for(SEVENZIP)
+    # Each end is evaluated at its **own** probe reading since B8, not at a
+    # shared constant: the worst sample is less compressible, so it also earns
+    # a weaker multiplier. That widens the gap between the two ends rather
+    # than scaling both equally, which is the point of the change.
+    assert est.expected == pytest.approx(
+        100_000_000 * 0.78 * codec_factor(slope, 0.78)
+        + est.overhead_bytes, rel=0.01)
+    assert est.low == pytest.approx(
+        100_000_000 * 0.44 * codec_factor(slope, 0.44)
+        + est.overhead_bytes, rel=0.01)
     assert est.low < est.expected
+    assert codec_factor(slope, 0.44) < codec_factor(slope, 0.78), \
+        "a more compressible sample must earn a stronger multiplier"
 
 
 # ---------------------------------------------------------------------------

@@ -1224,7 +1224,8 @@ rationale: [research/10](research/10-security-and-integrity.md).
 Full audit and legal routing: [research/08](research/08-archiver-product-features.md).
 Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
 
-- [ ] G1. **Open/extract foreign archives** (zip/7z/rar/tar/iso/cab/msi/wim/vhd…) —
+- [x] G1. ✅ **DONE** — subsumed by G2 (`engine.list_any` / `_list_foreign` /
+      `_extract_foreign`; verified 2026-09-09). **Open/extract foreign archives** (zip/7z/rar/tar/iso/cab/msi/wim/vhd…) —
       magic-byte detect non-`.excmp` input, run `7z x` through the existing
       `SevenZipStage`. **RAR read comes free** and stays legal because we exec a
       user-installed binary, never link or bundle (never ship unrar.dll — it would
@@ -1344,14 +1345,16 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       says "no smaller, keep the original" — the first version of that test
       asserted an improvement and was wrong about small archives, not about the
       feature.
-- [ ] G6. **Transport-integrity sidecar** — emit a `.sha256` for the container itself
+- [x] G6. ✅ **DONE** (shipped with `compress --sha256`; verified 2026-09-09).
+      **Transport-integrity sidecar** — emit a `.sha256` for the container itself
       (and per split volume) + `excmp verify --transport`. This is the maintained
       equivalent of the one verification habit repack users already have
       (`fitgirl-bins.md5` + QuickSFV)
 - [ ] G7. **RAM-limited extraction mode** — mirror FitGirl's "limit to 2 GB" option:
       cap dict/window/threads and spill to temp when RAM is short, because archives
       get extracted on weaker machines than they were created on
-- [ ] G8. Hash tool (`excmp hash`, stdlib hashlib) — cheap credibility, fits the brand
+- [x] G8. ✅ **DONE** (shipped in UI v3 w3; the box was never ticked — verified
+      2026-09-09, `excmp hash --json` works). Hash tool (`excmp hash`, stdlib hashlib) — cheap credibility, fits the brand
 - [x] **G9. ✅ DONE 2026-09-02** — deduplicate stored files against the ledger.
       Measured in [benchmarks/2026-09-02](benchmarks/2026-09-02-b1-zpaqfranz.md):
       on the 49%-duplicate corpus, Extreme went **5.22% → 51.08% saved
@@ -1437,13 +1440,18 @@ contradict our honesty brand), RAR *creation* (legally impossible), update-in-pl
 
 Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
 
-- [ ] I1. **Settings page + `QSettings` persistence** — the app currently persists
+- [x] I1. ✅ **DONE** (`gui/widgets/settings_tab.py` + `gui/prefs.py`; verified
+      2026-09-09). **Settings page + `QSettings` persistence** — the app currently persists
       **nothing** (no QSettings anywhere in the repo): theme resets to dark every
       launch, advanced options reset. Ship theme (+ follow-system via Qt 6.5
       `QStyleHints.colorScheme()` — the free way to feel modern without GPLv3
       Fluent-Widgets), language, default output/temp dirs, **tool-path overrides**
       (unblocks every user whose tools aren't in `C:\Program Files`), remembered preset
-- [ ] I2. **Archive browser tab** (pairs with G2) — also a trust feature: it makes the
+- [x] I2. ✅ **DONE DIFFERENTLY, and deliberately** — the listing lives *inside*
+      the Extract tab (`extract_tab.py` calls `list_archive` and renders it), not
+      in a tab of its own, because "four top-level tabs is the ceiling" is a
+      standing decision and the tabs are Compress/Extract/Settings/Activity.
+      Verified 2026-09-09. Original item: **Archive browser tab** (pairs with G2) — also a trust feature: it makes the
       SHA-256 ledger visible
 - [x] I3. ✅ **DONE 2026-09-03** — persisted history + queue reordering.
       `clear_finished()` used to delete the record forever; finished jobs now

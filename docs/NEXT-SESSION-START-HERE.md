@@ -230,30 +230,58 @@ correct the doc.** That happened nine times across the last two sessions.
 
 ---
 
-## 5. Still open, in the order they are worth doing
+## 5. Everything still open, grouped by what it costs
 
-1. **B4** (WAV/FLAC), **B5** (PDF/Office) — right-sized, test material present
-2. **B8** — re-benchmark and replace every `(est.)` with a measurement. No
-   longer carries a failing test: K4's estimator gap was **fixed**, not
-   deferred here. `_long_range_discount` credits duplicate candidates by exact
-   size, which contains the truth without widening the range on selections
-   that hold no duplicates. If B8 re-derives `_CODEC_FACTOR["zstd"]` from a
-   fresh benchmark, re-check that discount against it rather than assuming it
-   still fits
-3. **B6** (Oodle/AAA games) — biggest gap, blocked on test material
-4. **I6** (compare presets on a real sample), **I7** (translations — the loader
-   exists, a `.ts` file does not; **do not invent Dhivehi**, set up the pipeline
-   and let the user translate)
-5. **I5** (Explorer context menu) — **ask first**, it writes to HKCU
-6. **B12** (LOLZ), **C** (video shrink, needs ~90 MB FFmpeg), **D4–D8**,
-   **E1–E5** (only if this is ever shared)
+**35 open items, and 5 were closed on 2026-09-09 as already-done** (G1, G6,
+G8, I1 were shipped in UI v3 / G2 and never ticked; I2 shipped *inside* the
+Extract tab because four tabs is the ceiling). If an item looks suspiciously
+easy, check whether it already exists before building it.
 
-### From the tool survey, still unevaluated
+### Small, self-contained, real value
 
-`preflate-rs` (Microsoft, Apache-2.0) as a Precomp alternative · `eXdupe 4.0`
-for unlimited-distance dedup · **Precomp MP3 support, which is already
-installed and switched off** by `_MEDIA` routing · par2cmdline's >2000-file
-bug · incremental/versioned archives.
+| item | what |
+|---|---|
+| **D8** | atomic-write upgrade: temp + `fsync` + read-back hash + `os.replace` |
+| **D5** | `excmp verify --deep`: zpaqfranz-style `t` + `v -ssd` split, plus an order-independent tree hash |
+| **G7** | RAM-limited extraction mode (mirror FitGirl's "limit to 2 GB") |
+| **F5** | honest UI copy for encryption: "lost password = lost data" |
+| **E6** | CONTRIBUTING.md, issue templates, CHANGELOG |
+| **E2** | THIRD-PARTY-NOTICES.md — **now genuinely needed**, since E1 fetches GPL `flac` and Apache `qpdf` |
+| **B10** | already satisfied by B2's wheel; confirm and close |
+
+### Medium
+
+| item | what | note |
+|---|---|---|
+| **D7** | CI on `windows-latest` | 7-Zip is preinstalled there; would catch what this laptop cannot |
+| **D4** | disk-full simulation on a VHDX/subst volume | the one failure path never exercised |
+| **D6** | fuzzing the `.excmp` parser (HypoFuzz on Windows) | D0 hardened it by hand; nothing has fuzzed it |
+| **I6** | "compare presets on this input" | the estimator is now trustworthy enough to make this honest |
+| **I7** | i18n pipeline (`.ts` + Language menu) | **do not invent Dhivehi** — build the pipeline, let the user translate |
+| **B9** | finish the RAM estimator formula | `-md=192m` and `-mqs` are settled; only the exact formula is left |
+| **B12** | LOLZ as an optional final codec | unverified ~5-10%; **B8's rule applies — measure the baseline first** |
+
+### Large, or blocked
+
+| item | what | status |
+|---|---|---|
+| **B6** | xtool + Oodle | **blocked on test material.** No Oodle game folder here. Read the audit note first: the DLL-bootstrap flaw means archives would only restore on the machine that made them. 3-4 sessions |
+| **Phase C** | C1-C7: FFmpeg fetch, ffprobe, AV1 encode, honest ETA, `oxipng`, `qpdf` | the whole opt-in lossy phase. C6/C7 are already measured and waiting |
+| **Phase H** | H1-H6: Inno Setup installer generation | large, and H5 conflicts with B6 (a proprietary DLL cannot ship in a redistributable installer) |
+| **E3-E5** | PyInstaller build, signing, auto-update | **only if this is ever shared.** E4 is retired while the repo is private |
+| **D0.6** | Windows process mitigations for subprocesses | deferred to its own session by design |
+| **I5** | Explorer context menu | **ask first** — writes to HKCU |
+
+### The honest read
+
+Nothing left is a *defect*. The K series cleared the confirmed ones, and B4/B5/
+E1/B8 closed the specialists and the estimator. What remains is either
+**hardening** (D4-D8), **polish** (F5, I6, I7, E2, E6), or **big optional
+phases** (B6, C, H, E3-E5).
+
+**If you want the highest value per session:** D7 (CI) and D8 (atomic writes),
+then E2 — the licence file is the one item that has become *more* necessary
+rather than less, because E1 now downloads GPL and Apache binaries.
 
 ---
 

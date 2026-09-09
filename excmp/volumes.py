@@ -24,6 +24,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from .atomic import atomic_write_text, fsync_file
+
 #: ``.001`` … ``.999``. Zero-padded so a plain lexical sort is also the join
 #: order — which is what every file manager, FTP listing and shell glob uses.
 PART_SUFFIX_WIDTH = 3
@@ -129,12 +131,26 @@ def missing_parts(first_part: Path) -> list[str]:
             for i in range(1, max(present) + 1) if i not in present]
 
 
-def split_file(archive: Path, part_size: int) -> list[Path]:
+def split_file(archive: Path, part_size: int,
+               digests: dict[str, str] | None = None) -> list[Path]:
     """Write ``archive`` out as numbered parts and return them.
 
     The source is **left in place**. Splitting is additive: deleting it here
     would make a failed split unrecoverable, and nothing else in this codebase
     modifies an input either.
+
+    **D8.** Each part is flushed to the device before the next one starts, and
+    ``digests`` — if a dict is passed — comes back holding each part's SHA-256,
+    measured on the bytes as they were written. That is what
+    :func:`write_parts_sidecar` needs, so passing it through turns a second
+    full pass over the whole archive into nothing.
+
+    A part is *not* written through a `.tmp` twin, unlike every other output
+    here, and that is deliberate: a volume set is only ever consumed via its
+    sidecar and its numbering, both of which reject an incomplete set by
+    construction, and the failure path below already removes every part it
+    wrote. A `.tmp` per volume would add a rename per gigabyte and catch
+    nothing those two checks do not.
     """
     archive = Path(archive)
     if part_size <= 0:
@@ -154,13 +170,18 @@ def split_file(archive: Path, part_size: int) -> list[Path]:
             for index in range(1, needed + 1):
                 target = Path(str(archive) + "." + _suffix(index))
                 remaining = part_size
+                hasher = hashlib.sha256()
                 with target.open("wb") as dst:
                     while remaining:
                         chunk = src.read(min(_COPY_CHUNK, remaining))
                         if not chunk:
                             break
                         dst.write(chunk)
+                        hasher.update(chunk)
                         remaining -= len(chunk)
+                fsync_file(target)
+                if digests is not None:
+                    digests[target.name] = hasher.hexdigest()
                 parts.append(target)
     except BaseException:
         # A half-written volume set is worse than none: the parts look real.
@@ -170,26 +191,38 @@ def split_file(archive: Path, part_size: int) -> list[Path]:
     return parts
 
 
-def write_parts_sidecar(parts: list[Path]) -> Path:
+def write_parts_sidecar(parts: list[Path],
+                        digests: dict[str, str] | None = None) -> Path:
     """`sha256sum`-layout digests for every part, beside the first one.
 
     Names are bare filenames, not paths, so the file still verifies after the
     set is moved or downloaded into a different folder — the same reasoning as
     G6's whole-archive sidecar.
+
+    ``digests`` (D8) is the map :func:`split_file` fills in as it writes,
+    keyed by part filename. Passing it skips re-reading every part: splitting
+    a 4 GB archive used to read 4 GB, write 4 GB, then read all 4 GB *again*
+    to learn digests the split pass had every byte of in hand. Any part not
+    covered is hashed here, so the function still works standalone.
     """
+    known = digests or {}
     lines = []
     for part in parts:
-        digest = hashlib.sha256()
-        with part.open("rb") as fh:
-            for block in iter(lambda: fh.read(_COPY_CHUNK), b""):
-                digest.update(block)
-        lines.append(f"{digest.hexdigest()}  {part.name}")
+        digest = known.get(part.name)
+        if digest is None:
+            hasher = hashlib.sha256()
+            with part.open("rb") as fh:
+                for block in iter(lambda: fh.read(_COPY_CHUNK), b""):
+                    hasher.update(block)
+            digest = hasher.hexdigest()
+        lines.append(f"{digest}  {part.name}")
     target = sidecar_for(parts[0])
-    # newline="\n" is load-bearing, not tidiness: without it Python translates
-    # to CRLF on Windows, `sha256sum -c` reads the trailing \r as part of the
-    # filename, and every line fails with "No such file or directory". A
-    # sidecar whose whole purpose is that one command has to survive it.
-    target.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    # LF endings are load-bearing, not tidiness: with CRLF, `sha256sum -c`
+    # reads the trailing CR as part of the filename and every line fails with
+    # "No such file or directory". A sidecar whose whole purpose is that one
+    # command has to survive it. atomic_write_text guarantees both that and
+    # the flushed rename.
+    atomic_write_text(target, "\n".join(lines) + "\n")
     return target
 
 

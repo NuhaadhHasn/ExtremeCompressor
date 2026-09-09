@@ -223,11 +223,28 @@ def is_encrypted(path: Path) -> bool:
 
 def encrypt_file(src: Path, dst: Path, password: str,
                  params: Argon2Params = DEFAULT_PARAMS,
-                 keyfile: Path | None = None) -> Path:
+                 keyfile: Path | None = None,
+                 expect_src_sha256: str | None = None,
+                 digests: dict[str, str] | None = None) -> Path:
     """Encrypt ``src`` to ``dst``. The source is left untouched.
 
     ``keyfile`` adds a second factor (F2). Either factor may be empty but not
     both — an archive protected by nothing is not an outcome anyone asked for.
+
+    **D8, the two hash arguments.** With a password, what the D9 gate proves
+    restorable is the *plaintext* container, and what actually ships is a
+    ciphertext produced by a separate pass over that file afterwards. Nothing
+    checked the handoff between them. Both bytestreams already pass through
+    this loop, so hashing them here is free:
+
+    ``expect_src_sha256`` refuses the job if the plaintext is not the artifact
+    the caller measured — the source changed between the gate and the
+    encryption. ``digests``, if given a dict, comes back holding ``"src"`` and
+    ``"dst"``, so the caller can hand the ciphertext's digest to
+    :func:`excmp.atomic.publish` and have the read-back prove the file at the
+    destination is the ciphertext this function wrote. An out-dict rather than
+    a changed return type: five call sites in the tests expect a ``Path``, and
+    a wider return would be a worse trade than one documented parameter.
     """
     src, dst = Path(src), Path(dst)
     keyfile_hash = keyfile_digest(keyfile) if keyfile is not None else None
@@ -244,22 +261,43 @@ def encrypt_file(src: Path, dst: Path, password: str,
     aead = AESGCM(key)
 
     dst.parent.mkdir(parents=True, exist_ok=True)
+    src_digest = hashlib.sha256()
+    dst_digest = hashlib.sha256()
     try:
         with src.open("rb") as fin, dst.open("wb") as fout:
             fout.write(header)
+            dst_digest.update(header)
             index = 0
             chunk = fin.read(CHUNK_SIZE)
             while True:
+                src_digest.update(chunk)
                 nxt = fin.read(CHUNK_SIZE)
                 final = not nxt
-                fout.write(aead.encrypt(_nonce(index, final), chunk, header))
+                sealed = aead.encrypt(_nonce(index, final), chunk, header)
+                fout.write(sealed)
+                dst_digest.update(sealed)
                 if final:
                     break
                 chunk = nxt
                 index += 1
+        if (expect_src_sha256 is not None
+                and src_digest.hexdigest() != expect_src_sha256):
+            # Refused *after* writing rather than pre-checked with a separate
+            # read: the source is read exactly once either way, and the
+            # ciphertext is deleted below, so the only cost of finding out
+            # late is time - against a whole extra pass over the archive on
+            # every job that is fine.
+            raise CryptoError(
+                f"{src.name} changed between being verified and being "
+                f"encrypted: expected SHA-256 {expect_src_sha256[:16]}..., "
+                f"read {src_digest.hexdigest()[:16]}... - refusing to publish "
+                f"a ciphertext of bytes nothing has vouched for")
     except BaseException:
         dst.unlink(missing_ok=True)
         raise
+    if digests is not None:
+        digests["src"] = src_digest.hexdigest()
+        digests["dst"] = dst_digest.hexdigest()
     return dst
 
 

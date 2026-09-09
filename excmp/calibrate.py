@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
+from .atomic import PublishError, atomic_write_text
 from .estimate import Rates
 
 #: Where the store lives when nobody says otherwise. Beside the temp dir the
@@ -124,11 +125,11 @@ def _save(cal: Calibration, target: Path) -> None:
               **({"factor": round(entry.factor, 6)}
                  if entry.factor is not None else {})}
         for key, entry in cal.chains.items()}}
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8",
-                   newline="\n")
-    tmp.replace(target)
+    # D8: flushed and read back, and the previous store survives a failed
+    # write. This file is the only record of how fast each chain actually runs
+    # on this machine; half of it is worse than none, because a truncated
+    # rate silently poisons every future estimate.
+    atomic_write_text(target, json.dumps(payload, indent=2))
 
 
 def record(stages: Sequence[str], piped_bytes: int, elapsed_s: float,
@@ -177,7 +178,12 @@ def record(stages: Sequence[str], piped_bytes: int, elapsed_s: float,
             samples=(prior.samples + 1) if prior is not None else 1,
             factor=factor)
         _save(cal, target)
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, PublishError):
+        # PublishError is a RuntimeError, so it is named explicitly: D8's
+        # read-back added a new way for the write to fail, and this function
+        # promises never to raise. A finished job must not be reported as a
+        # failure because the store it was about to learn from would not
+        # write.
         return
 
 

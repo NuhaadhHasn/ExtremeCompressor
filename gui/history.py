@@ -23,6 +23,8 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from excmp.atomic import PublishError, atomic_write_text
+
 #: Beside the app's other state, so clearing ``~/.excmp`` clears this too.
 DEFAULT_PATH = Path.home() / ".excmp" / "history.json"
 
@@ -128,12 +130,15 @@ def append(entry: HistoryEntry, path: Path | None = None) -> None:
     try:
         entries = [entry] + load(target)
         payload = {"entries": [asdict(e) for e in entries[:MAX_ENTRIES]]}
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8",
-                       newline="\n")
-        tmp.replace(target)
-    except (OSError, ValueError, TypeError):
+        # D8: flushed and read back, and a failed write leaves the previous
+        # record whole rather than truncated. This is the user's own log of
+        # every job they have run - losing the lot to a bad moment while
+        # appending one line to it is not an acceptable failure.
+        atomic_write_text(target, json.dumps(payload, indent=2))
+    except (OSError, ValueError, TypeError, PublishError):
+        # PublishError is a RuntimeError and so is named explicitly - see the
+        # same clause in excmp.calibrate. Losing one history line is fine;
+        # turning a finished job into a failed one over it is not.
         return
 
 

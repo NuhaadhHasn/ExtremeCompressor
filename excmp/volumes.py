@@ -22,6 +22,7 @@ manifest and the D9 restore are what actually decide whether the data is good.
 from __future__ import annotations
 
 import hashlib
+import math
 from pathlib import Path
 
 #: ``.001`` … ``.999``. Zero-padded so a plain lexical sort is also the join
@@ -33,6 +34,10 @@ PART_SUFFIX_WIDTH = 3
 MAX_PARTS = 999
 
 _COPY_CHUNK = 1 << 20
+
+#: 1 PiB. Not a limit anybody will meet; it exists so a parsed size is
+#: always a number the arithmetic downstream can hold.
+_MAX_PART_SIZE = 1 << 50
 
 
 class VolumeError(RuntimeError):
@@ -60,7 +65,27 @@ def parse_size(text: str) -> int:
         raise VolumeError(
             f"could not read {text!r} as a size - try 100m, 4g or a plain "
             f"number of bytes") from None
-    size = int(value * unit)
+    # D6. `float("1e400")` is `inf` and `float("nan")` is a float, so
+    # `int(value * unit)` raised OverflowError and ValueError respectively -
+    # reproduced with "1e400m", "inf m", "nanm", "1e308t" and a 400-digit
+    # number. Checked before the multiply, because the multiply is what
+    # overflows.
+    if not math.isfinite(value):
+        raise VolumeError(
+            f"{text!r} is not a finite size - a volume has to be a real "
+            f"number of bytes")
+    # The multiply is what overflows, not the parse: 1e308 is finite and
+    # `1e308 * 2**40` is not. Measured with "1e308t".
+    scaled = value * unit
+    if not math.isfinite(scaled):
+        raise VolumeError(
+            f"{text!r} overflows to infinity once its unit is applied - a "
+            f"volume has to be a real number of bytes")
+    size = int(scaled)
+    if size > _MAX_PART_SIZE:
+        raise VolumeError(
+            f"{text!r} is larger than any volume could usefully be "
+            f"({_MAX_PART_SIZE} bytes)")
     if size <= 0:
         raise VolumeError(f"size must be positive, got {text!r}")
     return size

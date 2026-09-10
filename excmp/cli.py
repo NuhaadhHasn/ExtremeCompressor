@@ -140,7 +140,8 @@ def cmd_compress(args: argparse.Namespace) -> int:
     )
     result = engine.compress([Path(p) for p in args.inputs], out,
                              Profile(args.profile), ctx, sidecar=args.sha256,
-                             options=options, password=_new_password(args))
+                             options=options, password=_new_password(args),
+                             keyfile=_keyfile(args))
     if not args.json:
         print()
     payload = {
@@ -258,10 +259,11 @@ def cmd_extract(args: argparse.Namespace) -> int:
     password = _ask_password(args)
     if args.only:
         result = engine.extract_selected(Path(args.archive), args.only,
-                                         Path(args.output), ctx, password)
+                                         Path(args.output), ctx, password,
+                                         keyfile=_keyfile(args))
     else:
         result = engine.extract_any(Path(args.archive), Path(args.output), ctx,
-                                    password)
+                                    password, keyfile=_keyfile(args))
     msg = {
         "out_dir": str(result.out_dir),
         "files_restored": result.files_restored,
@@ -281,6 +283,26 @@ def cmd_extract(args: argparse.Namespace) -> int:
               "carries no SHA-256 ledger - the contents could not be checked "
               "against one")
     return 0
+
+
+def _keyfile(args: argparse.Namespace) -> Path | None:
+    """The second factor as a path, or None.
+
+    Checked for existence here rather than deep in `crypto`, because the
+    failure a user actually hits is a typo in a path - and finding that out
+    after Argon2id has spent 64 MiB and three seconds deriving a key from it
+    is a worse experience than finding out immediately.
+    """
+    raw = getattr(args, "keyfile", None)
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_file():
+        raise ValueError(
+            f"keyfile {path} does not exist - nothing was written. The file "
+            f"has to be the same one the archive was created with, byte for "
+            f"byte")
+    return path
 
 
 def _ask_password(args: argparse.Namespace) -> str | None:
@@ -309,6 +331,26 @@ def _new_password(args: argparse.Namespace) -> str | None:
     if not getattr(args, "password", False):
         return None
     import getpass
+    # F5. The paragraph above used to be the whole of it: the clearest
+    # statement of the consequence anywhere in this codebase, in a docstring,
+    # printed to nobody, while the prompt below said only "Password for the
+    # new archive: ". This is the keystroke at which the data becomes
+    # unrecoverable, and the CLI has no tooltip or inline note to fall back
+    # on.
+    #
+    # stderr, not stdout: `--json` output is meant to be piped, and putting a
+    # human-readable warning in front of it would make the honest thing a bug.
+    print("This encrypts the whole archive - filenames and hashes included.",
+          file=sys.stderr)
+    print("There is no backdoor, no reset and no recovery: if you lose this "
+          "password, the data is gone.", file=sys.stderr)
+    print("Keep it somewhere you will still have it next year.",
+          file=sys.stderr)
+    if getattr(args, "keyfile", None):
+        print(f"The keyfile {args.keyfile} is a second factor, and losing it "
+              f"is exactly as final.", file=sys.stderr)
+        print("Keep that file itself, not a re-saved or re-downloaded copy - "
+              "it has to match byte for byte.", file=sys.stderr)
     first = getpass.getpass("Password for the new archive: ")
     if not first:
         raise ValueError("empty password - nothing was written")
@@ -401,7 +443,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     from . import engine
     archive = Path(args.archive)
     listing = engine.list_any(archive, StageContext(temp_dir=Path(args.temp)),
-                              _ask_password(args))
+                              _ask_password(args), keyfile=_keyfile(args))
     if args.json:
         print(json.dumps({
             "archive": str(listing.archive),
@@ -471,7 +513,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
     """
     from . import engine
     ctx = StageContext(temp_dir=Path(args.temp))
-    result = engine.verify_archive(Path(args.archive), ctx)
+    source = Path(args.source) if getattr(args, "source", None) else None
+    result = engine.verify_archive(Path(args.archive), ctx,
+                                   _ask_password(args),
+                                   keyfile=_keyfile(args),
+                                   deep=bool(getattr(args, "deep", False)),
+                                   source=source)
     payload = {
         "archive": str(result.archive),
         "ok": result.ok,
@@ -479,6 +526,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
         "verified": result.verified,
         "elapsed_s": round(result.elapsed_s, 1),
     }
+    if result.tree_sha256:
+        payload["tree_sha256"] = result.tree_sha256
+    if source is not None:
+        payload["source"] = str(source)
+        payload["source_checked"] = result.source_checked
+        payload["source_changed"] = result.source_changed
+        payload["source_missing"] = result.source_missing
+        payload["source_extra"] = result.source_extra
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
@@ -486,7 +541,31 @@ def cmd_verify(args: argparse.Namespace) -> int:
               f"{result.verified} SHA-256 hash(es) verified against the "
               f"manifest in {payload['elapsed_s']}s")
         print(f"     {result.archive}")
-    return 0
+        if result.tree_sha256:
+            print(f"     tree SHA-256 {result.tree_sha256}")
+            print(f"     (order-independent; record it and this archive can "
+                  f"be compared with one number)")
+        if source is not None:
+            print()
+            print(f"Source re-read: {result.source_checked} original(s) "
+                  f"compared against the archive")
+            # Printed to stdout, not stderr: these are findings about the
+            # user's files, which is a result, not a diagnostic.
+            for rel in result.source_changed:
+                print(f"  CHANGED  {rel}")
+            for rel in result.source_missing:
+                print(f"  missing  {rel}")
+            for rel in result.source_extra:
+                print(f"  new      {rel}")
+            if not (result.source_changed or result.source_missing
+                    or result.source_extra):
+                print("  every original still matches what the archive "
+                      "recorded")
+    # A changed original is the finding worth an exit code: something that was
+    # supposed to be stable is not. A *missing* original is not - deleting the
+    # source after archiving it is the point of having an archive - and a new
+    # file is news rather than a fault.
+    return 1 if result.source_changed else 0
 
 
 def cmd_hash(args: argparse.Namespace) -> int:
@@ -548,6 +627,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "whole container, filenames and hashes included). You "
                          "are prompted twice; the password is never taken on "
                          "the command line. There is no recovery if you lose it")
+    pc.add_argument("--keyfile", metavar="FILE",
+                    help="a second factor, in addition to the password: this exact "
+                         "file must be supplied again to open the archive. "
+                         "Only the first 100 MiB is hashed. Losing it is "
+                         "exactly as final as losing the password")
     pc.add_argument("--recovery", nargs="?", type=int, const=-1, default=None,
                     metavar="PCT",
                     help="write PAR2 recovery records beside the archive so a "
@@ -586,6 +670,8 @@ def build_parser() -> argparse.ArgumentParser:
     pv.add_argument("--json", action="store_true")
     pv.add_argument("--password", action="store_true",
                     help="prompt for the SOURCE archive's password")
+    pv.add_argument("--keyfile", metavar="FILE",
+                    help="the same file the SOURCE archive was created with")
     pv.set_defaults(func=cmd_convert)
 
     pr = sub.add_parser("repair", help="rebuild a damaged archive from its "
@@ -608,6 +694,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="prompt for the archive's password. Takes no value "
                          "on purpose - a password in argv is visible in the "
                          "process table and saved in shell history")
+    px.add_argument("--keyfile", metavar="FILE",
+                    help="the same file the archive was created with")
     px.set_defaults(func=cmd_extract)
 
     pl = sub.add_parser("list", help="show what is inside an .excmp (size, "
@@ -619,6 +707,8 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--password", action="store_true",
                     help="prompt for the password of an archive whose file "
                          "names are encrypted")
+    pl.add_argument("--keyfile", metavar="FILE",
+                    help="the same file the archive was created with")
     pl.set_defaults(func=cmd_list)
 
     pv = sub.add_parser("verify", help="prove an .excmp archive still restores "
@@ -626,6 +716,24 @@ def build_parser() -> argparse.ArgumentParser:
     pv.add_argument("archive")
     pv.add_argument("--temp", default=default_tmp)
     pv.add_argument("--json", action="store_true")
+    pv.add_argument("--password", action="store_true",
+                    help="prompt for the archive's password. Verify had no "
+                         "way to take one until 2026-09-09, which left the "
+                         "product's central promise - proving an archive "
+                         "still restores - unavailable for every encrypted "
+                         "archive")
+    pv.add_argument("--keyfile", metavar="FILE",
+                    help="the same file the archive was created with")
+    pv.add_argument("--deep", action="store_true",
+                    help="also report an order-independent SHA-256 for the "
+                         "whole restored tree, and refuse an archive that "
+                         "returns files its ledger does not account for (D5)")
+    pv.add_argument("--source", metavar="DIR",
+                    help="re-read the ORIGINALS under DIR and compare them "
+                         "against the archive - the one check that can find "
+                         "bit-rot in your source. DIR is the parent of what "
+                         "was archived. Implies nothing about the archive "
+                         "itself; requires --deep")
     pv.set_defaults(func=cmd_verify)
 
     ph = sub.add_parser("hash", help="SHA-256 of files, in sha256sum layout")
@@ -636,7 +744,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if (getattr(args, "keyfile", None) and args.func is cmd_compress
+            and not getattr(args, "password", False)):
+        # A keyfile alone is a legitimate single factor as far as `crypto` is
+        # concerned, but the CLI only ever collects a password interactively -
+        # so `--keyfile` without `--password` would hand `engine.compress` a
+        # keyfile and no password and write an archive with no encryption at
+        # all. Silently producing an unprotected archive for someone who
+        # asked for two factors is the worst available outcome.
+        parser.error("--keyfile needs --password: the CLI collects the "
+                     "password interactively, so without it nothing would "
+                     "encrypt the archive at all")
+    if getattr(args, "source", None) and not getattr(args, "deep", False):
+        # Refused rather than silently ignored, and refused rather than
+        # quietly implying --deep: "verify --source" reads as a request about
+        # the originals, and honouring half of it without saying so is how a
+        # user comes to believe a check ran that did not.
+        parser.error("--source needs --deep: re-reading the originals is a "
+                     "comparison against the ledger, which a shallow verify "
+                     "does not read")
     try:
         return args.func(args)
     except Exception as exc:  # surface a clean one-liner, not a traceback

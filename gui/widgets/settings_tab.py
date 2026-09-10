@@ -185,12 +185,25 @@ class SettingsTab(QScrollArea):
         A tool **below its security floor** gets the CVE named, because "it is
         old" without a reason is not something a user can act on.
         """
-        from excmp.tools import LEGACY_ONLY, below_floor, floor_reason
+        from excmp.tools import (IN_PROCESS, IN_PROCESS_WHEEL, LEGACY_ONLY,
+                                 below_floor, floor_reason)
 
         self._tools = dict(tools)
         stale = {name: (found, needed) for name, found, needed in below_floor(tools)}
         lines = []
         for name, info in sorted(self._tools.items()):
+            if info is None and name in IN_PROCESS:
+                # B10. This codec ships as a wheel, so there is no executable
+                # to find and "not installed" was simply false - said about the
+                # codec that runs the entire Fast profile. Telling someone to
+                # go and install zstd.exe is telling them to fix something
+                # that is not broken.
+                lines.append(
+                    self.tr("%(tool)s — built in, no executable needed "
+                            "(in-process via the %(wheel)s wheel)")
+                    % {"tool": name,
+                       "wheel": IN_PROCESS_WHEEL.get(name, name)})
+                continue
             if info is None:
                 lines.append(self.tr("%s — not installed") % name)
                 continue

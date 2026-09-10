@@ -35,6 +35,28 @@ APP_BIN = Path(__file__).resolve().parent.parent / "tools" / "bin"
 #: was located.
 LEGACY_ONLY: frozenset[str] = frozenset({"srep"})
 
+#: Codecs this program ships **in-process**, as a Python wheel, so there is no
+#: executable to find and none to install (B10).
+#:
+#: They stay in the tool table rather than being deleted from it, because
+#: `zstd` is also a *stage* id - the planner, the estimator and the progress
+#: model all speak that name - and a row that explains why it has no binary is
+#: worth more than a name with no entry anywhere.
+#:
+#: What this fixes: the Settings tab printed "zstd - not installed" for the
+#: codec that runs the entire Fast profile, because `CANDIDATES["zstd"]` was an
+#: empty path list like `ffmpeg`'s. The two absences are not the same thing.
+#: `ffmpeg` is a Phase C tool that genuinely is not here; `zstandard` is
+#: installed, embedded and in use, and telling a user to go and find zstd.exe
+#: is telling them to fix something that is not broken.
+#:
+#: Lepton is deliberately *not* listed: it has no tool-table row at all, which
+#: is the cleaner pattern where a name is not also a stage id.
+IN_PROCESS: frozenset[str] = frozenset({"zstd"})
+
+#: What provides each in-process codec, for the one place that has to say so.
+IN_PROCESS_WHEEL: dict[str, str] = {"zstd": "zstandard"}
+
 #: Minimum version we are willing to see, per tool. Below this the app says so.
 #:
 #: 7-Zip below **26.02** carries **CVE-2026-14266** (CVSS 7.0): a heap buffer

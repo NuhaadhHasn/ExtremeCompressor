@@ -1,0 +1,203 @@
+# D7 - CI on a Windows runner, sized for a private repo's minutes.
+#
+# Three things shaped this file, all of them measured on the dev machine
+# (docs/benchmarks/2026-09-09-d8-atomic-publish.md) rather than assumed:
+#
+# 1. A full pass takes about an hour on 2 cores. A GitHub runner has 4, so
+#    expect faster - but a three-version matrix on every push would still be
+#    ~3 jobs x tens of minutes, and a private repo's free quota is 2,000
+#    minutes a month. So the push path runs ONE version, and the matrix runs
+#    on a schedule and on demand.
+# 2. The tests skip cleanly when a tool is absent (every chain test is behind
+#    `skipif(find_tools()[...] is None)`), so the core job needs no external
+#    binaries at all and is fully deterministic. The interesting chains -
+#    precomp, zpaqfranz, flac - need the pinned downloads, and downloading in
+#    CI means a red build whenever GitHub's release CDN sneezes. That job is
+#    therefore off the push path by design, not by omission.
+# 3. Four tests read the maintainer's own data folders. All four are gated on
+#    the path existing (tests/test_ci_workflow.py keeps it that way), so they
+#    skip here rather than failing.
+#
+# What this file cannot know is whether 7-Zip is on the runner image. The
+# roadmap asserted it is; nothing here depends on that being true, and the
+# "what the runner actually has" step prints the discovered table so the first
+# run answers the question with evidence instead of a claim.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Mondays, 05:17 UTC. Off the hour: GitHub queues scheduled jobs by the
+    # minute and the top of the hour is the most contended slot there is.
+    - cron: "17 5 * * 1"
+
+# Nothing in CI publishes, comments, tags or releases.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # The gate. Every push, one Python, no network beyond pip.
+  # ---------------------------------------------------------------------
+  test:
+    name: suite (windows, py3.12)
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: What the runner actually has
+        # Evidence, not decoration: the suite's coverage here depends entirely
+        # on which tools were discovered, and this is the only record of it.
+        # `continue-on-error` because a diagnostic must never be the thing
+        # that fails a build.
+        continue-on-error: true
+        run: |
+          python -c "import sys; print(sys.version)"
+          python -c "from excmp.tools import find_tools; [print(f'{n:12} {t.path if t else chr(45)}') for n, t in find_tools(with_versions=True).items()]"
+
+      - name: Require 7-Zip, installing it if the image lacks it
+        # Not a nicety. Every chain, publish and verify test is behind
+        # `skipif(find_tools()["7z"] is None)`, so on a runner without 7-Zip
+        # this job goes GREEN having tested none of the product. The roadmap
+        # asserted 7-Zip ships on windows-latest; this neither trusts that nor
+        # depends on it - it checks, installs from Chocolatey if needed, and
+        # fails loudly if it still cannot get one.
+        shell: pwsh
+        run: |
+          $found = python -c "from excmp.tools import find_tools; t=find_tools()['7z']; print(t.path if t else '')"
+          if (-not $found) {
+            Write-Host "7-Zip not on the image - installing from Chocolatey"
+            choco install 7zip.install -y --no-progress
+          } else {
+            Write-Host "7-Zip already present: $found"
+          }
+          python -c "import sys; from excmp.tools import find_tools; t = find_tools()['7z']; print('7z ->', t.path if t else 'MISSING'); sys.exit(0 if t else 1)"
+
+      - name: Run the suite
+        run: python -m pytest -q -rs
+
+  # ---------------------------------------------------------------------
+  # The matrix. Scheduled and on demand, because three of these on every
+  # push is most of a private repo's monthly minutes.
+  # ---------------------------------------------------------------------
+  matrix:
+    name: suite (py${{ matrix.python }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    continue-on-error: ${{ matrix.experimental || false }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+        include:
+          # 3.11 is informational. The README declares 3.12+, so a failure
+          # here is not a regression - it is the answer to "could the floor
+          # be lowered?", which is worth knowing and is not worth a red
+          # badge. If it passes for a few months, lower the floor and delete
+          # this entry.
+          - python: "3.11"
+            experimental: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run the suite
+        run: python -m pytest -q -rs
+
+  # ---------------------------------------------------------------------
+  # The chains that need real binaries. Never on the push path.
+  # ---------------------------------------------------------------------
+  pinned-tools:
+    name: suite with pinned tools
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Cache the pinned tools
+        uses: actions/cache@v4
+        with:
+          # `toolfetch._install_root()` is `<repo>/tools/bin` - asserted by
+          # tests/test_ci_workflow.py, because the E1 roadmap sketch said
+          # %LOCALAPPDATA% and a cache aimed there would silently cache
+          # nothing.
+          path: tools/bin
+          # Keyed on the file that holds the SHA-256 pins, so bumping a pin
+          # invalidates the cache. Keying on a version string would serve the
+          # old binary after a hash change, which is the exact failure E1
+          # exists to prevent.
+          key: excmp-tools-${{ runner.os }}-${{ hashFiles('excmp/toolfetch.py') }}
+
+      - name: Fetch the pinned tools
+        # Each download is verified against its source-pinned SHA-256 by
+        # `fetch_tool` itself; a mismatch raises rather than installing.
+        #
+        # The exit check is the load-bearing part. `ensure_tool` returns None
+        # on failure and never raises - correct for the app, where a missing
+        # optional tool must not crash a job, and wrong here, where the whole
+        # purpose of this job is that those tools exist. Without the check it
+        # would print "qpdf None", exit 0, skip every chain test and report
+        # success.
+        run: |
+          python -c "import sys; from excmp import toolfetch; got = {n: toolfetch.ensure_tool(n) for n in toolfetch.TOOL_MANIFEST}; [print(f'{n:8} {p}') for n, p in got.items()]; missing = [n for n, p in got.items() if p is None]; print('MISSING:', missing) if missing else None; sys.exit(1 if missing else 0)"
+
+      - name: What the runner actually has
+        continue-on-error: true
+        run: |
+          python -c "from excmp.tools import find_tools; [print(f'{n:12} {t.path if t else chr(45)}') for n, t in find_tools(with_versions=True).items()]"
+
+      - name: Run the suite
+        run: python -m pytest -q -rs

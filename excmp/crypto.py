@@ -364,6 +364,23 @@ def decrypt_file(src: Path, dst: Path, password: str,
     if _check_value(key) != check:
         # Checked before touching the ciphertext, so this answer never depends
         # on whether the body happens to be damaged as well.
+        #
+        # F5: the message names the factors that were actually tried. With a
+        # keyfile in play "wrong password" is not merely terse, it is false -
+        # measured on the real CLI 2026-09-09, the right password with the
+        # wrong keyfile printed exactly that. The user then hunts for a
+        # password they already have, and the conclusion after "my password is
+        # right and it still says wrong password" is "this archive is broken",
+        # which is how archives get deleted.
+        #
+        # It leaks nothing: an attacker supplies their own keyfile and already
+        # knows whether they did.
+        if keyfile is not None:
+            raise WrongPasswordError(
+                f"the password and keyfile together did not open "
+                f"{src.name} - check both. The keyfile has to be the same "
+                f"file, byte for byte, that the archive was created with; a "
+                f"re-saved or re-downloaded copy will not do")
         raise WrongPasswordError("wrong password")
 
     aead = AESGCM(key)

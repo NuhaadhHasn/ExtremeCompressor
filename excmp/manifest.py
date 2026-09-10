@@ -13,6 +13,7 @@ measured against that is the difference between 12.19 MiB and 2.59 MiB.
 from __future__ import annotations
 
 import json
+import math
 import stat
 import zipfile
 from collections.abc import Iterable
@@ -253,7 +254,24 @@ class Manifest:
 
     @classmethod
     def from_json(cls, text: str) -> "Manifest":
-        data = json.loads(text)
+        """Parse a manifest, or refuse the archive. Never anything else.
+
+        D6 (fuzzing) found this raising `AttributeError` for a top-level JSON
+        array and `TypeError` for an unexpected key. `_read_manifest` catches
+        TypeError, so that one was contained; AttributeError was not, and a
+        parser reading attacker-chosen bytes should not have an unanticipated
+        failure at all. Every rejection here is a `ContainerError`, which is
+        what the CLI prints as one line and what every caller catches.
+        """
+        try:
+            data = json.loads(text)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ContainerError(
+                f"{MANIFEST_NAME} is not valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ContainerError(
+                f"{MANIFEST_NAME} must be a JSON object, not a "
+                f"{type(data).__name__}")
         schema = data.get("schema", 0)
         # There was no check here at all, so an archive from a future build
         # loaded and was quietly misread. Saying so is the honest failure.
@@ -262,8 +280,28 @@ class Manifest:
                 f"this archive declares manifest schema {schema}, and this "
                 f"build understands up to {SCHEMA_VERSION} - it was written by "
                 f"a newer version of ExtremeCompressor")
-        data["stages"] = [StageRecord(**s) for s in data.get("stages", [])]
-        return cls(**data)
+        try:
+            data["stages"] = [StageRecord(**s) for s in data.get("stages", [])]
+        except (TypeError, AttributeError) as exc:
+            raise ContainerError(
+                f"{MANIFEST_NAME} has an unreadable stage record: {exc}"
+            ) from exc
+        # The ledger is validated *here*, at the parse boundary, and not at
+        # each of the four places downstream that read it. `declared_total`,
+        # `verify_restore`, `list_archive` and the per-stage budget arithmetic
+        # all trusted this dict's shape, and D6 crashed every one of them with
+        # a crafted entry. One chokepoint, on the same principle as
+        # `safepath` being the only place an archive-supplied *name* is
+        # judged.
+        inputs = data.get("inputs")
+        if inputs is not None:
+            validate_ledger(inputs)
+        try:
+            return cls(**data)
+        except TypeError as exc:
+            raise ContainerError(
+                f"{MANIFEST_NAME} does not describe an archive this build can "
+                f"read: {exc}") from exc
 
     def reason_for(self, relpath: str, fallback: str = "") -> str:
         """Why this file was stored, whichever schema wrote the archive.
@@ -286,9 +324,87 @@ _LEPTON_MEMBER_FLOOR = 64 * 1024
 STORED_PREFIX = "stored/"
 
 
+#: No volume is this large, so a ledger claiming it is corrupt or hostile.
+#: 1 PiB - four orders of magnitude above the largest corpus this project has
+#: ever been pointed at (33.83 GiB), and far below the point where the
+#: arithmetic that consumes it stops meaning anything.
+MAX_DECLARED_BYTES = 1 << 50
+
+
+def _declared_size(name: str, meta: object) -> int:
+    """One ledger entry's declared size, or a refusal.
+
+    Every rejection below was reproduced against the old one-line version of
+    `declared_total`, which was
+    `sum(int(meta.get("size", 0)) for meta in ledger.values())`:
+
+    * `meta` a string or list -> AttributeError (no `.get`)
+    * `size` a string        -> ValueError from `int("abc")`
+    * `size` a list or None  -> TypeError
+    * `size` NaN or infinity -> ValueError from `int(nan)`
+    * `size` `10 ** 400`     -> returned happily, and *became a budget*
+
+    That last one is the reason this is a refusal rather than a clamp. This
+    number is the payload budget and the decompression-bomb budget (D0.3); a
+    ledger whose size fields cannot be read is a ledger whose bounds cannot be
+    trusted, and guessing one would defeat the guard rather than enforce it.
+    """
+    if not isinstance(meta, dict):
+        raise ContainerError(
+            f"ledger entry {name!r} is a {type(meta).__name__}, not an object")
+    size = meta.get("size", 0)
+    # bool is an int in Python, and `True` as a size is not a size.
+    if isinstance(size, bool) or not isinstance(size, (int, float)):
+        raise ContainerError(
+            f"ledger entry {name!r} declares a size of type "
+            f"{type(size).__name__}, which is not a number")
+    if isinstance(size, float):
+        if not math.isfinite(size) or size != int(size):
+            raise ContainerError(
+                f"ledger entry {name!r} declares a size of {size!r}, which is "
+                f"not a whole number of bytes")
+        size = int(size)
+    if size < 0:
+        raise ContainerError(
+            f"ledger entry {name!r} declares a negative size ({size})")
+    if size > MAX_DECLARED_BYTES:
+        raise ContainerError(
+            f"ledger entry {name!r} declares {size} bytes, past the "
+            f"{MAX_DECLARED_BYTES} byte ceiling this build will consider - "
+            f"the archive is corrupt or crafted")
+    return size
+
+
+def validate_ledger(ledger: object) -> dict[str, dict]:
+    """Refuse a ledger this build cannot reason about. Returns it unchanged.
+
+    Called once, from `Manifest.from_json`, so everything downstream can
+    subscript `meta["size"]` and `meta["sha256"]` the way it always has.
+    """
+    if not isinstance(ledger, dict):
+        raise ContainerError(
+            f"the manifest's ledger is a {type(ledger).__name__}, not an "
+            f"object mapping names to metadata")
+    for name, meta in ledger.items():
+        if not isinstance(name, str):
+            raise ContainerError(
+                f"the manifest's ledger has a non-string key {name!r}")
+        _declared_size(name, meta)
+    return ledger
+
+
 def declared_total(ledger: dict[str, dict]) -> int:
-    """Total restored size the manifest's own ledger promises."""
-    return sum(int(meta.get("size", 0)) for meta in ledger.values())
+    """Total restored size the manifest's own ledger promises.
+
+    Refuses rather than guessing - see :func:`_declared_size`. Kept callable
+    on a raw dict (rather than assuming `validate_ledger` has run) because
+    tests and the estimator both hand it ledgers that never came from a
+    manifest.
+    """
+    if not isinstance(ledger, dict):
+        raise ContainerError(
+            f"a ledger must be an object, not a {type(ledger).__name__}")
+    return sum(_declared_size(name, meta) for name, meta in ledger.items())
 
 
 def manifest_size_estimate(relpaths: Iterable[str], stored_count: int = 0,

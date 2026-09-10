@@ -40,7 +40,8 @@ from .stages.sevenzip import SevenZipStage
 from .stages.tarstage import TarStage
 from .stages.zstdstage import ZstdStage
 from .tools import ToolInfo, find_tools
-from .verify import hash_file, verify_restore
+from .verify import (SourceCheck, hash_file, tree_hash, verify_restore,
+                     verify_source)
 
 # Stages that can consume a directory tree directly (anything else forces a
 # leading tar stage so the chain operates on one file).
@@ -546,6 +547,22 @@ class VerifyResult:
     verified: int
     elapsed_s: float
     problem: str = ""
+    #: D5. One SHA-256 for the whole restored tree, order-independent, or ""
+    #: when the verify was not deep.
+    #:
+    #: Empty rather than plausible-looking on purpose: a caller comparing a
+    #: field that was never computed is a worse failure than a missing one.
+    tree_sha256: str = ""
+    #: D5's `v -ssd` half: how many originals were re-read, and what re-reading
+    #: them found. All zero/empty unless a source root was given.
+    source_checked: int = 0
+    #: Still present and no longer matching the archive - bit-rot, or an edit.
+    source_changed: list[str] = field(default_factory=list)
+    #: Gone from the source. Usually not a fault; an archive exists so that
+    #: deleting an original is safe.
+    source_missing: list[str] = field(default_factory=list)
+    #: Present in the source and never in the archive. News, not corruption.
+    source_extra: list[str] = field(default_factory=list)
 
 
 def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str],
@@ -1060,7 +1077,8 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
 
 @contextmanager
 def opened_for_reading(archive: Path, ctx: StageContext,
-                       password: str | None = None):
+                       password: str | None = None,
+                       keyfile: Path | None = None):
     """Yield a plain, readable archive path, whatever shape it arrived in.
 
     An ``.excmp`` can reach a reader wearing two disguises, and both defeated
@@ -1103,7 +1121,14 @@ def opened_for_reading(archive: Path, ctx: StageContext,
                                                 dir=ctx.temp_dir))
             plain = scratch / "decrypted.excmp"
             try:
-                current = decrypt_file(current, plain, password)
+                # F2's second factor, and the reason this parameter now
+                # exists: `compress` has accepted `keyfile=` since F2 shipped
+                # and this call did not pass one, so the engine could write an
+                # archive it had no way to open - while telling the user to
+                # "supply the same file as well as the password" through an API
+                # that would not take it. Reproduced 2026-09-09; see
+                # tests/test_keyfile_roundtrip.py.
+                current = decrypt_file(current, plain, password, keyfile)
             except WrongPasswordError as exc:
                 # Re-raised as the archive-level error the surfaces already
                 # know how to turn into a password prompt.
@@ -1189,7 +1214,8 @@ def list_archive(archive: Path) -> ArchiveListing:
 
 
 def list_any(archive: Path, ctx: StageContext,
-             password: str | None = None) -> ArchiveListing:
+             password: str | None = None,
+             keyfile: Path | None = None) -> ArchiveListing:
     """List ours *or* somebody else's (G2).
 
     Deliberately a separate entry point from :func:`list_archive`, exactly as
@@ -1205,7 +1231,7 @@ def list_any(archive: Path, ctx: StageContext,
     :class:`ContainerError` when it simply cannot be read.
     """
     archive = Path(archive)
-    with opened_for_reading(archive, ctx, password) as opened:
+    with opened_for_reading(archive, ctx, password, keyfile) as opened:
         if is_excmp(opened):
             return list_archive(opened)
         return _list_foreign(opened, ctx, password)
@@ -1263,7 +1289,8 @@ def _list_foreign(archive: Path, ctx: StageContext,
 
 
 def extract_any(archive: Path, out_dir: Path, ctx: StageContext,
-                password: str | None = None) -> ExtractResult:
+                password: str | None = None,
+                keyfile: Path | None = None) -> ExtractResult:
     """Extract ours *or* somebody else's (G1).
 
     Deliberately a separate entry point from :func:`extract`, which stays
@@ -1272,7 +1299,7 @@ def extract_any(archive: Path, out_dir: Path, ctx: StageContext,
     is the entire value proposition.
     """
     archive = Path(archive)
-    with opened_for_reading(archive, ctx, password) as opened:
+    with opened_for_reading(archive, ctx, password, keyfile) as opened:
         if is_excmp(opened):
             return extract(opened, out_dir, ctx)
         return _extract_foreign(opened, out_dir, ctx, password)
@@ -1352,7 +1379,8 @@ def selection_cost(archive: Path, names: list[str]) -> SelectionCost:
 
 def extract_selected(archive: Path, names: list[str], out_dir: Path,
                      ctx: StageContext,
-                     password: str | None = None) -> ExtractResult:
+                     password: str | None = None,
+                     keyfile: Path | None = None) -> ExtractResult:
     """Restore only ``names`` (G2).
 
     Every requested name is validated **before** anything runs. For a foreign
@@ -1365,7 +1393,7 @@ def extract_selected(archive: Path, names: list[str], out_dir: Path,
     hash-checked against the ledger exactly as a full restore would check all
     of them.
     """
-    with opened_for_reading(Path(archive), ctx, password) as _opened:
+    with opened_for_reading(Path(archive), ctx, password, keyfile) as _opened:
         return _extract_selected(_opened, names, out_dir, ctx, password)
 
 
@@ -1469,7 +1497,10 @@ def _extract_foreign_selected(archive: Path, wanted: list[str], out_dir: Path,
 
 
 def verify_archive(archive: Path, ctx: StageContext,
-                   password: str | None = None) -> VerifyResult:
+                   password: str | None = None, *,
+                   keyfile: Path | None = None,
+                   deep: bool = False,
+                   source: Path | None = None) -> VerifyResult:
     """Prove an archive still restores byte-for-byte. Read-only, produces
     nothing, raises :class:`~excmp.verify.VerifyError` if it does not.
 
@@ -1490,22 +1521,86 @@ def verify_archive(archive: Path, ctx: StageContext,
     The restore goes to a private temp directory and is deleted whether it
     passes or fails - verifying a 700 GB archive must not fill the drive, and
     nobody asked for the files.
+
+    **D5, ``deep``.** Adds two things to the same restore, neither of which
+    costs a second pass over the data:
+
+    * an order-independent :func:`~excmp.verify.tree_hash` of the whole
+      restored tree, built from the digests the verification pass already
+      computed. One value for "this is the same tree", recordable and
+      checkable a year later.
+    * a check for files in the restore that the ledger does **not** account
+      for. `verify_restore` walks the *ledger* and so cannot see an extra
+      file, which would be an archive producing data nothing vouches for.
+      Comparing whole-tree hashes is exactly what catches that, and it is the
+      reason the tree hash is computed from the restore rather than from the
+      manifest.
+
+    **D5, ``source``.** The other direction, and zpaqfranz's ``v -ssd`` rather
+    than its ``t``: re-read the *originals* off disk and compare them against
+    what the archive recorded. That answers a question nothing else here can -
+    "are my originals still the bytes I archived?" - because the archive is
+    the only reference copy of that answer. Requires ``deep``; the shallow path
+    has no ledger in hand to compare against.
+
+    ``source`` is the *parent* of what was archived, because a ledger key is
+    ``<input name>/<path inside it>``.
     """
+    if source is not None and not deep:
+        raise ValueError(
+            "source verification needs deep=True - re-reading the originals "
+            "is a comparison against the ledger, which the shallow path does "
+            "not read")
     t0 = time.monotonic()
     archive = Path(archive)
     ctx.temp_dir.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="excmp-verify-", dir=ctx.temp_dir))
+    digests: dict[str, str] = {}
+    ledger: dict[str, dict] = {}
+    tree = ""
     try:
-        with opened_for_reading(Path(archive), ctx, password) as opened:
-            result = extract(opened, work / "restore", ctx, password=password)
+        with opened_for_reading(Path(archive), ctx, password, keyfile) as opened:
+            restore_root = work / "restore"
+            result = extract(opened, restore_root, ctx, password=password,
+                             digests_out=digests if deep else None,
+                             keyfile=keyfile)
+            if deep or source is not None:
+                # A zip-directory read and one JSON parse - free even on a
+                # 700 GB archive, and it has to happen inside this block: for
+                # an encrypted archive `opened` is a decrypted copy that stops
+                # existing when the context manager exits.
+                with zipfile.ZipFile(opened) as zf:
+                    ledger = _read_manifest(zf, opened).inputs
+        if deep:
+            tree = hash_tree_of_ledger = tree_hash(digests)
+            unaccounted = sorted(
+                p.relative_to(restore_root).as_posix()
+                for p in restore_root.rglob("*")
+                if p.is_file()
+                and p.relative_to(restore_root).as_posix() not in digests)
+            if unaccounted:
+                raise VerifyError(
+                    f"the restore produced {len(unaccounted)} file(s) the "
+                    f"ledger does not account for, so its whole-tree hash is "
+                    f"not {hash_tree_of_ledger[:16]}...: "
+                    f"{unaccounted[:5]} - an archive that returns data nothing "
+                    f"vouches for has not verified")
     finally:
         rmtree_force(work)
+
+    check = (verify_source(Path(source), ledger) if source is not None
+             else SourceCheck(0, [], [], []))
     return VerifyResult(
         archive=archive,
         ok=True,
         files_restored=result.files_restored,
         verified=result.verified,
         elapsed_s=time.monotonic() - t0,
+        tree_sha256=tree,
+        source_checked=check.checked,
+        source_changed=check.changed,
+        source_missing=check.missing,
+        source_extra=check.extra,
     )
 
 
@@ -1529,7 +1624,18 @@ def _verify_before_publish(archive: Path, ctx: StageContext) -> int:
 
 
 def extract(archive: Path, out_dir: Path, ctx: StageContext,
-            password: str | None = None) -> ExtractResult:
+            password: str | None = None,
+            digests_out: dict[str, str] | None = None,
+            keyfile: Path | None = None) -> ExtractResult:
+    """Restore an ``.excmp`` and hash-verify every file against its ledger.
+
+    ``digests_out`` (D5) is handed straight to
+    :func:`excmp.verify.verify_restore`: pass a dict and it comes back holding
+    the digest of every restored file. Those digests are computed by the
+    verification pass regardless, so a caller that wants
+    :func:`excmp.verify.tree_hash` gets it without a second pass over the
+    data.
+    """
     t0 = time.monotonic()
     archive, out_dir = Path(archive), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1548,7 +1654,13 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
             if not password:
                 raise EncryptedArchiveError(
                     f"{archive.name} is password-protected; supply the password")
-            archive = decrypt_file(archive, job_dir / "decrypted.excmp", password)
+            # keyfile, not just password: this is the *second* decryption
+            # site in this module - `extract` resolves an encrypted archive
+            # itself rather than going through `opened_for_reading` - and a
+            # factor plumbed through only one of two sites is how F2's
+            # keyfile came to be write-only.
+            archive = decrypt_file(archive, job_dir / "decrypted.excmp",
+                                   password, keyfile)
         manifest, payload = read_container(archive, job_dir)
         _check_free_space(out_dir, manifest.inputs)
         stage_budget = max(declared_total(manifest.inputs) * _STAGE_INFLATION_LIMIT,
@@ -1590,7 +1702,17 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
         restored += len([1 for m in manifest.inputs.values() if m.get("route") == "pipeline"])
         stored = extract_stored(archive, out_dir, manifest.inputs)
         restored += len(stored)
-        verified = verify_restore(out_dir, manifest.inputs)
+        # `digests_out` is passed as a keyword, and only when a caller asked
+        # for it. It is an optional addition (D5), so it must not change the
+        # shape of the call every existing caller and test double was written
+        # against - `tests/test_publish_gate.py` replaces this function with a
+        # two-argument spy to prove the D9 gate verifies the FULL ledger, and
+        # a pin that precise should not have to be edited because somebody
+        # added a parameter it does not care about.
+        verified = (verify_restore(out_dir, manifest.inputs,
+                                   digests_out=digests_out)
+                    if digests_out is not None
+                    else verify_restore(out_dir, manifest.inputs))
         # F4: carry the archive's Mark of the Web onto what came out of it.
         # After verification, never before: a file that failed its hash is not
         # one we want to have touched, and a mark is cosmetic beside that.

@@ -133,15 +133,29 @@ def test_the_python_matrix_covers_the_declared_floor(ci):
 # the facts about *this* suite that a CI file has to respect
 # --------------------------------------------------------------------------
 
-def test_the_tool_cache_points_at_the_real_install_root(ci):
+def test_the_tool_cache_points_at_the_real_install_root(ci, monkeypatch):
     """`toolfetch._install_root()` is `<repo>/tools/bin`, overridable with
     EXCMP_TOOLS_DIR - measured, not assumed. A cache step aimed at
     %LOCALAPPDATA% (which is what the E1 roadmap sketch said) would cache an
-    empty directory and look like it worked."""
+    empty directory and look like it worked.
+
+    **The override is cleared before asserting the default**, and that is not
+    tidiness. The first version asserted the repo-relative path unconditionally
+    and failed the moment the suite was run with `EXCMP_TOOLS_DIR` set - which
+    `toolfetch` documents as the supported way for a packaged build (E3) to
+    point somewhere else, and which is how the merged tree was verified. A test
+    that treats a **default** as an **invariant** goes red for someone using a
+    feature exactly as intended, and a false alarm in the one test protecting
+    CI's cache path is worse than no test."""
     from excmp import toolfetch
 
-    root = toolfetch._install_root()
-    assert root == REPO / "tools" / "bin", root
+    monkeypatch.delenv("EXCMP_TOOLS_DIR", raising=False)
+    assert toolfetch._install_root() == REPO / "tools" / "bin"
+
+    # And the override actually works, since the assertion above is only
+    # meaningful if the fallback it describes is the fallback.
+    monkeypatch.setenv("EXCMP_TOOLS_DIR", str(REPO / "elsewhere"))
+    assert toolfetch._install_root() == REPO / "elsewhere"
 
     caches = [s for s in _all_steps(ci) if "actions/cache" in str(s.get("uses", ""))]
     if not caches:

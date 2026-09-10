@@ -1,0 +1,87 @@
+name: Compression came out worse than expected
+description: The ratio, the estimate or the time was off — with the numbers
+labels: ["ratio"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project's claim is *honesty* about what can and cannot shrink, so
+        "it only saved 3%" is often the correct answer rather than a bug — an
+        already-compressed installer has nothing left to give, and the
+        analyzer routes 41.9% of one real corpus straight to store-as-is on
+        purpose.
+
+        What **is** a bug: the estimate promising something the run did not
+        deliver, a profile losing to a weaker one on data where it should win,
+        or a file being called "already compressed" when it is not. The last
+        one was real — WAV was stored at 0% and told "already compressed by
+        its codec", when WAV has no codec at all; it now saves 43%.
+
+        So this form asks for numbers, because that is the only thing that can
+        settle it.
+
+  - type: textarea
+    id: numbers
+    attributes:
+      label: The numbers
+      description: Input size, archive size, profile, and how long it took.
+      render: shell
+      placeholder: |
+        input     6.4 GB across 42 files
+        archive   5.9 GB
+        saved     7.8%
+        profile   Extreme
+        time      41m
+    validations:
+      required: true
+
+  - type: textarea
+    id: estimate
+    attributes:
+      label: What the estimate said beforehand
+      description: >
+        The range from the profile card or from `excmp analyze`. The estimator
+        is scored against real corpora and is meant to be *conservative*; if
+        the truth fell outside its range, that is a defect in the model and
+        this is exactly the report that fixes it.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: routing
+    attributes:
+      label: Where the bytes went
+      description: >
+        `excmp analyze <path>` prints the per-category routing and the reason
+        each file got the route it did. Paste it — the reasons are the whole
+        diagnosis. In the GUI it is the "Where the bytes went" expander.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expectation
+    attributes:
+      label: What made you expect better
+      description: >
+        Another archiver's result on the same data is the most useful
+        comparison there is. Say which tool, which settings, and what size it
+        produced.
+      placeholder: |
+        7-Zip mx9 on the same folder gave 5.1 GB in 22 minutes.
+    validations:
+      required: false
+
+  - type: input
+    id: tools
+    attributes:
+      label: Tools discovered
+      description: >
+        Output of the find_tools one-liner (see the bug template). A missing
+        precomp or zpaqfranz silently degrades Extreme and Insane to something
+        much weaker, and that is the single most common cause of a
+        disappointing ratio.
+      placeholder: "7z ✓, precomp ✗, zpaqfranz ✓ ..."
+    validations:
+      required: true

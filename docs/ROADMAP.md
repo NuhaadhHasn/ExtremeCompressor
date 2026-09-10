@@ -1,9 +1,13 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-09**. **1,077 tests** (1,074 pass + 2 skip + 1 strict-xfail;
-> the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
-> Everything below is merged to `main` except **`phase-d8-atomic-publish`**,
-> which is awaiting review.
+> Status date: **2026-09-09**. **1,174 tests**
+> (the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
+> Everything below is merged to `main` except **`phase-d8-atomic-publish`**
+> and **`phase-d5-d6-d7-hardening`**, both awaiting review. Merge D8 first.
+>
+> **D7 is amber, not green**: the workflow is written and 17 tests assert it
+> against facts measured here, but it has never run. A workflow that has
+> never run is not evidence.
 >
 > **Done:** engine core · Phase A (GUI) · Phase D0 (security hotfix) ·
 > Phase J part 1 (estimates before compressing, scored on two real corpora) ·
@@ -893,7 +897,23 @@ display scaling — both need a human at the machine.
       OFF by default — [19 §5](research/19-source-study-7zip.md)); keep zstd
       `window_log=27` — `--long=31` costs the *decompressor* too. (srep line
       dropped: not OSI; long-range dedup now comes from B1 zpaqfranz.)
-- [ ] B10. **JPEG correction to B2**: use the `lepton-jpeg-python` **wheel** (0.5.8,
+- [x] B10. ✅ **DONE 2026-09-09** (branch `phase-d5-d6-d7-hardening`).
+      Half of it was already true and half was not. Lepton **is** the
+      in-process wheel - `excmp/jpeg.py` imports `lepton_jpeg_python` and
+      round-trips through `compress_bytes`/`decompress_bytes` with a
+      bit-exactness self-check - and it appears in no tool manifest. But
+      `zstd` was still a row in `tools.CANDIDATES`, so the Settings tab
+      printed **"zstd - not installed"** for the codec that runs the whole
+      Fast profile in-process, which reads as a degraded install and invites a
+      pointless download.
+      **Fixed with a qualifier, not a deletion**, following the `LEGACY_ONLY`
+      precedent: `tools.IN_PROCESS` marks it and the row now reads "built in,
+      no executable needed (in-process via the zstandard wheel)". Deleting the
+      row would have left `zstd` as a *stage* id in the planner, estimator and
+      progress model with nothing anywhere explaining why it has no binary,
+      and would have broken the tool-table shape `tests/test_tools.py` pins.
+      Rendered and looked at in both themes.
+      Original item: **JPEG correction to B2**: use the `lepton-jpeg-python` **wheel** (0.5.8,
       win_amd64, Apache-2.0, in-process, bit-exact) — Microsoft ships no exe, so the
       wheel is the only zero-build Windows path. And **drop zstd.exe** from any tool
       manifest: the `zstandard` wheel already embeds libzstd in-process
@@ -991,7 +1011,30 @@ display scaling — both need a human at the machine.
       the job finished it must have published a genuinely restorable archive,
       and if it stopped it must have published nothing.
 - [ ] D4. **Disk-full simulation** on a small VHDX/subst volume; graceful failure
-- [ ] D5. **Deep-verify command** (`excmp verify archive.excmp`): full decompress +
+- [x] D5. ✅ **DONE 2026-09-09** (branch `phase-d5-d6-d7-hardening`).
+      `excmp verify --deep [--source DIR]`, plus `verify.tree_hash()` and
+      `verify.verify_source()`.
+      **`verify_archive` already was the `t` half** - a full restore with
+      every file re-hashed against the ledger - so what was missing was
+      zpaqfranz's *other* verb: `v -ssd`, re-reading the **originals** off
+      disk and comparing them against what the archive recorded. That answers
+      a question nothing else here could - "are my originals still the bytes I
+      archived?" - because the archive is the only reference copy of it.
+      **Measured on real data** (56 files, 2.5 MB): one flipped bit in a
+      120,313-byte file caught as "same size, different content", a deletion
+      reported as `missing`, a new file as `new`, exit code 1 for the changed
+      one only. Deep mode costs **nothing measurable** - 4.13 s mean against
+      4.27 s shallow over three runs each - because the tree hash is built
+      from digests `verify_restore` already computed; the source pass costs
+      one read of the originals.
+      **The tree hash is sort-then-hash, not XOR.** XOR is order-free without
+      sorting and unusable here: it is self-cancelling, so a tree holding the
+      same content at two paths collapses to the value of a tree holding
+      neither - and this program deduplicates identical files as a *feature*.
+      It also binds each digest to its path, so two files swapping names is a
+      different tree. The line format is `sha256sum`'s, so the value is
+      reproducible with `sort file.sha256 | sha256sum`.
+      Original item: **Deep-verify command** (`excmp verify archive.excmp`): full decompress +
       hash-compare every file. Model source-pinned by
       [20 §6](research/20-source-study-lrzip-zpaqfranz.md): zpaqfranz's split of
       `t` (decompress to RAM + re-hash every fragment, no source needed) and
@@ -1001,10 +1044,68 @@ display scaling — both need a human at the machine.
       per-file SHA-256 order-free) for one-value whole-output equality against
       the ledger. Avoid zpaqfranz `p -paranoid -to` in automation (interactive
       captcha when the target dir is non-empty)
-- [ ] D6. **Fuzzing**: HypoFuzz over the `.excmp` parser on Windows (Atheris is
-      Linux-only); optional Linux CI job running Atheris
-- [ ] D7. **CI**: GitHub Actions `windows-latest` (7-Zip preinstalled!) — matrix
-      Python 3.11–3.13, `setup-python` pip cache, SHA-keyed tool cache; badge in README
+- [x] D6. ✅ **DONE 2026-09-09** (branch `phase-d5-d6-d7-hardening`).
+      `tests/test_fuzz_container.py` (48 tests) and `tools/fuzz_container.py`
+      for a long soak. **It found eleven unhandled exception shapes on the
+      first pass**, each reproduced before a line was changed, all on the path
+      `excmp list` takes for any file a user points at:
+      `declared_total({"a": "not a dict"})` gave AttributeError;
+      `{"size": "abc"}` ValueError; `{"size": [1,2]}` and `{"size": None}`
+      TypeError; `{"size": nan}` ValueError; a list as the ledger
+      AttributeError; `from_json("[1,2,3]")` AttributeError;
+      `parse_size("1e400m")` OverflowError, plus three more size strings.
+      **`declared_total` is not a corner**: its result *is* the payload budget
+      and D0.3's decompression-bomb budget, and `{"size": 10**400}` sailed
+      through and became one. The fix refuses the archive rather than
+      clamping - a ledger whose sizes cannot be read is a ledger whose bounds
+      cannot be trusted.
+      **The ledger is validated once, at the parse boundary**
+      (`manifest.validate_ledger`), on the same principle that makes
+      `safepath` the only place an archive-supplied *name* is judged; four
+      places downstream had each been trusting its shape. `verify_restore`
+      keeps its own guard because it is public and gets ledgers that never
+      came from a manifest.
+      **HypoFuzz was not used and is not installed**: the interesting surface
+      is pure byte-in - a manifest string, a ledger dict, a sidecar text, a
+      name - so Hypothesis, a dev dependency since D1, generates at it fast
+      enough. Measured soak: **35,000 examples across 7 properties in 136 s**,
+      no violation. If the parser ever grows deep branchy paths, install
+      HypoFuzz and point it at the same module; nothing needs to change.
+      Original item: **Fuzzing**: HypoFuzz over the `.excmp` parser on Windows
+      (Atheris is Linux-only); optional Linux CI job running Atheris
+- [x] D7. 🟡 **WRITTEN 2026-09-09, UNPROVEN UNTIL PUSHED** (branch
+      `phase-d5-d6-d7-hardening`). `.github/workflows/ci.yml` +
+      `tests/test_ci_workflow.py` (17 tests) + README badge.
+      **Three jobs, sized for a private repo's 2,000 free minutes:** `test`
+      (every push, py3.12, no network beyond pip) is the gate; `matrix`
+      (schedule + dispatch) adds 3.13 and an explicitly *informational* 3.11
+      leg via `continue-on-error`, because the README declares 3.12+ so a 3.11
+      failure answers "could the floor drop?" rather than being a regression;
+      `pinned-tools` (schedule + dispatch) fetches the E1 binaries behind a
+      `tools/bin` cache keyed on `hashFiles('excmp/toolfetch.py')`.
+      **Two holes were found in my own first draft, both "green means
+      nothing".** `ensure_tool` returns None on failure and never raises -
+      right for the app, wrong for CI - so `pinned-tools` would have printed
+      `qpdf None`, exited 0, skipped every chain test and reported success;
+      the step now checks the return values. And every chain test is behind
+      `skipif(find_tools()["7z"] is None)`, so a runner without 7-Zip gives a
+      *green* suite that exercised none of the product - the gate job now
+      requires 7-Zip, installs it from Chocolatey if the image lacks it, and
+      fails loudly otherwise. `pytest -q -rs` everywhere, so silent skips stop
+      being silent.
+      **The roadmap's "7-Zip preinstalled!" is asserted nowhere** - it could
+      not be verified from this machine, so the workflow prints the discovered
+      tool table and the first run answers it with evidence.
+      **PyYAML became a dev dependency** so the test can *parse* the workflow
+      rather than trust it; the corpus-path guard in that file deliberately
+      takes no yaml fixture, because a missing pyyaml would otherwise take the
+      guard down with it.
+      **What is left is a push.** A workflow that has never run is not
+      evidence, and this project does not record unreproduced behaviour, so
+      this stays amber until a run exists.
+      Original item: **CI**: GitHub Actions `windows-latest` (7-Zip
+      preinstalled!) - matrix Python 3.11-3.13, `setup-python` pip cache,
+      SHA-keyed tool cache; badge in README
 - [x] D8. ✅ **DONE 2026-09-09** (branch `phase-d8-atomic-publish`).
       Atomic-write upgrade: temp + `fsync` + read-back hash + `os.replace`,
       as `excmp/atomic.py` — `publish()`, `atomic_write_text/bytes()`,
@@ -1150,7 +1251,31 @@ display scaling — both need a human at the machine.
       CVE-2025-0411), not just a pinned hash. Note 7-Zip binaries are **unsigned** by
       policy, so the pinned hash IS the trust anchor — cross-check against winget
       manifests when bumping. Verified tool versions/licenses: [research/12](research/12-lightweight-and-performance.md)
-- [ ] E2. `THIRD-PARTY-NOTICES.md`: 7-Zip 26.02 (LGPL+unRAR), zstd (BSD), Precomp
+- [x] E2. ✅ **DONE 2026-09-09** (docs, straight to `main`).
+      `THIRD-PARTY-NOTICES.md` rewritten from **files on this machine** - 40
+      licence claims, each read from a quoted path, 39 confirmed and **1
+      explicitly not**. The old file dated from 2026-07-18, before the
+      downloader existed, and had drifted: fetched tools were still
+      "planned", six runtime dependencies were absent, three licences were
+      stated less precisely than the files say.
+      **What re-reading the files corrected:** 7-Zip is not "LGPL-2.1 +
+      unRAR" but a per-component mix - LGPL main, LGPL+unRAR for the RAR
+      engine, BSD-3 for LZFSE and ZSTD decode, BSD-2 for XXH64
+      (`C:\Program Files\7-Zip\License.txt`, 6,031 bytes). qpdf is Apache-2.0
+      **with an at-your-option fallback to Artistic-2.0** in every shipped
+      header. Precomp is Apache-2.0 *itself* but bundles packJPG, packMP3,
+      bZip2, zLib and GifLib whose licence texts are **not present here** - a
+      redistribution blocker, recorded as one. FLAC is split, not dual:
+      libFLAC BSD-3 (`COPYING.Xiph`), `flac.exe` GPL-2 - and we invoke the
+      GPL half. `par2cmdline-turbo` is **GPL-2.0-or-later** and is a *runtime
+      pip dependency* whose wheel ships `par2.exe`.
+      **The one gap, stated rather than guessed:** `tools/bin/zpaqfranz.exe`
+      has **no licence file beside it** - `tools/bin` holds exactly `flac/`,
+      `qpdf/` and that bare 4,288,000-byte binary. The old file claimed "FOSS
+      (GPL/MIT heritage)", which nothing here supports.
+      Also recorded: `pyoxipng` 9.1.1 is installed, imported nowhere and in no
+      requirements file - a leftover from B3, which oxipng lost.
+      Original item: `THIRD-PARTY-NOTICES.md`: 7-Zip 26.02 (LGPL+unRAR), zstd (BSD), Precomp
       (Apache-2.0), zpaqfranz (MIT), lepton-jpeg-python (Apache-2.0), oxipng (MIT),
       FLAC (BSD/GPL CLI), xtool (MIT,
       archived), par2cmdline-turbo (GPL, subprocess only), squarify (Apache-2.0),
@@ -1173,9 +1298,22 @@ display scaling — both need a human at the machine.
       on release day; **never UPX** (verified to *increase* detections)
 - [ ] E5. Auto-update v1: poll GitHub Releases API → download signed installer →
       verify SHA-256 → run; consider `tufup` (TUF) later
-- [ ] E6. Community files: CONTRIBUTING.md, SECURITY.md (parser vulns matter for an
-      archiver), issue templates asking for tool-manifest versions + log file,
-      CHANGELOG.md (Keep-a-Changelog + SemVer)
+- [x] E6. ✅ **DONE 2026-09-09** (docs, straight to `main`).
+      `CHANGELOG.md` (Keep-a-Changelog; everything under `[Unreleased]`,
+      because there is no tag and inventing version numbers for work that
+      never shipped as a version would be inventing history),
+      `CONTRIBUTING.md` (honest that this is a private single-maintainer repo,
+      and written as the practical "how to work here": the hour-long suite,
+      the `%TEMP%` cleanup, the corpus guard, the render-and-look rule),
+      `.github/ISSUE_TEMPLATE/{bug_report,ratio_report,config}.yml`.
+      `SECURITY.md` already existed (D0.5) and was updated - it said
+      encryption "will use" Argon2id, future tense, for a feature that shipped
+      2026-09-03, and never mentioned that **losing a keyfile is as final as
+      losing the password**.
+      **One thing the templates could not ask for:** the roadmap wanted "the
+      log file". There is no log file - the job log is an in-memory 400-line
+      tail in a `QPlainTextEdit`. The template asks for that instead, with the
+      keystrokes to copy it, and says what to do when it has scrolled past.
 
 ## Phase F — "Protect": encryption + recovery records
 
@@ -1221,6 +1359,59 @@ rationale: [research/10](research/10-security-and-integrity.md).
       Keyfile-only works; an empty keyfile is refused rather than silently
       reducing two factors to one; the keyfile is stream-hashed with a 100 MiB
       cap, because somebody will eventually point this at a 40 GB video.
+
+      🔴 **AND IT WAS WRITE-ONLY UNTIL 2026-09-09.** Found by F5's copy
+      audit, which noticed that `crypto.py` tells users to "supply the same
+      file as well as the password" through surfaces that had no way to do it.
+      Reproduced immediately:
+
+      ```
+      engine.compress([src], arc, NORMAL, ctx, password="pw", keyfile=kf)
+      # -> writes an 855-byte archive, reports success
+
+      engine.extract(arc, out, ctx, password="pw")
+      # -> KeyfileRequired: supply the same file as well as the password
+
+      engine.extract(arc, out, ctx, password="pw", keyfile=kf)
+      # -> TypeError: extract() got an unexpected keyword argument 'keyfile'
+      ```
+
+      **The engine could write an archive no code path in the engine could
+      read**, and `excmp verify` - the product's central promise - could not
+      open one either. `--keyfile` existed on no CLI subcommand; the word
+      appeared **zero** times in `excmp/cli.py` and once in all of `gui/`, in a
+      docstring saying there is no keyfile field.
+
+      **Why nothing caught it.** `tests/test_keyfile.py` exercises
+      `crypto.encrypt_file`/`decrypt_file` directly, where the parameter always
+      worked. And the D9 publish gate - the thing that would otherwise notice
+      an unopenable archive - verifies the *plaintext* container **before**
+      encryption, by design (F1: "encrypt after the D9 gate and before the
+      rename"). Nothing on either side of that seam ever tried to decrypt what
+      was published.
+
+      **Fixed** by threading `keyfile` through every read entry point -
+      `opened_for_reading`, `extract`, `extract_any`, `extract_selected`,
+      `list_any`, `verify_archive` - and there were **two** decryption sites,
+      not one: `extract` resolves an encrypted archive itself rather than going
+      through `opened_for_reading`. A factor plumbed through one of two sites
+      is exactly how this happened. `--keyfile` added to `compress`, `extract`,
+      `list`, `convert` and `verify`; `--keyfile` without `--password` on the
+      create path is refused, because the CLI only collects passwords
+      interactively and would otherwise have written an archive with no
+      encryption at all for somebody who asked for two factors.
+
+      **Two more found by running the real CLI rather than the tests:**
+      `excmp verify` had **no `--password` flag at all**, so no encrypted
+      archive could ever be verified from the command line; and the right
+      password with the wrong keyfile printed `error: wrong password`, which is
+      false - it sends the user hunting for a password they already have, and
+      the next conclusion after "my password is right and it still says wrong
+      password" is "the archive is broken", which is how archives get deleted.
+      It now names both factors. 13 tests in
+      `tests/test_keyfile_roundtrip.py`, and the property none of them had
+      stated before: **whatever factors an archive was created with, the same
+      factors must open it, through the same public API a caller uses.**
 - [x] F3. ✅ **DONE 2026-09-03** — `excmp/recovery.py`,
       `compress --recovery [PCT]`, and a new `excmp repair` verb. PAR2 via the
       `par2cmdline-turbo` wheel, which ships a real Windows binary; driven as a
@@ -1257,8 +1448,30 @@ rationale: [research/10](research/10-security-and-integrity.md).
       file to "local". Read capped at 32 KB, directories skipped, and a write
       failure is ignored — FAT32 has no streams and a USB stick is not an
       error condition.
-- [ ] F5. Honest UI copy throughout: "protects confidentiality; lost password = lost
-      data, no backdoor"
+- [x] F5. ✅ **DONE 2026-09-09** (branch `phase-d5-d6-d7-hardening`).
+      An audit of **all 42 user-visible crypto strings** found the wording
+      already honest and the **delivery** not:
+      (1) the clearest sentence in the app was a **tooltip**, needing a mouse,
+      so a keyboard or screen-reader user could set a password having never
+      been shown it; (2) `_show_protect` *replaced* the consequence with "The
+      two entries do not match yet." for the whole time somebody was typing
+      the confirmation - the exact moment they are deciding - while its own
+      docstring said "Say the unrecoverable part while they are still typing
+      it"; (3) the placeholder read "leave empty for no password", framing it
+      as a costless convenience; (4) the CLI's create prompt said **nothing**,
+      and the honest paragraph sat in a docstring printed to nobody.
+      Now the consequence stands from the first keystroke with the mismatch
+      notice *appended*, it is in `accessibleDescription` for assistive
+      technology, the placeholder says "if set, there is no recovery", and the
+      CLI prints it to **stderr** before prompting - stderr so `--json` stays
+      parseable. 12 tests.
+      **The existing test could not have caught any of it**: it built
+      `password.toolTip() + " " + protect_note.text()` from a panel where
+      nothing had been typed, so `protect_note` was `""` and it asserted on
+      the tooltip alone - the visible note could have been deleted entirely
+      and it would still have passed.
+      Original item: Honest UI copy throughout: "protects confidentiality;
+      lost password = lost data, no backdoor"
 
 ## Phase G — "Real archiver": the features that stop us being one-way
 

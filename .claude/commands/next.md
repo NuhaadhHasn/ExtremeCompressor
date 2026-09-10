@@ -14,6 +14,11 @@ out from the docs.
 4. If the handoff flags a decision for me to make at the start of the session, ask
    that one question now, before writing code. Otherwise proceed.
 
+**Rename the session the moment you know the phase** — before any code. Call
+`set_session_title` with the phase, e.g. "D8 atomic publish", not "/next" and
+not "Next steps". Every `/next` session otherwise ships titled after the
+command, which makes the session list useless. Do not wait to be asked.
+
 Then implement the phase:
 
 - **TDD**: failing tests first, especially for anything touching security,

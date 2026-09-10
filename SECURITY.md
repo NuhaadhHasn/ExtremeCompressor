@@ -15,6 +15,11 @@ Please report privately through **GitHub's private vulnerability reporting** on 
 repository: *Security → Report a vulnerability*. It creates a draft advisory visible
 only to the maintainer, so nothing is public while a fix is being written.
 
+> **The repository has been private since 2026-09-01**, so in practice there is nobody
+> outside to report anything. This policy is kept current rather than deleted because it
+> becomes live again the moment the repo is public, and a threat model written after the
+> fact is worth less than one that was maintained.
+
 Please don't open a public issue for anything that lets an archive read or write
 outside its destination, execute code, or bypass verification.
 
@@ -69,11 +74,24 @@ it — Reed-Solomon recovery records are planned (roadmap F3). Note the ledger p
 *integrity*, not *authenticity*: an attacker who rewrites both the payload and the
 manifest produces a self-consistent archive. Signing is not in scope for v1.
 
-### 4. Lost password
+### 4. Lost password, or lost keyfile
 
-**No recovery, by design.** Optional encryption (roadmap F1) will use Argon2id with a
-random salt over chunked AES-256-GCM. There is no backdoor, no escrow and no reset: a
-lost password means lost data. The UI says so plainly rather than implying otherwise.
+**No recovery, by design.** Optional encryption **shipped 2026-09-03** (roadmap F1) and
+uses Argon2id (m=64 MiB, t=3, p=4) with a random salt over chunked AES-256-GCM, with the
+header as AAD for every chunk. There is no backdoor, no escrow and no reset: a lost
+password means lost data.
+
+**A lost keyfile is exactly as final**, and users do not expect that. A keyfile (roadmap
+F2) is folded into the key with HKDF, so the archive needs *that file, byte for byte* as
+well as the password — a re-saved or re-downloaded copy will not do. Both factors are
+now reachable from the CLI (`--keyfile` on `compress`, `extract`, `list`, `convert` and
+`verify`); until 2026-09-09 the engine could create a keyfile archive it had no way to
+open, which is recorded in the changelog rather than quietly fixed.
+
+The UI says all of this plainly rather than implying otherwise — and F5 (2026-09-09) had
+to fix *where* it said it, not what it said: the honest sentence was in a tooltip that
+needed a mouse hover, and the visible note was replaced by "the two entries do not match
+yet" for the whole time somebody was typing the confirmation.
 
 ## Not defended against
 

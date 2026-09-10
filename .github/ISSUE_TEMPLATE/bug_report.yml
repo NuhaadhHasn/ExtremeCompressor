@@ -1,0 +1,114 @@
+name: Bug report
+description: Something behaved wrongly, or an archive did not come back right
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If an archive failed to restore, or restored wrongly, say so in the
+        title.** That is the one class of bug that outranks everything else
+        here, and it is worth interrupting whatever is in progress for.
+
+        **Do not file a security issue here.** Anything that lets an archive
+        read or write outside its destination, execute code, or bypass
+        verification goes through
+        [SECURITY.md](../blob/main/SECURITY.md) privately instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected instead
+      placeholder: |
+        I compressed a 4 GB game folder with Extreme. The job reported
+        success, but extracting it produced 3 files fewer than went in.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: The exact command or the exact clicks
+      description: >
+        A CLI command is easiest to act on. If it was the GUI, say which tab,
+        which profile, and which options were on (recovery %, split size,
+        password, keyfile).
+      render: shell
+      placeholder: |
+        excmp compress "D:\Games\Thing" --profile extreme --sidecar
+    validations:
+      required: true
+
+  - type: textarea
+    id: tools
+    attributes:
+      label: Which tools your machine has
+      description: >
+        Paste the output of this. It matters more than anything else in this
+        form: the routing, the chain and therefore the bug all depend on which
+        binaries were discovered and at what version.
+      render: shell
+      value: |
+        # Run this in the repo (or where excmp is installed) and paste the output.
+        # Verified to work as written on 2026-09-09 - no nested double quotes,
+        # so it survives cmd and PowerShell unchanged.
+        .venv\Scripts\python.exe -c "from excmp.tools import find_tools; [print(f'{n:12} {(t.version or chr(63)) if t else chr(45):24} {t.path if t else chr(45)}') for n, t in find_tools(with_versions=True).items()]"
+    validations:
+      required: true
+
+  - type: textarea
+    id: job-log
+    attributes:
+      label: The job log
+      description: >
+        This app writes no log file. The log lives in the Activity tab: expand
+        the job's row, click in the log box, Ctrl+A then Ctrl+C. It keeps the
+        last 400 lines, so if the interesting part scrolled past, re-run the
+        same job from the CLI and paste that output instead.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`excmp --version`, or the number in the window's bottom-right corner."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and machine
+      description: >
+        `winver` gives the build. Cores and RAM matter for anything about
+        memory, threads or timing — the reference machine is a 2-core i7-3540M
+        with 16 GB, which is weak on purpose.
+      placeholder: "Windows 10 Pro 19045, 2 cores, 16 GB"
+    validations:
+      required: true
+
+  - type: textarea
+    id: input-shape
+    attributes:
+      label: What the input looked like
+      description: >
+        Not the files themselves — their shape. Roughly how many files, total
+        size, and what kinds dominate (already-compressed installers? JPEGs?
+        WAV? a node_modules tree?). Routing is per-file, so the mix usually
+        *is* the bug.
+      placeholder: |
+        ~55,000 files, 33 GB, mostly a node_modules tree plus a few 2 GB
+        archives.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: integrity
+    attributes:
+      label: If this is about a restore
+      options:
+        - label: The archive was created by this same version
+        - label: I still have the original files (so a comparison is possible)
+        - label: "`excmp verify <archive>` was run, and I have pasted what it said"

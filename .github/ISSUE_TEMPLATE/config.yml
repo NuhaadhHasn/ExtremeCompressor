@@ -1,0 +1,16 @@
+# Blank issues stay enabled: a report that fits no template is still worth
+# having, and a form that turns someone away is worse than an untidy issue.
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/NuhaadhHasn/ExtremeCompressor/security/advisories/new
+    about: >
+      Anything that lets an archive read or write outside its destination,
+      execute code, or bypass verification. Use private reporting, not an
+      issue - see SECURITY.md.
+  - name: What is already known and measured
+    url: https://github.com/NuhaadhHasn/ExtremeCompressor/tree/main/docs/benchmarks
+    about: >
+      Every ratio and timing claim in this project has a benchmark doc behind
+      it, with the exact file subsets. Worth a look before reporting that a
+      profile underperformed - the answer may already be measured.

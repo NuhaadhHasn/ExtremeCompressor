@@ -352,9 +352,20 @@ Worth recording because it was avoidable:
   leftover `%TEMP%\pytest-of-nuhaa` trees (400–770 MB each; pytest keeps three,
   and aborted runs leave theirs on top) taking `C:` from 2.9 GB to 0.92 GB.
   All 13 tests in that file pass with the directory cleared.
-- **A clean full pass is 1 h 07 m**, not the ~31 minutes previously quoted —
-  that figure came from a run where two tests failed early and never did their
-  work.
+- **The runtime is unstable by 4.5x and the cause is not established.** Three
+  runs of the same 1,174 tests, system held awake for each:
+
+  | date | free on `C:` | wall clock |
+  |---|---:|---:|
+  | 2026-09-09 | 2.9 GB | 1 h 07 m |
+  | 2026-09-10 | 14 GB | **14 m 52 s** |
+
+  Free space is the variable that moved most, and this suite writes 400-770 MB
+  per run into `%TEMP%` on a volume that was 99% full - but **two points do not
+  prove a mechanism**, and it is recorded here as unexplained rather than
+  attributed. The earlier ~31-minute figure is separately void: that run had
+  two tests fail early and never do their work. **Do not quote a runtime for
+  this suite; measure it.**
 - **And one run reported 11 h 28 m, which was the laptop sleeping.** The
   System event log settles it: `Microsoft-Windows-Kernel-Power` recorded the
   machine entering sleep at 23:59:20, thirty-nine minutes after the suite

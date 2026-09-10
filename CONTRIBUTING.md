@@ -64,9 +64,13 @@ To see what your machine actually provides:
 
 Four things about this command that are not obvious:
 
-1. **A clean full pass takes about an hour** on a 2-core machine, and
-   `pytest -q` buffers all of its output when stdout is not a terminal — so it
-   looks hung the entire time. Check it is alive with
+1. **Its runtime is not predictable — measure, do not assume.** The same
+   1,174 tests took **1 h 07 m** and then **14 m 52 s** on the same 2-core
+   machine days apart, both with the system held awake; the volume had 2.9 GB
+   free for the slow run and 14 GB for the fast one. That is the leading
+   suspect and it is not proven, so budget generously. `pytest -q` also
+   buffers all of its output when stdout is not a terminal — so it looks hung
+   the entire time. Check it is alive with
    `Get-Process python | Select Name,Id,CPU`, not by waiting for dots.
 2. **Clear `%TEMP%\pytest-of-<you>` first.** Each run leaves 400–770 MB there
    and pytest keeps the last three; an aborted run leaves its tree on top.

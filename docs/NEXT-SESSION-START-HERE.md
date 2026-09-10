@@ -21,10 +21,24 @@
 
 Three things about that command, all measured:
 
-- **A clean full pass takes about an hour** and `pytest -q` buffers everything
-  when stdout is not a terminal, so it looks hung the whole time. Check it is
-  alive with `Get-Process python | Select Name,Id,CPU`, not by waiting for
-  output.
+- **The runtime is not a stable number, and disk headroom is the leading
+  suspect.** Three measurements of the same 1,174 tests on this machine, all
+  with the system held awake:
+
+  | date | free on `C:` | wall clock |
+  |---|---:|---:|
+  | 2026-09-09 | 2.9 GB | 1 h 07 m |
+  | 2026-09-10 | 14 GB | **14 m 52 s** |
+
+  A 4.5x spread. The cause is **not confirmed** - free space is the variable
+  that changed most, and this suite writes 400-770 MB per run into `%TEMP%`,
+  but two points do not establish a mechanism. Do not quote either figure as
+  "the" runtime; measure it, and clear `%TEMP%\pytest-of-<you>` first either
+  way.
+
+  `pytest -q` also buffers everything when stdout is not a terminal, so a run
+  looks hung the whole time. Check it is alive with
+  `Get-Process python | Select Name,Id,CPU`, not by waiting for output.
 - **`pytest`'s elapsed time is not a measurement on this laptop, because it
   sleeps.** One run reported **11 h 28 m**; the System event log showed the
   machine entering sleep at 23:59:20 and again at 04:32:07, `ResumeCount: 3`.
@@ -161,7 +175,7 @@ case, not a contrived one.
 | volumes sidecar after D8 | **13.9× cheaper** (218.2 → 15.7 ms) |
 | deep verify vs shallow | **4.13 s vs 4.27 s** over three runs each — no measurable cost |
 | fuzz soak | **35,000 examples / 7 properties / 136 s**, no violation |
-| a clean full suite pass | **1 h 07 m** |
+| a clean full suite pass | **14 m 52 s** with 14 GB free; **1 h 07 m** with 2.9 GB free - unstable, see section above |
 | Silesia/normal payload | **48,688,221 B** — compare *this*, never the archive digest |
 
 ---

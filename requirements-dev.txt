@@ -7,3 +7,7 @@ pytest>=8.0            # MIT
 pytest-qt>=4.4         # MIT; qtbot fixture for the GUI tests
 hypothesis>=6.100     # MPL-2.0; property-based roundtrip tests (D1)
 Pillow>=10.0           # MIT-CMU; assembles docs/images/demo.gif in tools/shots.py
+PyYAML>=6.0            # MIT; lets tests/test_ci_workflow.py *parse* the CI
+                       #   workflow rather than trust it. D7's file is the one
+                       #   artifact here whose real gate is on GitHub's runners,
+                       #   so everything checkable from this machine is checked.

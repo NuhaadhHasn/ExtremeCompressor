@@ -131,8 +131,21 @@ class AdvancedPanel(QFrame):
         # a mistyped password is unrecoverable, so it gets confirmed here.
         self.password = QLineEdit(self)
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password.setPlaceholderText(self.tr("leave empty for no password"))
+        # F5. The old text was "leave empty for no password", which is the
+        # only string visible in this field before a user types and framed the
+        # choice as an opt-in convenience with no consequence. The consequence
+        # is the whole point.
+        self.password.setPlaceholderText(
+            self.tr("empty for none - if set, there is no recovery"))
         self.password.setAccessibleName(self.tr("Archive password"))
+        # F5. The honest sentence lives in a tooltip, and a tooltip needs a
+        # mouse hover - so a keyboard or screen-reader user could set a
+        # password having never been told it is unrecoverable. The description
+        # is the accessibility layer's own channel for exactly this, announced
+        # after the name rather than instead of it.
+        self.password.setAccessibleDescription(self.tr(
+            "There is no backdoor, no reset and no recovery. If you lose "
+            "this password the data in the archive is gone."))
         self.password.setToolTip(self.tr(
             "Encrypts the whole archive - filenames and hashes included - with "
             "Argon2id and AES-256-GCM. There is no backdoor and no reset: if "
@@ -141,6 +154,8 @@ class AdvancedPanel(QFrame):
         self.password_confirm.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_confirm.setPlaceholderText(self.tr("type it again"))
         self.password_confirm.setAccessibleName(self.tr("Confirm archive password"))
+        self.password_confirm.setAccessibleDescription(self.tr(
+            "Typed twice because a typo here cannot be recovered by anybody."))
 
         self.protect_note = QLabel("", self)
         self.protect_note.setObjectName("Subtitle")
@@ -234,17 +249,26 @@ class AdvancedPanel(QFrame):
                fmt_size(lzma2_decompress_ram(size))))
 
     def _show_protect(self) -> None:
-        """Say the unrecoverable part while they are still typing it."""
+        """Say the unrecoverable part while they are still typing it.
+
+        F5 made this match its own docstring. It used to *replace* the
+        consequence with "The two entries do not match yet." for the entire
+        time the user was typing the confirmation - which is exactly the
+        moment they are deciding whether to encrypt at all. The consequence
+        now stands from the first keystroke and the mismatch notice is
+        appended to it, so the two pieces of news never compete for the same
+        label.
+        """
         first = self.password.text()
         if not first:
             self.protect_note.setText("")
             return
-        if self.password_confirm.text() != first:
-            self.protect_note.setText(self.tr("The two entries do not match yet."))
-            return
-        self.protect_note.setText(self.tr(
+        note = self.tr(
             "This archive will need this password to open. There is no "
-            "backdoor and no reset - if it is lost, so is the data."))
+            "backdoor and no reset - if it is lost, so is the data.")
+        if self.password_confirm.text() != first:
+            note += "  " + self.tr("The two entries do not match yet.")
+        self.protect_note.setText(note)
 
     def password_value(self) -> str | None:
         """The password for this job, or None. Raises ValueError if the two

@@ -102,6 +102,48 @@ def test_an_interactive_run_still_prompts(monkeypatch):
     assert seen, "an interactive run did not prompt"
 
 
+def test_an_unreadable_stdin_falls_back_to_prompting(monkeypatch):
+    """"Not a terminal" is not the same claim as "has a password on it".
+
+    This is not hypothetical and it is not only about tests. Under pytest,
+    `sys.stdin` is a `DontReadFromInput` whose read raises
+    `OSError: reading from stdin while output is captured` - `isatty()` is
+    False, so the pipe branch is taken and the read fails. The first version
+    of this fix broke **five** existing tests that way, all of which patch
+    `getpass` and were entitled to expect it to be called.
+
+    The same shape occurs in production: a subprocess spawned by the GUI has
+    no console and a stdin nobody can read. Dying there would be worse than
+    asking."""
+    class Unreadable(io.StringIO):
+        def isatty(self):
+            return False
+
+        def readline(self, *a):
+            raise OSError("reading from stdin while output is captured!")
+
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "asked-instead")
+    monkeypatch.setattr(sys, "stdin", Unreadable(""))
+
+    assert cli._ask_password(_args()) == "asked-instead"
+
+
+def test_a_stdin_that_cannot_even_be_asked_about_falls_back(monkeypatch):
+    """`isatty()` itself can raise on a closed stream. Working out how to ask
+    for a password must not be the thing that crashes."""
+    class Hostile:
+        def isatty(self):
+            raise ValueError("I/O operation on closed file")
+
+        def readline(self, *a):
+            raise ValueError("I/O operation on closed file")
+
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "asked-anyway")
+    monkeypatch.setattr(sys, "stdin", Hostile())
+
+    assert cli._ask_password(_args()) == "asked-anyway"
+
+
 def test_no_password_flag_means_no_password(monkeypatch):
     monkeypatch.setattr(sys, "stdin", io.StringIO("ignored\n"))
     assert cli._ask_password(argparse.Namespace(password=False)) is None

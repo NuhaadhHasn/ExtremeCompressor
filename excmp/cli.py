@@ -305,6 +305,20 @@ def _keyfile(args: argparse.Namespace) -> Path | None:
     return path
 
 
+def _stdin_is_interactive() -> bool:
+    """Is there a human at the other end of stdin?
+
+    Wrapped, because `isatty()` is not guaranteed to exist or to succeed on
+    every object that can become `sys.stdin` - a closed stream and some
+    embedding hosts both raise - and an exception here would turn "work out
+    how to ask for a password" into a crash.
+    """
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def _read_secret(prompt: str) -> str:
     """One password, from a console if there is one and from stdin if not.
 
@@ -332,9 +346,18 @@ def _read_secret(prompt: str) -> str:
     """
     import getpass
 
-    if sys.stdin is not None and sys.stdin.isatty():
+    if _stdin_is_interactive():
         return getpass.getpass(prompt)
-    line = sys.stdin.readline()
+    try:
+        line = sys.stdin.readline()
+    except (OSError, ValueError):
+        # "not a terminal" is not the same claim as "has a password on it".
+        # A captured, closed or detached stdin can be read by nobody, and the
+        # honest response is to ask rather than to fail. That is what a pytest
+        # run looks like - `sys.stdin` becomes a `DontReadFromInput` whose
+        # read raises - and also a subprocess spawned by the GUI with no
+        # console attached.
+        return getpass.getpass(prompt)
     if not line:
         # "" is not a password. Accepting it produces "wrong password" for a
         # caller whose actual problem is that they piped nothing, and that
@@ -392,7 +415,7 @@ def _new_password(args: argparse.Namespace) -> str | None:
     # a second read gets EOF, which would compare unequal and refuse every
     # scripted compress. One line in, one password - the caller of a script
     # already has the value written down somewhere it can be re-read.
-    if sys.stdin is not None and sys.stdin.isatty():
+    if _stdin_is_interactive():
         if _read_secret("Type it again: ") != first:
             raise ValueError(
                 "the two passwords did not match - nothing was written")

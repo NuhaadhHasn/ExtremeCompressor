@@ -61,7 +61,8 @@ def populated(window, qtbot, tmp_path):
 # The intake chip
 # ---------------------------------------------------------------------------
 
-def test_the_drop_zone_collapses_to_a_chip_once_files_are_in(populated, qtbot):
+def test_the_drop_zone_collapses_to_a_chip_once_files_are_in(populated, qtbot,
+                                                             reference_fonts):
     """A 116px "drop files here" panel is worth its space exactly once. After
     that it is a receipt, and a receipt is one line."""
     zone = populated.drop_zone
@@ -141,7 +142,8 @@ def test_removing_the_last_file_returns_to_the_empty_state(populated, qtbot):
 # The analysis card
 # ---------------------------------------------------------------------------
 
-def test_the_analysis_card_keeps_its_promise_while_shrinking(populated):
+def test_the_analysis_card_keeps_its_promise_while_shrinking(populated,
+                                                             reference_fonts):
     """Compaction may not touch the two sentences the product exists for:
     what this pile is, and how much of it can actually shrink."""
     card = populated.analysis_card
@@ -198,7 +200,8 @@ def test_the_disclosure_is_not_a_tooltip(populated):
     assert chooser.info_toggle.focusPolicy() != 0
 
 
-def test_profile_rows_are_compact_where_they_honestly_can_be(populated):
+def test_profile_rows_are_compact_where_they_honestly_can_be(populated,
+                                                             reference_fonts):
     """§2.4 budgeted every row at 32px. That holds for a row whose estimate is
     a single number (Fast, Normal) - they land on 33px. It does NOT hold for
     Extreme and Insane, whose cells carry a second line because their real
@@ -254,7 +257,7 @@ def test_selection_does_not_reflow_the_row():
     assert "border: 2px solid" in block, block
 
 
-def test_controls_have_an_explicit_minimum_height():
+def test_controls_have_an_explicit_minimum_height(reference_fonts):
     from gui.theme import qss as build_qss
 
     qss = build_qss("dark")

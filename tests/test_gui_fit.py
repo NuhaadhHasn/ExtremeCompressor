@@ -63,7 +63,8 @@ def test_the_window_has_a_sane_minimum_so_scaling_cannot_trap_it(window):
 
 @pytest.mark.parametrize("size", [(1180, 721), (1092, 614), (910, 512)],
                          ids=["1366x768@100%", "1366x768@125%", "1366x768@150%"])
-def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size):
+def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size,
+                                                    reference_fonts):
     """Before a single file is dropped there is nothing that can justify a
     scrollbar - yet at 125% the old layout overflowed even when empty."""
     window.resize(*size)
@@ -152,7 +153,8 @@ def _populate(window, qtbot, tmp_path):
     return window._scroll.widget()
 
 
-def test_the_populated_compress_page_never_grows_again(window, qtbot, tmp_path):
+def test_the_populated_compress_page_never_grows_again(window, qtbot, tmp_path,
+                                                       reference_fonts):
     page = _populate(window, qtbot, tmp_path)
     height = page.sizeHint().height()
     assert height <= POPULATED_PAGE_MEASURED, (
@@ -172,7 +174,8 @@ def test_the_populated_compress_page_meets_the_150_percent_budget(
     assert page.sizeHint().height() <= POPULATED_PAGE_TARGET
 
 
-def test_the_page_fits_910_logical_pixels_of_width(window, qtbot):
+def test_the_page_fits_910_logical_pixels_of_width(window, qtbot,
+                                                   reference_fonts):
     """150% scaling leaves 910 logical px. The widest label used to force the
     page minimum to 939px and grow a horizontal scrollbar."""
     page = window._scroll.widget()

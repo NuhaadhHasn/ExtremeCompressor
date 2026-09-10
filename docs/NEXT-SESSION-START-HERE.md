@@ -13,7 +13,7 @@
 > **Next phase: your choice of three**, and section 4 has the one decision
 > that has to be made before D7 can be called done at all.
 
-**1,174 tests** (+115 this session).
+**1,201 tests on the merged tree** (+142 this session), 2 skipped and 1 strict-xfail, verified green on 2026-09-10.
 
 ```
 .venv\Scripts\python.exe -m pytest -q
@@ -60,16 +60,29 @@ Three things about that command, all measured:
 
 ---
 
-## 0. Branches, and the merge order
+## 0. Branches, and the merge — verified, not assumed
 
-Two code branches, both left for review. They touch different parts of
-`engine.py` and should merge cleanly in either order; merge D8 first anyway,
-since the second was written after it and the docs describe that order.
+Two code branches, both left for review. **They are siblings off `main`, not a
+stack** — the second was written before D8 was merged anywhere, so both modify
+`engine.py`, `crypto.py`, `volumes.py` and `cli.py`.
 
 ```
 git merge --no-ff phase-d8-atomic-publish
 git merge --no-ff phase-d5-d6-d7-hardening
 ```
+
+**The merged result was built and tested, rather than trusted to `git`.** In a
+throwaway worktree: both merges apply with **zero conflicts**, and the merged
+tree passes **1,201 tests** (2 skipped, 1 xfailed) with the tool root pointed
+at the real `tools/bin`, so FLAC and zpaqfranz ran too. A real encrypted job on
+the merged code — compress with password *and* keyfile, `verify --deep
+--source`, extract — came back `ok=True`, source re-read clean, every file
+byte-identical.
+
+That check was worth doing and would have been easy to skip. `git merge-tree`
+reporting no conflicts says nothing about whether the two halves *work*
+together, and the merged run is what found the last two defects in this
+session.
 
 Docs went straight to `main` per the working agreement: the roadmap ticks, the
 benchmark, `THIRD-PARTY-NOTICES.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, the
@@ -78,7 +91,7 @@ benchmark, `THIRD-PARTY-NOTICES.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, the
 > Note the asymmetry that follows from that split: `main`'s docs now describe
 > features whose code is on the branches. That is the established pattern here
 > (the ROADMAP header names the unmerged branches), but it does mean **the
-> suite on bare `main` is the pre-D5 suite** — 1,059 tests, not 1,174.
+> suite on bare `main` is the pre-D5 suite** — 1,059 tests, not 1,201.
 
 ---
 
@@ -117,6 +130,30 @@ archive — verifies the *plaintext* container **before** encryption, by design.
 Nothing on either side of that seam ever tried to decrypt what was published.
 **If you add a factor, a format or a header field, test it through the public
 API, not through the module that implements it.**
+
+### The last three defects were in the fixes, not the features
+
+Worth its own heading because it is the shape of the whole session's tail.
+After D5/D6/D7 were done and the branch suite was green at 1,171:
+
+1. `verify --password` **hung forever** from a pipe (getpass reads the console
+   on Windows). Fixed.
+2. That fix broke **five** tests: under pytest `sys.stdin` is a
+   `DontReadFromInput` whose read raises, so "not a terminal" was being
+   treated as "has a password on it". The correct rule is *if the read cannot
+   happen, ask* - which is also right for a GUI-spawned subprocess with no
+   console. Fixed.
+3. My own **CI test** then failed, because it asserted
+   `_install_root() == <repo>/tools/bin` unconditionally and the merged-tree
+   run set `EXCMP_TOOLS_DIR` - a documented override. A test that treats a
+   default as an invariant goes red for someone using a feature as intended,
+   and a false alarm in the one test guarding CI's cache path is worse than no
+   test, because the response to a wrongly-red test is to stop reading it.
+   Fixed.
+
+None of the three was reachable from the suite that had just gone green. Each
+was found by running the thing one step further out: pipe it, merge it, set the
+documented environment variable.
 
 ### Three defects came from *running the command*, not from tests
 

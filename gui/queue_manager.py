@@ -351,8 +351,11 @@ class CompressWorker(_EngineWorker):
     def _split(self, archive) -> None:
         from excmp.volumes import split_file, write_parts_sidecar
 
-        parts = split_file(archive, self.split)
-        write_parts_sidecar(parts)
+        # D8: digests measured during the split, so the sidecar does not
+        # re-read the whole archive to learn them.
+        digests: dict[str, str] = {}
+        parts = split_file(archive, self.split, digests)
+        write_parts_sidecar(parts, digests)
         self._note(f"split into {len(parts)} volume(s): {parts[0].name} .. "
                    f"{parts[-1].name}")
 

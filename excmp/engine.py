@@ -27,6 +27,7 @@ from . import jpeg
 from . import manifest as _manifest
 from .analyzer import (Category, FileInfo, analyze_tree, analyze_tree_safe,
                        describe_unreadable, iter_empty_dirs)
+from .atomic import atomic_write_text, publish
 from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
@@ -436,6 +437,14 @@ class CompressResult:
     #: this program can produce. `warnings` carries a summary line for the
     #: places that only surface warnings; this carries the names.
     skipped: list[str] = field(default_factory=list)
+    #: D8: SHA-256 of the archive as it exists at `archive`, read back off the
+    #: filesystem after the flush and before the rename.
+    #:
+    #: Not a convenience field. It is the one number that ties the file the
+    #: user now has to the artifact the D9 gate accepted, and because the
+    #: publish has to read the bytes back anyway it costs nothing to report.
+    #: Empty only for results built by something other than `compress()`.
+    sha256: str = ""
 
     @property
     def ratio(self) -> float:
@@ -605,24 +614,29 @@ def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str],
     return infos, relmap, empty_dirs, skipped
 
 
-def _write_sidecar(archive: Path) -> Path:
+def _write_sidecar(archive: Path, digest: str | None = None) -> Path:
     """`<archive>.sha256` in ``sha256sum`` layout (G6).
 
-    Hashed AFTER the atomic rename, so it describes the file that actually
-    shipped rather than the `.tmp` twin that existed a moment earlier. The
-    body names the archive by *file name*, not full path: `sha256sum -c`
+    The digest describes the file that actually shipped, never the `.tmp` twin
+    that existed a moment earlier. It used to guarantee that by re-reading the
+    published archive; since D8 the publish itself reads the bytes back off
+    the filesystem, so ``digest`` is that same measurement passed in - one
+    fewer full pass over a multi-gigabyte file, for the identical number.
+    Falling back to a fresh hash keeps the function usable on an archive
+    nobody just published.
+
+    The body names the archive by *file name*, not full path: `sha256sum -c`
     resolves relative to the working directory, and an absolute path would
     break the moment the pair is moved - which is the only situation a
     transport sidecar exists for.
     """
     side = Path(str(archive) + ".sha256")
-    # newline="\n": see volumes.write_parts_sidecar. Python writes CRLF on
-    # Windows by default, and `sha256sum -c` then treats the trailing \r as
-    # part of the filename and fails every line. This shipped broken until
-    # 2026-09-02 - the sidecar existed for exactly one command and did not
-    # survive it.
-    side.write_text(f"{hash_file(archive)}  {archive.name}\n",
-                    encoding="utf-8", newline="\n")
+    # atomic_write_text, not write_text: LF endings (`sha256sum -c` reads a
+    # trailing CR as part of the filename, which shipped broken until
+    # 2026-09-02) and a flushed `.tmp` rename, so an interrupted write cannot
+    # leave a truncated digest that would condemn a good archive.
+    atomic_write_text(
+        side, f"{digest or hash_file(archive)}  {archive.name}\n")
     return side
 
 
@@ -767,7 +781,10 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
                 f"{fmt} export verified no files at all - refusing to publish "
                 f"an archive nothing has vouched for")
 
-        tmp_out.replace(out_path)
+        # D8: flushed, read back and renamed without deleting whatever the
+        # user already had at that path. Same publish path as the .excmp
+        # route - a plain export is not a lesser output.
+        publish(tmp_out, out_path)
         tmp_out = None
     finally:
         if tmp_out is not None:
@@ -1014,6 +1031,20 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
 
         # --- verify then atomically publish ---------------------------------
         _verify_before_publish(tmp_out, ctx)
+        # D8. `expect` stays None on the plain path, deliberately: there, the
+        # only thing between the gate and the rename is the rename, so a
+        # digest taken here could only ever be compared against a digest of
+        # the same untouched file half a second later. It would cost a full
+        # extra pass over the archive and detect nothing - Python's own
+        # `write()`/`close()` raise on a full volume rather than short-writing
+        # silently. publish() still reads the bytes back off the filesystem
+        # after the flush and returns the digest, which is what the sidecar
+        # and the result want.
+        #
+        # With a password the gap is real, and the check is not free-riding on
+        # resemblance: a second process pass reads the plaintext out of temp
+        # and writes a different file. See below.
+        expect: str | None = None
         if password:
             # F1: encrypt *after* the D9 gate and *before* the rename, so the
             # plaintext container never exists at the destination and what
@@ -1024,14 +1055,29 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             # The ciphertext is the only thing that ever lands beside the
             # user's output, and even that as a .tmp until the rename.
             sealed = out_path.with_suffix(out_path.suffix + ".tmp")
+            crypto_digests: dict[str, str] = {}
+            # The one place the anchor is worth a full read: the plaintext is
+            # about to be re-read by a separate pass, from a temp directory,
+            # and what ships is a *different* file derived from it. So measure
+            # what the gate accepted...
+            verified_digest = hash_file(tmp_out)
             try:
-                encrypt_file(tmp_out, sealed, password, keyfile=keyfile)
+                # ...make the encryptor prove it read exactly those bytes (it
+                # is streaming them anyway, so the check itself is free)...
+                encrypt_file(tmp_out, sealed, password, keyfile=keyfile,
+                             expect_src_sha256=verified_digest,
+                             digests=crypto_digests)
             finally:
                 tmp_out.unlink(missing_ok=True)
             tmp_out = sealed
-        if out_path.exists():
-            out_path.unlink()
-        tmp_out.replace(out_path)
+            # ...and hand the ciphertext's streamed digest to the publish, so
+            # its read-back proves the file at the destination is the
+            # ciphertext this run produced and not a truncated tail of it.
+            expect = crypto_digests.get("dst")
+        # No unlink of out_path first: os.replace overwrites atomically, and
+        # deleting the destination only created a window in which the user had
+        # neither yesterday's archive nor today's. See excmp.atomic.
+        published_digest = publish(tmp_out, out_path, expect_sha256=expect)
     finally:
         rmtree_force(job_dir)
         # A cancel or failure between write_container and replace() would
@@ -1041,12 +1087,14 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
 
     # Only now that the archive is published and verified - a sidecar for an
     # archive that does not exist is worse than no sidecar.
-    side = _write_sidecar(out_path) if sidecar else None
+    side = (_write_sidecar(out_path, digest=published_digest)
+            if sidecar else None)
 
     orig = sum(m["size"] for m in ledger.values())
     return CompressResult(
         archive=out_path,
         sidecar=side,
+        sha256=published_digest,
         orig_bytes=orig,
         final_bytes=out_path.stat().st_size,
         routes=manifest.routes,

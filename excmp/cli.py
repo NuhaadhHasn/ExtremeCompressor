@@ -91,8 +91,11 @@ def _post_publish_steps(args, archive, payload: dict, ctx: StageContext) -> None
 
     if getattr(args, "split", None):
         from .volumes import parse_size, split_file, write_parts_sidecar
-        parts = split_file(archive, parse_size(args.split))
-        write_parts_sidecar(parts)
+        # D8: the split already hashes every byte it writes, so the sidecar
+        # costs nothing instead of a second full read of the archive.
+        digests: dict[str, str] = {}
+        parts = split_file(archive, parse_size(args.split), digests)
+        write_parts_sidecar(parts, digests)
         payload["volumes"] = [str(p) for p in parts]
 
 

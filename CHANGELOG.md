@@ -178,6 +178,15 @@ it.
   broken" — which is how archives get deleted (F5, 2026-09-09).
 - **`excmp verify` had no `--password`**, so no encrypted archive could be
   verified from the command line at all (2026-09-09).
+- **`--password` then hung forever under any automation** (2026-09-10). On
+  Windows `getpass.getpass` reads the console with `msvcrt.getwch()` rather
+  than stdin, so `echo pw | excmp verify --password ...` blocked indefinitely.
+  The flag was usable only by a human at a terminal, which defeated the point
+  of adding it: a scheduled integrity sweep, a CI job and a batch script are
+  exactly the callers that want to prove an encrypted archive still restores.
+  A password is now read from stdin when stdin is not a terminal. `--password`
+  still takes no argument - a piped password is in neither the process table
+  nor shell history, which is what argv would have broken.
 - **Eleven unhandled exception shapes in the container parser**, found by
   fuzzing it for the first time. A crafted ledger raised `AttributeError`,
   `TypeError` or `ValueError` out of the parse layer instead of the

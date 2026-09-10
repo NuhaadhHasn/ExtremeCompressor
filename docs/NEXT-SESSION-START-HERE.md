@@ -118,7 +118,7 @@ Nothing on either side of that seam ever tried to decrypt what was published.
 **If you add a factor, a format or a header field, test it through the public
 API, not through the module that implements it.**
 
-### Two more defects came from *running the command*, not from tests
+### Three defects came from *running the command*, not from tests
 
 After the engine fix and a green suite, a real CLI run found that `excmp
 verify` had **no `--password` flag at all** — so no encrypted archive could
@@ -126,6 +126,22 @@ ever be verified from the command line — and that the right password with the
 wrong keyfile printed `error: wrong password`, which is false and sends
 someone hunting for a password they already have. Neither was reachable from
 the test suite as written.
+
+**And the third only appeared when the fixed flag was itself used from a
+script.** `echo pw | excmp verify --deep --password --keyfile k a.excmp` **hung
+indefinitely** and was killed after ten minutes. `getpass.getpass` is
+`getpass.win_getpass` on Windows: it reads with `msvcrt.getwch()`, from the
+*console*, and falls back to stdin only when `sys.stdin is not sys.__stdin__`,
+which piping does not change. So the flag added to make encrypted archives
+verifiable was usable only by a human at a terminal — and the callers who most
+need it are a scheduled sweep, a CI job and a batch script over a folder of
+archives.
+
+The lesson is narrower and more useful than "test the CLI": **a fix is not
+finished until it is used the way the thing it unblocks will be used.** Adding
+`--password` to `verify` was verified by running `verify --password`
+interactively, which is the one context in which the remaining bug is
+invisible.
 
 ### "Green" is a claim about what the tests look at
 

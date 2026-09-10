@@ -1011,9 +1011,25 @@ display scaling — both need a human at the machine.
       the job finished it must have published a genuinely restorable archive,
       and if it stopped it must have published nothing.
 - [ ] D4. **Disk-full simulation** on a small VHDX/subst volume; graceful failure
-- [x] D5. ✅ **DONE 2026-09-09** (branch `phase-d5-d6-d7-hardening`).
+- [x] D5. ✅ **DONE 2026-09-09**, and completed 2026-09-10 (branch
+      `phase-d5-d6-d7-hardening`).
       `excmp verify --deep [--source DIR]`, plus `verify.tree_hash()` and
       `verify.verify_source()`.
+      **2026-09-10: the feature was unreachable from a script and nothing
+      noticed.** `echo pw | excmp verify --deep --password ...` hung
+      indefinitely, because `getpass.getpass` on Windows is `win_getpass`,
+      which reads the *console* via `msvcrt.getwch()` and falls back to stdin
+      only when `sys.stdin is not sys.__stdin__` - which piping does not
+      change. So deep verification of an **encrypted** archive worked only
+      with a human at a terminal, and the callers that most want it are a
+      scheduled sweep, a CI job and a batch script. `_read_secret` now reads
+      one line from stdin when stdin is not a tty; `--password` still takes no
+      argument, because argv is in the process table and in shell history
+      while a pipe is in neither. Measured after the fix: the same command
+      returns in **0.8 s**, and its tree SHA-256 matches the API path exactly.
+      **The lesson: a fix is not finished until it is used the way the thing
+      it unblocks will be used.** Adding `--password` was checked by running it
+      interactively - the one context where the remaining bug is invisible.
       **`verify_archive` already was the `t` half** - a full restore with
       every file re-hashed against the ledger - so what was missing was
       zpaqfranz's *other* verb: `v -ssd`, re-reading the **originals** off

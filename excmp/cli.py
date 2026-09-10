@@ -305,19 +305,54 @@ def _keyfile(args: argparse.Namespace) -> Path | None:
     return path
 
 
-def _ask_password(args: argparse.Namespace) -> str | None:
-    """Prompt, never accept a value on the command line.
+def _read_secret(prompt: str) -> str:
+    """One password, from a console if there is one and from stdin if not.
 
-    ``--password`` deliberately takes no argument. A password given as argv
-    is visible in the process table for the life of the command and lands in
-    the shell's history file for much longer than that - and this project
-    already refuses to echo one back in an error message
-    (``excmp.ram.parse_extra_args``).
+    ``--password`` still takes no argument, for the reason it never did: a
+    password given as argv is visible in the process table for the life of the
+    command and lands in the shell's history file for much longer than that.
+
+    **The stdin branch is not a convenience, it is a bug fix.** Measured
+    2026-09-10: `echo pw | excmp verify --password ... archive.excmp` hung
+    indefinitely. `getpass.getpass` is `getpass.win_getpass` on Windows, which
+    reads with `msvcrt.getwch()` - from the *console*, not from stdin - and
+    falls back to a stdin read only when `sys.stdin is not sys.__stdin__`.
+    Piping does not change that identity, so the pipe was ignored and the
+    process blocked on a console nobody was typing at.
+
+    That made `verify --password` usable only by a human at a terminal, which
+    defeats the point of having it: the callers who most want to prove an
+    encrypted archive still restores are a scheduled sweep, a CI job and a
+    batch script over a folder of them, and all three would hang with no
+    output.
+
+    A piped password appears in neither the process table nor shell history,
+    so this keeps the property that argv would have broken. It is the same
+    escape hatch `gpg --passphrase-fd` and `ssh-add` offer.
     """
+    import getpass
+
+    if sys.stdin is not None and sys.stdin.isatty():
+        return getpass.getpass(prompt)
+    line = sys.stdin.readline()
+    if not line:
+        # "" is not a password. Accepting it produces "wrong password" for a
+        # caller whose actual problem is that they piped nothing, and that
+        # message sends people hunting for a password they already have.
+        raise ValueError(
+            "no password on stdin - `--password` reads one line from stdin "
+            "when stdin is not a terminal, so pipe it in (`echo pw | ...`) "
+            "or run the command interactively")
+    # Only the line ending. A passphrase legitimately contains spaces, and
+    # `echo pw |` appends the newline that would otherwise become part of it.
+    return line.rstrip("\r\n")
+
+
+def _ask_password(args: argparse.Namespace) -> str | None:
+    """The archive's existing password, or None when it was not asked for."""
     if not getattr(args, "password", False):
         return None
-    import getpass
-    return getpass.getpass("Archive password: ")
+    return _read_secret("Archive password: ")
 
 
 def _new_password(args: argparse.Namespace) -> str | None:
@@ -330,7 +365,6 @@ def _new_password(args: argparse.Namespace) -> str | None:
     """
     if not getattr(args, "password", False):
         return None
-    import getpass
     # F5. The paragraph above used to be the whole of it: the clearest
     # statement of the consequence anywhere in this codebase, in a docstring,
     # printed to nobody, while the prompt below said only "Password for the
@@ -351,11 +385,17 @@ def _new_password(args: argparse.Namespace) -> str | None:
               f"is exactly as final.", file=sys.stderr)
         print("Keep that file itself, not a re-saved or re-downloaded copy - "
               "it has to match byte for byte.", file=sys.stderr)
-    first = getpass.getpass("Password for the new archive: ")
+    first = _read_secret("Password for the new archive: ")
     if not first:
         raise ValueError("empty password - nothing was written")
-    if getpass.getpass("Type it again: ") != first:
-        raise ValueError("the two passwords did not match - nothing was written")
+    # The confirmation is for a human's typo, and it is impossible for a pipe:
+    # a second read gets EOF, which would compare unequal and refuse every
+    # scripted compress. One line in, one password - the caller of a script
+    # already has the value written down somewhere it can be re-read.
+    if sys.stdin is not None and sys.stdin.isatty():
+        if _read_secret("Type it again: ") != first:
+            raise ValueError(
+                "the two passwords did not match - nothing was written")
     return first
 
 

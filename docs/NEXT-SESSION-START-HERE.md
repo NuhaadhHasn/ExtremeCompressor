@@ -269,6 +269,35 @@ language a user can pick". The loader and the `tr()` calls stay where they
 are: both are shipped, harmless and no-ops without `.qm` files, and deleting
 working code to express a decision is its own risk.
 
+### What 2026-09-11 closed, and the one correction it forced
+
+**G7 and B9 were the same finding.** `lzma2_decompress_ram` was already
+source-pinned and already correct - 66 MiB predicted, **71 MiB measured** - but
+`build_extract_cmd` never passed `-mmt`, so a real decode used **255 MiB** and
+the figure the app showed was **3.9x optimistic**. G7's "cap dict/window" was
+impossible (the archive fixes both); the decoder thread count was the whole
+lever, worth **3.6x**. `excmp extract --low-memory` now exists, and on two
+cores it measured *faster* as well - which is deliberately **not** why it is
+opt-in.
+
+**Compression under-booked too, and my first fix was wrong.** A flat +32 MiB
+baseline fitted the three large measurements and then predicted 64.7 MiB for a
+job that measures 15.8 - re-creating the "6.0 GB for a 371 KB job" failure.
+The margin is proportional now. **An existing test broke on the flat version
+and was right to break.**
+
+**⚠️ And I had to correct a roadmap entry I wrote the same day.** I recorded
+that LOLZ was an installer component, not a codec, after searching four repack
+toolsets and finding it only in a credits line. The owner produced the binary:
+`lolz v22c4b`, adaptive rANS, round-trips byte-identically, and beats
+`7z -mx9` by **+11.93% on a medical image, +2.89% on float data, +2.22% on a
+binary executable** while **losing 2.93% on English prose**. Absence of
+evidence in four repos was not evidence of absence, and the entry stated the
+stronger claim. It is a per-category specialist like B4's FLAC - and it is
+**measured, not built**: the gate before any code is a comparison against
+`precomp → 7z`, because 7-Zip alone is not what this app ships and three of
+four proposed specialists have already lost to that chain.
+
 ### Two items whose premises need re-examining before you start
 
 **G7 (RAM-limited extraction) may not mean what the roadmap thinks.** At
@@ -355,12 +384,12 @@ inspection; F2's was found by an audit and closed the same day.
 | item | what | note |
 |---|---|---|
 | **D7** | CI | ⏳ amber until a run exists — section 4 |
-| **B9** | finish the RAM estimator formula | `-md=192m` and `-mqs` settled; measurable |
+| ~~**B9**~~ | ~~RAM estimator formula~~ | ✅ **done 2026-09-11** - it was unreachable, not unfinished |
 | **I6** | "compare presets on this input" | `tools/bench.py` has the harness |
 | ~~**I7**~~ | ~~i18n pipeline~~ | ❌ **won't do** — owner's decision 2026-09-10 |
-| **G7** | RAM-limited extraction | **re-scope first**, see section 4 |
-| **D4** | disk-full simulation | **needs an elevated session** for a VHDX |
-| **B12a** | FreeArc as an optional final codec | **retargeted**: LOLZ is an installer component, not a codec. Measure before building |
+| ~~**G7**~~ | ~~RAM-limited extraction~~ | ✅ **done 2026-09-11** - `--low-memory`, 3.6x less peak RAM |
+| **D4** | disk-full simulation | 🟡 **injection half written**; the real-volume half needs elevation |
+| **B12** | LOLZ as a per-category codec | ⚠️ **measured, not built.** +11.93% on images, −2.93% on text. Gate: compare against `precomp → 7z`, not 7-Zip alone |
 
 ### Large, or blocked
 

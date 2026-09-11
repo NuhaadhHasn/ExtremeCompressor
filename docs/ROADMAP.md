@@ -107,16 +107,49 @@ OSI rule comes back before anything ships.
 - [ ] B12. **An optional final codec — retargeted 2026-09-10 from LOLZ to
       FreeArc, because LOLZ is not what this item assumed it was.**
 
-      **What LOLZ turned out to be.** Four repack toolsets were cloned and
-      searched (`ExtremeCompressor-refs/`: Mini-Compressor, Repack-Tools,
-      Hakkuraifu-Repacker, plus the FreeArc mirrors already there). There is no
-      `lolz.exe` in any of them and nothing invokes one. "LOLZ" appears
-      **only in a credits line** — `ISDONE, LOLZ, UELR, MSC (ProFrager)` at
-      `Mini-Compressor/README.md:122` and `Mini-Compressor/Unit2.pas:113` —
-      naming the ISDone / `unarc.dll` family, which unpacks *inside an Inno
-      Setup installer at install time*. That is an installer component, not a
-      codec we could put in a chain. **Deferred to Phase H**, where an
-      installer-side unpacker actually belongs.
+      ### ⚠️ CORRECTION, same day: LOLZ is a real codec and it was measured
+
+      **An earlier version of this entry, written hours before, said LOLZ was
+      an installer component and deferred it to Phase H. That was wrong.** The
+      reasoning was: four repack toolsets cloned and searched, no `lolz.exe`
+      in any of them, and `LOLZ` appearing only in a credits line — `ISDONE,
+      LOLZ, UELR, MSC (ProFrager)` at `Mini-Compressor/README.md:122`. All of
+      that is still true, and **absence of evidence in four repos was not
+      evidence of absence.** The owner produced the binary.
+
+      `lolz v22c4b [Dec 30 2018]`. Adaptive rANS, with dedicated models for
+      DXT textures and raw graphics; `-d16..2047` MB dictionary, `-mt1..16`,
+      `-mtt0..1`. Compress `lolz_x64.exe {options} <in> <out>` (confirmed from
+      its own shipped `arc.ini`), decompress `cls-lolz_x64.exe d <in> <out>`.
+      **Round-trips byte-identically** on a 3,000,000 B sample. SHA-256 of the
+      distribution recorded in
+      [benchmarks/2026-09-11](benchmarks/2026-09-11-ram-and-lolz.md).
+
+      **Measured, same dictionary, against `7z -mx9 -md=64m`:**
+
+      | data | 7-Zip | LOLZ | delta |
+      |---|---:|---:|---:|
+      | `x-ray` medical image | 4,479,879 | **3,945,563** | **+11.93%** |
+      | `sao` float catalogue | 4,413,934 | **4,286,259** | **+2.89%** |
+      | `mozilla` binary exe | 4,993,294 | **4,882,426** | **+2.22%** |
+      | `osdb` database | 2,851,804 | **2,823,379** | **+1.00%** |
+      | `dickens` English text | **871,193** | 896,746 | **−2.93%** |
+
+      So the "~5-10%" is real **on the data it was claimed for**, and LOLZ is
+      a *per-category specialist* — like B4's FLAC (43% on WAV, useless
+      elsewhere), and exactly what the analyzer's per-file routing exists to
+      exploit. It belongs behind a category test, never as a blanket default.
+
+      **What has NOT been established, and gates any code:**
+      (1) it has not been measured against **`precomp → 7z`**, which is what
+      this app actually ships — 7-Zip alone is not the baseline, and three of
+      four proposed specialists have already lost to that chain;
+      (2) nothing larger than 12 MB has been through it, and no game/DXT data
+      at all — its headline claim is untested for want of a corpus, the same
+      gap that blocks B6;
+      (3) provenance is a forum download of a 2018 closed-source binary, so it
+      gets the untrusted-stage treatment: pinned hash, no trust in its exit
+      code, post-restore SHA-256 decides whether the archive publishes.
 
       **B12a — FreeArc, the candidate that is actually testable.** `Arc.exe`
       (3,647,488 B, sha256 `a2bbdde6…e905`) plus `facompress.dll` /
@@ -905,7 +938,27 @@ display scaling — both need a human at the machine.
       them from a text corpus would be the exact failure B8 exists to correct.
       Doc 09 also had a stale fact fixed: it described our chain as
       `precomp→srep→7z`, and SREP left every chain in B11.
-- [~] B9. 🟡 **PARTLY DONE 2026-09-02** — `-mqs` is now always passed (measured never harmful, worth 0.13% on source trees; 7-Zip leaves it off by default). **`-md=192m` was measured and deliberately NOT adopted: zero bytes of difference on all three corpora, up to 27% more time.** It stays a user knob, not a default. Default threads is already 2. The remaining part is the exact RAM estimator formula. Original item: **RAM caps + thread defaults** (verified formulas, [research/12](research/12-lightweight-and-performance.md);
+- [~] B9. 🟡 **PARTLY DONE 2026-09-02** — `-mqs` is now always passed (measured never harmful, worth 0.13% on source trees; 7-Zip leaves it off by default). **`-md=192m` was measured and deliberately NOT adopted: zero bytes of difference on all three corpora, up to 27% more time.** It stays a user knob, not a default. Default threads is already 2. **✅ B9 FINISHED 2026-09-11 — the formula was not unfinished, it was
+      *unreachable*.** Numbers:
+      [benchmarks/2026-09-11](benchmarks/2026-09-11-ram-and-lolz.md); harness
+      `tools/ram_backtest.py`, peak working set via `GetProcessMemoryInfo` on
+      the exited child rather than a sampled poll.
+      `lzma2_decompress_ram` was already source-pinned to
+      `CompressDialog.cpp:3016` and already right - 66 MiB predicted at
+      `-md=64m` against **71 MiB measured single-threaded**. But nothing ever
+      passed `-mmt`, so a real decode used 255 MiB and **the figure the app
+      showed was 3.9x optimistic** on the one path where optimism costs most.
+      "Finish the formula" was really "make its precondition true" = G7.
+      **Compression under-booked too** (198/176 = 1.12 at `-md=16m`,
+      686/680 = 1.01 at 64m) - the dangerous direction, because under-booking
+      is what lets a job be accepted and then thrash. **The first fix was
+      wrong and a fourth measurement caught it:** a flat +32 MiB baseline
+      fitted all three large rows, then predicted 64.7 MiB for a job measuring
+      15.8 - re-creating the "6.0 GB for a 371 KB job" failure
+      `effective_dict` exists to prevent. The margin is proportional instead;
+      every measured row now over-books and a 300 KB job still reports
+      37.6 MiB. An existing test broke on the flat version and was right to.
+      Original item: **RAM caps + thread defaults** (verified formulas, [research/12](research/12-lightweight-and-performance.md);
       **corrected by [19 §3](research/19-source-study-7zip.md)**):
       change default `threads` from 4 to **2** — but the reason is that at mx9 each
       LZMA2 **block** (not "chunk") uses 2 threads (match-finder + coder), so
@@ -1643,9 +1696,27 @@ Almost all of it is a thin wrapper over the `7z.exe` we already shell out to.
       (and per split volume) + `excmp verify --transport`. This is the maintained
       equivalent of the one verification habit repack users already have
       (`fitgirl-bins.md5` + QuickSFV)
-- [ ] G7. **RAM-limited extraction mode** — mirror FitGirl's "limit to 2 GB" option:
-      cap dict/window/threads and spill to temp when RAM is short, because archives
-      get extracted on weaker machines than they were created on
+- [x] G7. ✅ **DONE 2026-09-11** — `excmp extract --low-memory`, and the
+      lever was never the dictionary.
+      Numbers: [benchmarks/2026-09-11](benchmarks/2026-09-11-ram-and-lolz.md).
+      **Two thirds of this item was not available to an extractor.** The LZMA2
+      dictionary is fixed by whoever *created* the archive and the zstd window
+      comes out of the frame header (K4's read ceiling) - neither is the
+      extractor's to choose. The decoder thread count is, and it is worth more
+      than the other two would have been: **255 MiB with no switch, 71 MiB at
+      `-mmt=1`, a 3.6x drop**, while `-mmt=2` and `-mmt=4` both measured
+      identical to no switch at all. Each LZMA2 decoder thread holds its own
+      dictionary buffer, so the flag that looks like a speed knob is the
+      memory knob.
+      **And it measured *faster* here** - 2.5-2.7 s against 2.9-3.0 s, twice
+      each, because two cores lose more to contention than they gain. One
+      corpus on one machine, so it stays **opt-in**: generalising a speed
+      result from a single sample is the mistake B8 caught in the estimator.
+      Implemented on `StageContext.extract_threads` rather than as a stage
+      argument, because the chain drives stages through the generic
+      `Stage.extract(src, dst, ctx)`. 14 tests, one of which asserts the
+      context value actually *reaches* the command line - F2's defect this
+      same session was a parameter plumbed into a signature and no call site.
 - [x] G8. ✅ **DONE** (shipped in UI v3 w3; the box was never ticked — verified
       2026-09-09, `excmp hash --json` works). Hash tool (`excmp hash`, stdlib hashlib) — cheap credibility, fits the brand
 - [x] **G9. ✅ DONE 2026-09-02** — deduplicate stored files against the ledger.

@@ -28,6 +28,33 @@ _DEFAULT_DICT = {
 # 7zHandlerOut.cpp:201-226 — LZMA2's internal block size is dict*4, clamped.
 _CHUNK_MIN, _CHUNK_MAX = 1 * MIB, 256 * MIB
 
+#: Safety margin on the allocation model, because it **under-booked** against
+#: measurement - the dangerous direction, since under-booking is what lets a
+#: job be accepted and then thrash (B9, 2026-09-11, Silesia, peak working set
+#: from `GetProcessMemoryInfo`; harness `tools/ram_backtest.py`):
+#:
+#: | job | model | measured | ratio |
+#: |---|---|---|---|
+#: | `-md=16m`, mmt=2 | 176 MiB | **198 MiB** | **1.12** |
+#: | `-md=64m`, mmt=2 | 680 MiB | **686 MiB** | **1.01** |
+#: | `-md=192m`, mmt=2 | 2,024 MiB | 2,006 MiB | 0.99 |
+#: | 300 KB input, mmt=4 | 32.7 MiB | 15.8 MiB | 0.48 |
+#:
+#: **A flat term was tried first and measurement rejected it.** Fitting only
+#: the three large rows gives `10.25 x dict + 34 MiB` against the model's
+#: `10.5 x dict + 8 MiB`, which reads like a missing constant - the process,
+#: its DLLs, the heap 7-Zip needs regardless, none of which `CompressDialog`
+#: has any reason to count. Adding 32 MiB fixed all three and then predicted
+#: **64.7 MiB for a job that measures 15.8** - re-creating the exact failure
+#: `effective_dict` exists to prevent, where a 371 KB job was quoted 6.0 GB
+#: in the one panel that must never frighten anyone.
+#:
+#: So the margin is proportional instead. It covers every measured
+#: under-book, and a small job stays small: 1.15 x 32.7 = 37.6 MiB, still
+#: generous against 15.8 but not alarming. The tiny-job over-book is
+#: pre-existing and lives in the multi-block branch, not here.
+_SAFETY_MARGIN = 1.15
+
 # B9. The target is 16 GB / 2 cores, and the cap there is 512 MiB: past that,
 # mx9 multithreaded LZMA2 can outgrow physical memory (doc 19 §3).
 _HARD_DICT_CAP = 512 * MIB
@@ -73,9 +100,11 @@ def lzma2_compress_ram(dict_bytes: int, threads: int = 2, level: int = 9) -> int
     per_block = size1 + window
 
     if blocks == 1:
-        return per_block                    # solid: no separate chunk buffers
-    chunk = max(_CHUNK_MIN, min(_CHUNK_MAX, dict_bytes * 4))
-    return blocks * (per_block + chunk) + chunk
+        total = per_block                   # solid: no separate chunk buffers
+    else:
+        chunk = max(_CHUNK_MIN, min(_CHUNK_MAX, dict_bytes * 4))
+        total = blocks * (per_block + chunk) + chunk
+    return int(total * _SAFETY_MARGIN)
 
 
 def effective_dict(dict_bytes: int, input_bytes: int) -> int:
@@ -95,9 +124,34 @@ def effective_dict(dict_bytes: int, input_bytes: int) -> int:
     return min(size, dict_bytes)
 
 
-def lzma2_decompress_ram(dict_bytes: int) -> int:
-    """`decompressMemory = dict + (2 << 20)` (CompressDialog.cpp:3016)."""
-    return int(dict_bytes) + 2 * MIB
+def lzma2_decompress_ram(dict_bytes: int, threads: int = 1) -> int:
+    """`decompressMemory = dict + (2 << 20)` (CompressDialog.cpp:3016).
+
+    **That figure is per decoder thread, and it was measured** (B9/G7,
+    2026-09-11, Silesia at ``-md=64m``, peak working set via
+    `GetProcessMemoryInfo`; harness `tools/ram_backtest.py`):
+
+    | extract | peak |
+    |---|---|
+    | `-mmt=1` | **71 MiB** against 66 MiB predicted |
+    | no switch / `-mmt=2` / `-mmt=4` | **255 MiB** |
+
+    So the source-pinned formula was never wrong - it was *unreachable*,
+    because `build_extract_cmd` passed no `-mmt` at all and 7-Zip therefore
+    decoded with several dictionary buffers live at once. The number the app
+    computed was ~3.9x optimistic against what 7-Zip actually did, on the one
+    path where being optimistic matters most: an archive is extracted on
+    whatever machine it lands on, which is routinely weaker than the one that
+    made it.
+
+    ``threads`` multiplies the per-thread figure. It is an **upper bound, not
+    a fit**: 7-Zip's decoder thread count is not simply the core count - this
+    2-core machine produced a peak consistent with four buffers - so
+    over-booking is deliberate. Under-booking is the failure that lets a job
+    be accepted and then thrash.
+    """
+    per_thread = int(dict_bytes) + 2 * MIB
+    return per_thread * max(1, int(threads))
 
 
 def max_safe_dict(total_ram_bytes: int, threads: int = 2) -> int:

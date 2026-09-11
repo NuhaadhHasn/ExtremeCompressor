@@ -36,6 +36,20 @@ class StageSkip(Exception):
 class StageContext:
     temp_dir: Path
     threads: int = 0  # 0 = tool default / all cores
+    #: G7. Decoder threads on **extraction**, 0 = tool default.
+    #:
+    #: Separate from `threads` on purpose: that one sizes the *compressor*,
+    #: and the two have opposite defaults. Compression wants every core; an
+    #: extraction that has to fit a memory budget wants exactly one, because
+    #: each LZMA2 decoder thread holds its own dictionary buffer.
+    #:
+    #: Measured 2026-09-11 (Silesia, `-md=64m`, peak working set): **255 MiB
+    #: with no switch, 71 MiB at `-mmt=1`** - 3.6x - while `-mmt=2` and
+    #: `-mmt=4` both stayed at 255 MiB. It lives on the context rather than in
+    #: a parameter because the chain drives stages through the generic
+    #: `Stage.extract(src, dst, ctx)`, so a new argument would have to be
+    #: added to every stage that cannot use it.
+    extract_threads: int = 0
     progress_cb: Callable[[str, float], None] = lambda stage, pct: None
     log_cb: Callable[[str, str], None] = lambda stage, line: None
     cancel: threading.Event = field(default_factory=threading.Event)

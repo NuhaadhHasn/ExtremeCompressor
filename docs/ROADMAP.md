@@ -104,14 +104,37 @@ the verification gate like everything else.
 If the repo is ever made public again, **this entire section reverts** and the
 OSI rule comes back before anything ships.
 
-- [ ] B12. **LOLZ as an optional final codec** (new 2026-09-01, unblocked by the
-      licence change). ~5-10% over LZMA2 on game data per scene reports —
-      **unverified by us**, so B8 must measure it before any UI copy quotes a
-      number. Closed-source, so: treat exactly like every other untrusted
-      stage — pinned binary, `-t2`, no trust in its exit code, and the
-      post-restore SHA-256 comparison is what decides whether the archive
-      publishes. Route it as an Insane-tier alternative to the 7-Zip stage,
-      never as a default, and degrade gracefully when the binary is absent.
+- [ ] B12. **An optional final codec — retargeted 2026-09-10 from LOLZ to
+      FreeArc, because LOLZ is not what this item assumed it was.**
+
+      **What LOLZ turned out to be.** Four repack toolsets were cloned and
+      searched (`ExtremeCompressor-refs/`: Mini-Compressor, Repack-Tools,
+      Hakkuraifu-Repacker, plus the FreeArc mirrors already there). There is no
+      `lolz.exe` in any of them and nothing invokes one. "LOLZ" appears
+      **only in a credits line** — `ISDONE, LOLZ, UELR, MSC (ProFrager)` at
+      `Mini-Compressor/README.md:122` and `Mini-Compressor/Unit2.pas:113` —
+      naming the ISDone / `unarc.dll` family, which unpacks *inside an Inno
+      Setup installer at install time*. That is an installer component, not a
+      codec we could put in a chain. **Deferred to Phase H**, where an
+      installer-side unpacker actually belongs.
+
+      **B12a — FreeArc, the candidate that is actually testable.** `Arc.exe`
+      (3,647,488 B, sha256 `a2bbdde6…e905`) plus `facompress.dll` /
+      `facompress_mt.dll` are in `ExtremeCompressor-refs/Repack-Tools/APEX/`.
+      Rules, unchanged from the original item: pinned binary, no trust in its
+      exit code, and the post-restore SHA-256 comparison decides whether the
+      archive publishes. Route it as an Insane-tier alternative to the 7-Zip
+      stage, never a default, degrading when absent.
+
+      **Two things to settle before any code.** (1) **Measure first** — B8's
+      rule, and three of four proposed specialists have already lost to the
+      `precomp → 7z` route that is already here. Run it on Silesia, whose
+      payload size for `normal` is a recorded **48,688,221 B**. (2) **Do not
+      pin the binary from `Repack-Tools`** — that bundle has no licence file
+      at all while redistributing GPL binaries. FreeArc is GPL and its source
+      is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
+      `Arc.exe` as a subprocess like every other tool, fetched from upstream
+      with its own licence, never from the bundle.
 
 ---
 
@@ -1756,10 +1779,22 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       sample as real queue jobs, print **measured** ratios onto the preset cards.
       Upgrades our honesty brand from estimate to measurement; `tools/bench.py`
       already has the harness
-- [ ] I7. i18n pipeline: `pyside6-lupdate`/`lrelease` workflow + first `.ts` + Language
-      combo ("takes effect after restart"). Every string is already in `self.tr()` and
-      the loader already exists — this is the cheapest remaining step. Unlocks
-      Dhivehi/Sinhala/Tamil
+- [~] I7. ❌ **WON'T DO — decided 2026-09-10 by the owner. Do not build this,
+      and do not re-open it in a later session.**
+      Original item: i18n pipeline (`pyside6-lupdate`/`lrelease` + first `.ts` +
+      Language combo), on the grounds that it was "the cheapest remaining step".
+      **What the check found before the decision:** the *plumbing* is real —
+      `gui/app.py:18` `_install_translator` already builds a `QTranslator` and
+      reads `QLocale.system().name()`, and **344** strings across `gui/` are
+      already wrapped in `self.tr()`. What does **not** exist is a single
+      translation: no `.ts`, no `.qm`, no `translations/` directory anywhere in
+      the tree. So the feature was not "nearly done", it was "nothing a user
+      could pick", and the owner's call was to stop rather than finish it.
+      **The existing loader stays.** It is ~10 lines, it is already shipped, it
+      is a no-op with no `.qm` files present, and deleting working code to
+      express a decision is its own risk. `self.tr()` also stays everywhere it
+      already is - removing 344 call sites would be a large diff with no
+      benefit. Neither is a foothold for re-opening this.
 - [x] I8. ✅ **DONE 2026-09-03** — `gui/widgets/treemap.py` via squarify
       (Apache-2.0). Behind the same disclosure as the breakdown bar, which it
       complements rather than replaces: a bar 2% wide is invisible whatever it

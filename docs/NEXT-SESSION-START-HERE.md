@@ -261,9 +261,13 @@ and measurable.
 cards. `tools/bench.py` already has the harness, and B8 made the estimator
 trustworthy enough for this to be honest rather than embarrassing.
 
-**I7 — the i18n pipeline.** Every string is already in `self.tr()` and the
-loader exists, so this is `pyside6-lupdate`/`lrelease` plus a Language menu.
-**Do not invent Dhivehi** — build the pipeline and let the user translate.
+**I7 — ❌ WON'T DO. Decided by the owner 2026-09-10. Do not build it and do
+not re-open it.** The loader at `gui/app.py:18` is real and 344 strings are
+already in `self.tr()`, but there is not one `.ts`, `.qm` or `translations/`
+directory in the tree — so the feature was never "nearly done", it was "no
+language a user can pick". The loader and the `tr()` calls stay where they
+are: both are shipped, harmless and no-ops without `.qm` files, and deleting
+working code to express a decision is its own risk.
 
 ### Two items whose premises need re-examining before you start
 
@@ -330,7 +334,7 @@ are not comparable to B8's.
 **Plan mode is NOT needed for the normal `/next` flow.** Turn it on for
 **B6** (its DLL-bootstrap flaw is an architecture decision touching the
 lossless guarantee) and **Phase H** (large, and H5 conflicts with B6). Skip it
-for B9, I6, I7, G7.
+for B9, I6, G7.
 
 **Rename the session as soon as you know the phase.** That instruction now
 lives in `.claude/commands/next.md` where the command itself will load it,
@@ -353,10 +357,10 @@ inspection; F2's was found by an audit and closed the same day.
 | **D7** | CI | ⏳ amber until a run exists — section 4 |
 | **B9** | finish the RAM estimator formula | `-md=192m` and `-mqs` settled; measurable |
 | **I6** | "compare presets on this input" | `tools/bench.py` has the harness |
-| **I7** | i18n pipeline | cheapest remaining GUI step; **do not invent Dhivehi** |
+| ~~**I7**~~ | ~~i18n pipeline~~ | ❌ **won't do** — owner's decision 2026-09-10 |
 | **G7** | RAM-limited extraction | **re-scope first**, see section 4 |
 | **D4** | disk-full simulation | **needs an elevated session** for a VHDX |
-| **B12** | LOLZ as an optional final codec | unverified ~5-10%; measure the baseline first |
+| **B12a** | FreeArc as an optional final codec | **retargeted**: LOLZ is an installer component, not a codec. Measure before building |
 
 ### Large, or blocked
 

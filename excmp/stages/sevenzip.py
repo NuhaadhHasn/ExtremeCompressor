@@ -129,16 +129,39 @@ class SevenZipStage(Stage):
 
     def build_extract_cmd(self, src: Path, dst: Path, exe: str,
                           include: list[str] | None = None,
-                          password: str | None = None) -> list[str]:
+                          password: str | None = None,
+                          threads: int | None = None) -> list[str]:
         """Split out for the same reason ``build_compress_cmd`` is: so the
         switches can be asserted without running 7-Zip.
 
         ``-p`` is **always** present. Before G2 this command had none at all,
         and an encrypted archive dropped on the Extract tab froze the app on
         an invisible prompt - shipped behaviour on main, not a new risk.
+
+        ``threads`` is G7's whole mechanism. The roadmap asked to "cap
+        dict/window" on extraction, which is not available: the dictionary is
+        fixed by whoever *created* the archive and the zstd window comes out
+        of the frame header. The decoder thread count is the one real lever,
+        and it is a large one - measured 2026-09-11 on Silesia at ``-md=64m``:
+        **255 MiB with no switch, 71 MiB at ``-mmt=1``**, a 3.6x drop, while
+        `-mmt=2` and `-mmt=4` both stayed at 255 MiB.
+
+        It also measured *faster* single-threaded on this 2-core machine
+        (2.5-2.7 s against 2.9-3.0 s), because the extra decoder threads cost
+        more in contention than they win. That is one corpus on one machine
+        and is **not** why this is opt-in - it is opt-in because generalising
+        a speed result from a single 2-core sample to every machine is the
+        mistake B8 caught in the estimator.
+
+        ``None``, ``0`` and negatives emit no switch at all. ``-mmt=0`` means
+        *use every core* to 7-Zip, the exact opposite of what a caller asking
+        for a RAM limit wants, so an unusable value is dropped rather than
+        forwarded.
         """
         cmd = [exe, "x", "-bsp1", "-y", f"-p{password or HANG_GUARD_PASSWORD}",
                f"-o{dst}"]
+        if threads is not None and int(threads) >= 1:
+            cmd.append(f"-mmt={int(threads)}")
         for name in include or []:
             # `-i!` patterns are matched against archive-internal paths. 7-Zip
             # has no "literal" mode, so a member genuinely called `a[1].txt`
@@ -153,7 +176,12 @@ class SevenZipStage(Stage):
                 include: list[str] | None = None) -> Path:
         src, dst = Path(src), Path(dst)
         dst.mkdir(parents=True, exist_ok=True)
-        cmd = self.build_extract_cmd(src, dst, self._exe(), include, password)
+        # G7: `ctx.extract_threads` is 0 for "tool default", which is the
+        # shipped behaviour and must stay reachable - `or None` maps it back to
+        # "emit no switch" rather than to `-mmt=0`, which means *all cores*.
+        cmd = self.build_extract_cmd(src, dst, self._exe(), include, password,
+                                     threads=getattr(ctx, "extract_threads", 0)
+                                     or None)
         run_tool(cmd, ctx, self.id, _parse_percent)
         return dst
 

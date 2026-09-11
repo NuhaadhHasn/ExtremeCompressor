@@ -11,6 +11,7 @@ Guarantees:
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import tempfile
@@ -232,6 +233,23 @@ def _relabel(reason: str, path: Path, rel: str) -> str:
     if rel and reason.startswith(path.name + ":"):
         return rel + reason[len(path.name):]
     return reason
+
+
+#: Errnos from a staging copy that are about the **volume**, not the file, and
+#: must therefore abort rather than be skipped past (D4).
+#:
+#: `ENOSPC` is the one that was measured: a full destination turned into "they
+#: may be open in another program", which sends the user to close programs
+#: that are not the problem. `EDQUOT` is the same condition behind a quota and
+#: `EFBIG`/`EROFS` are equally unfixable by moving to the next file. Anything
+#: not listed here keeps K3's graceful per-file skip, which exists because one
+#: locked file used to destroy an entire job.
+_FATAL_COPY_ERRNOS = frozenset({
+    errno.ENOSPC,      # no space left on device
+    errno.EDQUOT,      # over the disk quota
+    errno.EFBIG,       # file too large for the filesystem
+    errno.EROFS,       # read-only filesystem
+})
 
 
 def _nothing_readable(skipped: list[str]) -> str:
@@ -924,6 +942,25 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 try:
                     shutil.copy2(f, target)
                 except OSError as exc:
+                    # D4: a full destination volume raises OSError from this
+                    # very call, and K3's skip-and-carry-on is exactly wrong
+                    # for it. Measured before this guard existed: a disk-full
+                    # job skipped every file in turn and then failed with
+                    # "none of the 2 file(s) selected could be read - they may
+                    # be open in another program". Every word of that is
+                    # false. The files are readable, the *destination* is
+                    # full, and the user is sent to close programs that are
+                    # not the problem.
+                    #
+                    # The distinction is per-file versus per-volume. A
+                    # share-mode denial is a property of one file and
+                    # skipping it is the graceful thing; ENOSPC is a property
+                    # of the volume, so every subsequent file will fail the
+                    # same way and "skip it" just launders the real cause.
+                    # Narrow on purpose - K3 exists because one locked file
+                    # used to destroy a whole job, and that stays true.
+                    if exc.errno in _FATAL_COPY_ERRNOS:
+                        raise
                     # K3, last window: hashed successfully and locked before
                     # the copy. It must come out of the ledger as well, or D9
                     # would refuse to publish an archive whose ledger promises

@@ -104,6 +104,49 @@ the verification gate like everything else.
 If the repo is ever made public again, **this entire section reverts** and the
 OSI rule comes back before anything ships.
 
+- [ ] B16. **xtool as a drop-in Precomp replacement — the half of B6 that is
+      NOT blocked** (new 2026-09-15, from the author's own thread,
+      encode.su/threads/4000, read 2026-09-15).
+      **B6 was framed as "xtool + Oodle" and shelved because this machine has
+      no Oodle game folder and because the DLL-bootstrap flaw would make
+      archives restore only where they were made. Both are true of the *Oodle*
+      codec. Neither is true of the rest of xtool.**
+      Razor12911's published benchmark, GTA V `x64w.rpf`, 937,340,928 B, final
+      compression by 7-Zip 21.07 (lzma2 ultra, 64 MB dict, 12 threads, solid)
+      in every row:
+
+      | route | time | final bytes |
+      |---|---:|---:|
+      | 7-Zip alone | - | 818,957,826 |
+      | `precomp048 -brute -t+ -cn -d0` | 214.6 s | 589,588,701 |
+      | `xtool precomp -c64mb -t1 -mzlib` | 169.4 s | **586,915,286** |
+      | `xtool precomp -c64mb -t4 -mzlib` | **45.6 s** | 586,915,318 |
+
+      **2,673,415 bytes better than Precomp and 4.7x faster**, on the `-mzlib`
+      path - no Oodle, no game DLL, nothing that cannot run here. Precomp is
+      single-threaded and that is our known pipeline bottleneck; xtool is
+      multi-threaded across every codec.
+      Also natively: `reflate`, `preflate`, `zstd`, `lz4f`, `flac`, `packjpg`,
+      `brunsli` - and stdin/stdout, so it can be driven exactly the way we
+      drive everything else.
+      **Its unrestorable-stream story is the thing to check first.** The author
+      states that streams which cannot be restored losslessly are patched with
+      **xdelta**. That is a real answer rather than a silent failure, but it
+      means the tool has a category of input it cannot invert, so our D9
+      post-restore SHA-256 gate matters more here, not less. Confirm the patch
+      path round-trips before anything else.
+      **The author's own caveats, quoted rather than paraphrased:** stream
+      detection is "almost sliding-window like", so capturing large streams
+      needs a large chunk size and that costs memory (`-lm` exists for it); and
+      `lz4`, `lz4hc`, `lzo1x`, `hydra`, `leviathan`, `jojpeg` are flagged
+      experimental "and/or does not work as intended". **The project is no
+      longer in development** - the author considers it finished.
+      Versions in the wild: **0.6.9** attached to that thread, **0.7.9** on the
+      archived GitHub (already cloned to `ExtremeCompressor-refs/xtool`), and
+      **0.9.8** on krinkels.org dated 2026-07-30.
+      **The gate is unchanged and it is the same one Precomp passed:** measure
+      `xtool -mzlib -> 7z` against `precomp -> 7z` on our own corpora, prove a
+      byte-identical restore, and treat the binary as untrusted.
 - [ ] B13. **balrogg — lossless Vorbis/Opus recompression** (new 2026-09-15,
       found on krinkels.org; v1.1 dated 2026-09-06, author `Mickey1s`,
       "demonically compacting (up to 15%) lossless Vorbis/Opus recompressor").

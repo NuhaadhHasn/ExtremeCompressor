@@ -104,6 +104,37 @@ the verification gate like everything else.
 If the repo is ever made public again, **this entire section reverts** and the
 OSI rule comes back before anything ships.
 
+- [ ] B13. **balrogg — lossless Vorbis/Opus recompression** (new 2026-09-15,
+      found on krinkels.org; v1.1 dated 2026-09-06, author `Mickey1s`,
+      "demonically compacting (up to 15%) lossless Vorbis/Opus recompressor").
+      **The strongest untested lead in the project, because it targets a bucket
+      we currently score 0% on.** Measured 2026-09-15: `.ogg`, `.opus`, `.wem`
+      (Wwise) and `.fsb` (FMOD) all route to `store` with the reason *"media
+      file: already compressed by its codec"* - word for word the reason B4
+      proved wrong for WAV. Nothing in `precomp -> 7z` reaches a Vorbis
+      bitstream, so every one of those bytes is copied verbatim today.
+      **Why it is structurally different from B12.** LOLZ competes with a route
+      that already works; this competes with *storing the file*. B4 is the
+      precedent and remains the only specialist to beat the existing chain - and
+      it won for exactly this reason: WAV had no codec, so there was pure
+      upside. Vorbis *is* compressed, but its entropy layer can be recompressed
+      losslessly, which is the same trick Precomp plays on deflate.
+      **Scale.** Game audio is routinely 20-40% of an install, and `.wem`/`.fsb`
+      are the two containers it arrives in.
+      **Gate unchanged:** measure against the existing route first, prove a
+      byte-identical restore through `verify_restore`, treat the binary as
+      untrusted - pinned hash, no faith in its exit code. Needs a real game
+      audio corpus, which this machine does not have (the gap that also blocks
+      B6), and the download needs a krinkels.org account.
+- [ ] B14. **DArc (Distended Arc) 3.04** - a *maintained* FreeArc fork
+      (krinkels.org, 2026-09-07, `Mickey1s`). Supersedes the 2009 Haskell
+      sources in `ExtremeCompressor-refs/freearc-orig` as the thing to measure
+      if FreeArc is revisited. Same gate: it has to beat `precomp -> 7z`, not
+      `7z` alone.
+- [ ] B15. **ADDeX 0.1** - "Advanced Data Deduplication Engine" (krinkels.org,
+      2026-09-07, `Mickey1s`). The SREP-replacement space, where zpaqfranz's CDC
+      already sits. **Version 0.1 with one recorded download** - logged so it is
+      not rediscovered, not recommended. Revisit if it matures.
 - [ ] B12. **An optional final codec — retargeted 2026-09-10 from LOLZ to
       FreeArc, because LOLZ is not what this item assumed it was.**
 

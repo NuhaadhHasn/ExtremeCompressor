@@ -104,7 +104,33 @@ the verification gate like everything else.
 If the repo is ever made public again, **this entire section reverts** and the
 OSI rule comes back before anything ships.
 
-- [ ] B16. **xtool as a drop-in Precomp replacement — the half of B6 that is
+- [x] B16. ❌ **MEASURED AND REJECTED 2026-09-15** — xtool loses to Precomp by
+      **8.5%** on our data. Full numbers:
+      [benchmarks/2026-09-15-b16](benchmarks/2026-09-15-b16-xtool-vs-precomp.md).
+      Silesia zipped with 7-Zip deflate (64,726,889 B), same `7z -mx9 -mmt2`
+      final compressor in every row, every route restored and SHA-256 compared:
+      `precomp -cn -> 7z` **51,745,050**; xtool's best of four configurations
+      (`-mreflate -d1`) **56,149,054**. xtool is 1.95x faster, which is not the
+      axis that decides here.
+      **The item was written on the author's published benchmark and it did not
+      reproduce.** He measured `-mzlib` beating `precomp -brute` by 2,673,415 B
+      and 4.7x on GTA V's `x64w.rpf`. Both results can stand: his streams came
+      from a game engine's zlib, mine from 7-Zip's encoder, and *which encoder
+      wrote the stream* is exactly what separates xtool's `zlib` codec from its
+      `reflate` codec. **Do not re-adopt this on his numbers.**
+      **A near-miss worth keeping.** The first run had xtool losing by 12.8 MB,
+      because `-mzlib` found *nothing* here - 90 bytes of delta, the same 90
+      bytes an unrelated smoke test had produced, which is what exposed it as a
+      no-op rather than a measurement. Per `xtool.chm`, the zlib codec
+      reconstructs by trial and error against `zlibwapi.dll`, so it only matches
+      streams zlib itself would have written. **A codec mismatch fails silently
+      and looks identical to "nothing to precompress".**
+      **Still open, narrowly:** the Oodle/Kraken/LZ4 codecs are untested because
+      no game corpus exists on this machine - the gap that also blocks B6.
+      Revisit only with real game data, and measure the Oodle path, not deflate,
+      which is the case Precomp is already good at.
+      Original item text follows.
+- [ ] ~~B16-original. **xtool as a drop-in Precomp replacement — the half of B6 that is
       NOT blocked** (new 2026-09-15, from the author's own thread,
       encode.su/threads/4000, read 2026-09-15).
       **B6 was framed as "xtool + Oodle" and shelved because this machine has

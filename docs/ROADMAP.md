@@ -1,13 +1,15 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-09**. **1,174 tests**
-> (the skip is the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`).
-> Everything below is merged to `main` except **`phase-d8-atomic-publish`**
-> and **`phase-d5-d6-d7-hardening`**, both awaiting review. Merge D8 first.
+> Status date: **2026-09-20**. **1,229 tests** (2 skipped, 1 strict-xfail; the
+> skips are the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`, and a test
+> that only runs when no E1-pinned tool is installed).
+> **Everything below is merged to `main`. No branch is awaiting review.**
 >
-> **D7 is amber, not green**: the workflow is written and 17 tests assert it
-> against facts measured here, but it has never run. A workflow that has
-> never run is not evidence.
+> **D7 is green.** The workflow has run on `windows-latest` and passed, as have
+> the last three pushes. Its *first* run failed three layout tests, and that was
+> the point: a workflow that has never run is not evidence, and this one earned
+> its keep immediately by proving the pixel budgets were measuring the dev
+> machine's fonts rather than the layout.
 >
 > **Done:** engine core · Phase A (GUI) · Phase D0 (security hotfix) ·
 > Phase J part 1 (estimates before compressing, scored on two real corpora) ·

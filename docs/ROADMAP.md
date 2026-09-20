@@ -1,9 +1,18 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-20**. **1,229 tests** (2 skipped, 1 strict-xfail; the
-> skips are the opt-in 57k-file corpus walk, `EXCMP_SLOW_CORPUS=1`, and a test
-> that only runs when no E1-pinned tool is installed).
-> **Everything below is merged to `main`. No branch is awaiting review.**
+> Status date: **2026-09-20**. **1,271 tests, 10 skipped, 1 strict-xfail.**
+> **Branch `phase-i6-measured-presets` is awaiting review**; everything else is
+> merged to `main`.
+>
+> ⚠️ **Eight of those ten skips are `test_estimate_backtest.py` switching
+> itself off**, because one pinned file — `lghub_installer.exe`, 58,146,712 B —
+> has been deleted from the live Programs corpus. The estimator's backtest
+> against real data is therefore **not running**, and the suite says nothing
+> about it beyond a skip. The skip now names the file. Restore it, or re-pin
+> `FILES` and re-derive the expected ratios; do not just drop the entry, the
+> assertions were fitted to the whole six-file set. The other two skips are the
+> opt-in 57k-file corpus walk (`EXCMP_SLOW_CORPUS=1`) and a test that only runs
+> when no E1-pinned tool is installed.
 >
 > **D7 is green.** The workflow has run on `windows-latest` and passed, as have
 > the last three pushes. Its *first* run failed three layout tests, and that was
@@ -197,6 +206,54 @@ OSI rule comes back before anything ships.
       untrusted - pinned hash, no faith in its exit code. Needs a real game
       audio corpus, which this machine does not have (the gap that also blocks
       B6), and the download needs a krinkels.org account.
+
+      ### 🔴 2026-09-20 — both blockers re-checked by searching, both still real
+
+      Full record: [benchmarks/2026-09-20-b13](benchmarks/2026-09-20-b13-vorbis-baseline.md).
+      **Nothing here is quoted from the 2026-09-15 note; it was all re-run.**
+
+      - **No balrogg binary anywhere on this machine.** Bounded searches of
+        Downloads, Desktop, Documents, PycharmProjects, both AppData trees,
+        `C:\` to depth 2, both Program Files trees, `excmp-bench` and all 14
+        `-refs` clones. (An unbounded sweep timed out at 480 s, so the claim is
+        "not in the plausible places", not "proven absent".) The download is
+        still behind a krinkels.org login.
+      - **No game-audio corpus, and this time the search was done properly.**
+        Zero `.opus`, `.wem`, `.fsb`, `.bnk` anywhere — including the whole
+        external `Downloads-1` tree and the F: volume, the omission that made
+        B4's original "blocked" verdict wrong. No game is installed at all: no
+        Steam, Epic, GOG, Riot or Unity directory exists. The only Vorbis is
+        **39 UI sound effects (31 unique, 326,692 B)** inside the odoo18/odoo19
+        source trees, 5–30 KB each.
+
+      **The premise is confirmed and there is a defect under it.** Running the
+      planner (not reading it): `.ogg`, `.opus`, `.wem`, `.fsb` **and a file
+      called `named.dat` that merely starts with `OggS`** all store, under every
+      profile — the magic-byte rule at `analyzer.py:52` fires before the
+      extension table, so a patch that edited only `_EXT` would be bypassed.
+      Precomp on a tar of them prints **`Recompressed streams: 0/0`** and makes
+      the file 19 bytes bigger.
+
+      On that corpus, through `engine.compress` itself:
+
+      | what ran | bytes out | saved |
+      |---|---:|---:|
+      | **Normal / Extreme (what ships)** | 333,317 | **−2.0%** |
+      | `7z -mx9 -ms=off` | 256,784 | 21.4% |
+      | `7z -mx9` (solid) | 189,826 | 41.9% |
+
+      The archive comes out **6.6 KB larger than the input** while the reason
+      line says the data is already compressed by its codec — and the analyzer
+      had already measured `sample_ratio` **0.687–0.945** on those same files
+      and been overruled. Same shape as B4's WAV case.
+      **Nothing was changed on the strength of it.** 326 KB of low-bitrate UI
+      blips is not a corpus, most of the solid win is cross-file redundancy
+      between two versions of one product, and high-bitrate Vorbis music is
+      expected near 0%. The finding is recorded; the fix waits for data.
+      **The structural hook, when the data arrives, is `_UNCOMPRESSED_AUDIO`**
+      (`planner.py:173`, B4's precedent) — not `_DEFLATE_MEDIA`, which would
+      throw the file into a `precomp` that has been measured to find nothing
+      in it.
 - [ ] B14. **DArc (Distended Arc) 3.04** - a *maintained* FreeArc fork
       (krinkels.org, 2026-09-07, `Mickey1s`). Supersedes the 2009 Haskell
       sources in `ExtremeCompressor-refs/freearc-orig` as the thing to measure
@@ -208,6 +265,65 @@ OSI rule comes back before anything ships.
       not rediscovered, not recommended. Revisit if it matures.
 - [ ] B12. **An optional final codec — retargeted 2026-09-10 from LOLZ to
       FreeArc, because LOLZ is not what this item assumed it was.**
+
+      ### ✅ 2026-09-20 — measured against the real route. It wins, twice, and the second win is the interesting one
+
+      Full record:
+      [benchmarks/2026-09-20-b12](benchmarks/2026-09-20-b12-lolz-vs-precomp-7z.md).
+      **Gate (1) is now satisfied.** Every LOLZ row below was decompressed and
+      SHA-256 compared; the deflate corpus went all the way home through
+      `precomp -r` to the original bytes.
+
+      **Corpus A — deflate** (B16's Silesia zip, `precomp -cn -intense` →
+      236,958,376 B):
+
+      | final codec | archive | vs best 7-Zip | compress |
+      |---|---:|---:|---:|
+      | `7z -mx9 -mmt1` | **51,820,126** | baseline | 162.7 s |
+      | **`lolz -d64m`** | **50,233,466** | **−3.06%** | 776.7 s |
+      | `lolz -d64m -mt2` | 50,797,463 | −1.97% | 772.3 s |
+
+      **Corpus B — real installers**, 13 files / 55.7 MB chosen out of the live
+      `Programs` folder by I6's own `pick_sample`, `precomp` → 62,482,862 B:
+
+      | final codec | archive | vs 7-Zip | compress |
+      |---|---:|---:|---:|
+      | `7z -mx9 -mmt1` / `-mmt2` | **46,048,116** (identical) | baseline | 28.0 s |
+      | **`lolz -d64m`** | **45,933,664** | **−0.249%** | 186.4 s |
+      | `lolz -d64m -mt2` | 46,052,632 | **+0.01% — loses** | 157.9 s |
+
+      **The verdict is the gap between those two tables.** 3.06% is a
+      deflate-stream result; on the data this app is actually for the win is
+      **0.249% — 114,452 bytes — for 6.7× the compression time**. One corpus
+      would have shipped "the first specialist to beat `precomp → 7z`"; two
+      corpora say "wins, by an amount inside the margin of a dictionary
+      choice". It is **not** rejected the way B16's xtool was — smaller-at-any-
+      speed is the axis this project has said it optimises — so it qualifies as
+      exactly what this item already specified: an **Insane-tier alternative to
+      the 7-Zip stage, never a default, degrading when absent**. Whether 0.25%
+      buys 6.7× is the owner's call and the numbers now exist to make it.
+
+      **Three things any integration must carry:**
+      (a) **`-mt2` costs LOLZ ratio** (1.12% / 0.26%) and turns its win into a
+      loss on corpus B — its default `-mt1` is its best setting, so do not hand
+      it the project's calibrated two threads;
+      (b) `cls-lolz_x64.exe` **segfaults on corrupt input and still leaves a
+      0-byte output**, and silently writes a 0-byte output for a missing input.
+      A "did the file appear?" check — which is what `stages/precomp.py:57`
+      does — passes both. The SHA-256 gate is the only thing that catches it;
+      (c) `-mmt` costs 7-Zip essentially nothing (byte-identical on corpus B),
+      so the round-1 thread asymmetry explained nothing.
+
+      **Still not established, and gate (2) is only half-closed:** 237 MB has
+      now been through it, but there is still **no DXT or game data**, which is
+      its headline claim — and **LOLZ has never been measured against
+      `zpaqfranz`**, which is the codec it would actually be displacing if it
+      lands in Insane. Run that before writing the stage.
+
+      **One correction to a committed number.** B16 ran `precomp -cn`; the app
+      runs **`-cn -intense`** (`stages/precomp.py:42`). On the same corpus that
+      costs **82,086 bytes** — 51,827,136 rather than B16's 51,745,050. Anything
+      comparing against "our route" should use the larger figure or re-run it.
 
       ### ⚠️ CORRECTION, same day: LOLZ is a real codec and it was measured
 
@@ -1948,10 +2064,31 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       copying: extension-exclusion list before showing Extract, smart-extract
       subfolder only when the archive root isn't a single folder, multi-part-
       aware folder naming
-- [ ] I6. **"Compare presets on this input"** — run installed profiles on a ≤100 MB
-      sample as real queue jobs, print **measured** ratios onto the preset cards.
-      Upgrades our honesty brand from estimate to measurement; `tools/bench.py`
-      already has the harness
+- [x] I6. ✅ **DONE 2026-09-20**, branch `phase-i6-measured-presets` (awaiting
+      review). Full write-up:
+      [benchmarks/2026-09-20-i6](benchmarks/2026-09-20-i6-measured-presets.md).
+      A **Measure presets** button runs every distinct chain on a ≤100 MB
+      sample as real queue jobs and prints the measured saving onto the cards
+      as each one lands. New `excmp/sample.py` (Qt-free) and
+      `gui/compare_run.py`; `tools/bench.py` gained `--sample` so the CLI and
+      the GUI measure the same bytes by the same rule.
+      **Three things the implementation had to settle that the item did not.**
+      (1) **The sample is the measurement.** Whole files only, every category
+      represented, proportional to bytes, spread across the size distribution.
+      (2) **Rule 3 cannot always be honoured** — the real Programs corpus keeps
+      42.4% of its bytes in `.zip` files each larger than the whole cap, so the
+      sample carries 3.9% of them. That is *reported*
+      (`Sample.under_represented`) and it bounds the claim: a measured
+      comparison **ranks the profiles on identical bytes, it does not forecast
+      the job**. A test asserts a measurement never moves the recommendation.
+      (3) The first sampler took **2 of 12** Silesia files and dropped a whole
+      category; reserving one file per category before the proportional pass
+      takes **3 of 12 at 94% of the cap**. Found by running it, not by reading it.
+      **Two defects found by rendering**, both invisible to the suite: a row
+      showing `about 225.9 KB` beside `61% measured` (two numbers about one job
+      that disagreed), and then a column titled "Estimated size" carrying a
+      measured one. The size column is now measured *only* when the sample was
+      the whole input, and the header goes to "Size" when it is.
 - [~] I7. ❌ **WON'T DO — decided 2026-09-10 by the owner. Do not build this,
       and do not re-open it in a later session.**
       Original item: i18n pipeline (`pyside6-lupdate`/`lrelease` + first `.ts` +

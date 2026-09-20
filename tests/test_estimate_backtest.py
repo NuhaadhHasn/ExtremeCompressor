@@ -71,15 +71,29 @@ def _tolerance_for(profile: Profile) -> float:
     return PRECOMP_TIME_TOLERANCE if profile is Profile.EXTREME else TIME_TOLERANCE
 
 
-def _corpus_ready() -> bool:
-    return all((CORPUS / name).is_file()
-               and (CORPUS / name).stat().st_size == size
-               for name, size in FILES.items())
+def _corpus_gaps() -> list[str]:
+    """Which pinned files are missing or the wrong size, by name.
 
+    The generic "the corpus is not present" this used to say cost a session:
+    the folder is live, one 58 MB installer had been deleted, and all eight
+    tests below switched themselves off while the suite reported 1,271 passed.
+    A skip nobody can act on is a skip nobody notices.
+    """
+    gaps = []
+    for name, size in FILES.items():
+        path = CORPUS / name
+        if not path.is_file():
+            gaps.append(f"{name} (missing)")
+        elif path.stat().st_size != size:
+            gaps.append(f"{name} ({path.stat().st_size:,} B, expected {size:,})")
+    return gaps
+
+
+_GAPS = _corpus_gaps()
 
 pytestmark = pytest.mark.skipif(
-    not _corpus_ready(),
-    reason="the 2026-08-01 benchmark corpus is not present at its recorded sizes")
+    bool(_GAPS),
+    reason="the 2026-08-01 benchmark corpus has changed: " + "; ".join(_GAPS))
 
 
 @pytest.fixture(scope="module")

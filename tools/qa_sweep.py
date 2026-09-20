@@ -121,6 +121,38 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     settle(250)
     shot(win, out, f"{theme}-05-compress-populated")
 
+    # I6: the same page after a comparison run. Two profiles measured and two
+    # not, because that half-and-half state is the one a cancelled run leaves
+    # behind and the one where "which of these numbers is which" has to be
+    # legible without reading the caption.
+    from excmp.sample import MeasuredRun, pick_sample
+    from gui.suggest import measurement_caption
+
+    sample = pick_sample(win._infos, cap_bytes=2_000_000)
+    win._measured = {
+        Profile.FAST: MeasuredRun(Profile.FAST, sample.total_bytes,
+                                  int(sample.total_bytes * 0.71), 41.0),
+        Profile.NORMAL: MeasuredRun(Profile.NORMAL, sample.total_bytes,
+                                    int(sample.total_bytes * 0.39), 194.0),
+    }
+    win._measured_caption = measurement_caption(sample, 2)
+    win._refresh_estimates()
+    # `_refresh_estimates` reads `_comparison` to decide whether the measured
+    # archive size may take the size column, and there is no run object here.
+    # Re-render through profile_comparison directly for the whole-input case.
+    from excmp.calibrate import blended_rates
+    from gui.suggest import profile_comparison
+    win.compare_table.set_rows(
+        profile_comparison(win._infos, win.tools, win._summary,
+                           rates=blended_rates(), measured=win._measured,
+                           measured_whole_input=sample.is_whole_input),
+        win._measured_caption)
+    settle(150)
+    shot(win, out, f"{theme}-05b-presets-measured")
+    win._measured = {}
+    win._measured_caption = ""
+    win._refresh_estimates()
+
     # Everything disclosed at once - the worst case for the height budget.
     win.drop_zone.toggle_pending()
     win.analysis_card.details_toggle.setChecked(True)

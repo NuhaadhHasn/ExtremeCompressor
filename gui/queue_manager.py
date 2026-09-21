@@ -617,7 +617,11 @@ class QueueManager(QObject):
 
         for job_id in [i for i in self._order if self._jobs[i].state.is_terminal]:
             job = self._jobs[job_id]
-            history.append(self._history_entry(job))
+            # ...except an I6 measurement, whose archive was deleted as soon as
+            # its size was read. A history row is a record of something you
+            # still have.
+            if not getattr(job, "measurement", False):
+                history.append(self._history_entry(job))
             del self._jobs[job_id]
             self._order.remove(job_id)
 

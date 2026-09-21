@@ -199,3 +199,23 @@ def test_the_store_is_human_readable(store):
     data = json.loads(store.read_text(encoding="utf-8"))
     assert "chains" in data and "sevenzip" in data["chains"]
     assert "rate" in data["chains"]["sevenzip"]
+
+
+def test_the_suite_never_writes_to_the_real_calibration_file(tmp_path):
+    """A guard on the guard (2026-09-20).
+
+    `~/.excmp/calibration.json` is global, every finished GUI job writes to it,
+    and the estimator reads it — so without isolation the suite's result
+    depends on whether anyone has ever run the app on this machine. That is
+    not hypothetical: I6's end-to-end tests wrote one zstd sample into it and
+    two pixel budgets went red, for a reason that had nothing to do with
+    pixels. The autouse fixture in conftest is what stops it; this asserts the
+    fixture is actually in force.
+    """
+    from pathlib import Path
+
+    from excmp import calibrate
+
+    real = Path.home() / ".excmp" / "calibration.json"
+    assert calibrate.DEFAULT_PATH != real, "conftest is not isolating J7"
+    assert str(calibrate.DEFAULT_PATH).startswith(str(tmp_path.parent))

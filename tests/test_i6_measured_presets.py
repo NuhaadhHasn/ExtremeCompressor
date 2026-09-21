@@ -218,11 +218,15 @@ class _FakeQueue(QObject):
 
     jobDone = Signal(str, object)
     jobFailed = Signal(str, str)
+    # The signal the real queue uses to retire a CANCELLED job, and the only
+    # one it emits on that path. Omitting it here is what let the defect ship.
+    jobStateChanged = Signal(str, object)
 
     def __init__(self):
         super().__init__()
         self.added: list = []
         self.cancelled: list[str] = []
+        self.extras: list = []
 
     def add_compress(self, inputs, out_path, profile, summary=None,
                      sidecar=False, options=None, extras=None):
@@ -233,10 +237,15 @@ class _FakeQueue(QObject):
         job.profile = profile
         job.out_path = Path(out_path)
         self.added.append(job)
+        self.extras.append(dict(extras or {}))
         return job
 
     def cancel(self, job_id):
+        """What the real queue does: retire it with a state change, and emit
+        neither jobDone nor jobFailed."""
         self.cancelled.append(job_id)
+        from gui.models import JobState
+        self.jobStateChanged.emit(job_id, JobState.CANCELLED)
 
 
 class _Result:
@@ -318,6 +327,74 @@ def test_cancelling_keeps_what_finished_and_stops_the_rest(tmp_path):
     assert len(queue.cancelled) == 3
     assert not run.is_running()
     assert done
+
+
+def test_cancelling_one_row_in_activity_does_not_strand_the_run(tmp_path):
+    """The defect the 2026-09-20 review found. Every measurement job has a
+    visible x in Activity, and QueueManager retires a cancelled job through
+    `_retire`, which emits only `jobStateChanged` — so a run listening to
+    jobDone and jobFailed alone waited forever for a job the queue had
+    already finished with, leaving the button on "Stop measuring" and the
+    temp directory on disk."""
+    from gui.models import JobState
+
+    queue = _FakeQueue()
+    run = ComparisonRun(queue, ALL_TOOLS, _infos(), tmp_path / "compare")
+    done = []
+    run.finished.connect(lambda: done.append(True))
+    run.start()
+    victim = queue.added[0].id
+    queue.jobStateChanged.emit(victim, JobState.CANCELLED)
+    for job in queue.added[1:]:
+        queue.jobDone.emit(job.id, _Result(10_000_000, 5_000_000))
+    assert not run.is_running(), "the cancelled job was never released"
+    assert done, "finished never fired, so the button stays on Stop measuring"
+    assert len(run.results) == 3
+
+
+def test_a_running_or_finished_state_is_not_mistaken_for_a_cancellation(tmp_path):
+    from gui.models import JobState
+
+    queue = _FakeQueue()
+    run = ComparisonRun(queue, ALL_TOOLS, _infos(), tmp_path / "compare")
+    run.start()
+    for state in (JobState.RUNNING, JobState.PAUSED, JobState.DONE):
+        queue.jobStateChanged.emit(queue.added[0].id, state)
+    assert run.is_running()
+    queue.jobDone.emit(queue.added[0].id, _Result(10_000_000, 4_000_000))
+    assert run.results[Profile.FAST].saved_fraction == pytest.approx(0.6)
+
+
+def test_measurement_jobs_are_marked_so_they_stay_out_of_the_history(tmp_path):
+    """Their archives are deleted the moment the number is read, so a history
+    row would point at a file that does not exist."""
+    queue = _FakeQueue()
+    ComparisonRun(queue, ALL_TOOLS, _infos(), tmp_path / "compare").start()
+    assert queue.extras and all(e.get("measurement") for e in queue.extras)
+
+
+def test_the_queue_really_keeps_marked_jobs_out_of_the_history(qtbot, tmp_path,
+                                                               monkeypatch):
+    from gui import history
+    from gui.models import Job, JobKind, JobState
+    from gui.queue_manager import QueueManager
+
+    written: list = []
+    monkeypatch.setattr(history, "append", lambda entry: written.append(entry))
+    manager = QueueManager(tmp_path / "t", {})
+    qtbot.addWidget(type("W", (), {})) if False else None
+    real = Job(inputs=[tmp_path / "a"], out_path=tmp_path / "a.excmp",
+               kind=JobKind.COMPRESS)
+    fake = Job(inputs=[tmp_path / "b"], out_path=tmp_path / "b.excmp",
+               kind=JobKind.COMPRESS, measurement=True)
+    for job in (real, fake):
+        job.state = JobState.DONE
+        manager._jobs[job.id] = job
+        manager._order.append(job.id)
+    manager.clear_finished()
+    assert len(written) == 1
+    assert written[0].archive.endswith("a.excmp")
+    manager.shutdown()
 
 
 def test_the_run_reports_the_sample_it_chose(tmp_path):
@@ -450,3 +527,70 @@ def test_a_new_input_does_not_inherit_the_last_ones_numbers(window, qtbot,
     assert window._measured == {}
     rows = window._refresh_estimates()
     assert all(not r.measured_saved_text for r in rows)
+
+
+def test_removing_one_file_forgets_a_measurement_taken_on_the_old_set(window,
+                                                                      qtbot,
+                                                                      tmp_path):
+    """The sharpest version of the stale-number defect, because it does not go
+    back through analysis: Remove mutates _infos in place, so nothing else on
+    the input-changed path cleans up after it. Found by review, reproduced
+    with a real window before the fix."""
+    source = tmp_path / "in"
+    source.mkdir()
+    (source / "a.txt").write_text("hello " * 5_000)
+    (source / "b.txt").write_text("world " * 5_000)
+    with qtbot.waitSignal(window.analysisFinished, timeout=30_000):
+        window.add_paths([source / "a.txt", source / "b.txt"])
+    window._measured = {Profile.NORMAL: _run()}
+    window._measured_caption = "Measured on all 2 files"
+    assert any(r.measured_saved_text for r in window._refresh_estimates())
+
+    window.pending_list.setCurrentRow(0)
+    window.remove_selected_pending()
+    assert window._measured == {}
+    assert window._measured_caption == ""
+    assert all(not r.measured_saved_text for r in window._refresh_estimates())
+
+
+def test_declining_the_over_cap_question_keeps_the_measurement_you_had(window,
+                                                                      qtbot,
+                                                                      tmp_path):
+    """toggle_measurement used to clear the cards before asking, so answering
+    "Not now" destroyed a completed measurement to run nothing."""
+    source = tmp_path / "in"
+    source.mkdir()
+    (source / "a.txt").write_text("hello " * 20_000)
+    with qtbot.waitSignal(window.analysisFinished, timeout=30_000):
+        window.add_paths([source])
+    window._measured = {Profile.NORMAL: _run()}
+    window._measured_caption = "Measured on all 1 file"
+
+    # Force the over-cap branch: a cap below the input's only file.
+    import gui.mainwindow as mw
+    original = mw.ComparisonRun
+
+    def tiny(*args, **kwargs):
+        kwargs["cap_bytes"] = 1
+        return original(*args, **kwargs)
+
+    mw.ComparisonRun = tiny
+    try:
+        window.toggle_measurement()
+        assert window._comparison is not None
+        assert window._comparison.sample.over_cap
+        assert window._measured, "cleared the cards before asking"
+        window._abandon_measurement()
+        assert window._measured, "answering 'Not now' destroyed the numbers"
+    finally:
+        mw.ComparisonRun = original
+
+
+def test_measure_anyway_is_never_a_dead_button(window, qtbot, tmp_path):
+    """The banner does not dismiss itself, so a bail-out that skipped
+    hide_banner left a visible button that did nothing when pressed."""
+    window._comparison = None
+    window.banner.show_message("pretend over-cap question", tone="warn")
+    assert window.banner.isVisibleTo(window)
+    window._begin_measurement()          # the bail-out path
+    assert not window.banner.isVisibleTo(window)

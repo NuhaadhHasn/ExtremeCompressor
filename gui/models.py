@@ -81,6 +81,11 @@ class Job:
     # time so a later change cannot rewrite a job already queued.
     options: object | None = None
 
+    #: I6: a throwaway job whose only product is its byte count. Its archive
+    #: is deleted the moment the number is read, so writing it into the job
+    #: history would leave a row pointing at a file that no longer exists.
+    measurement: bool = False
+
     summary: AnalysisSummary | None = None
     # G2: a selective restore (empty = the whole archive), and the password
     # for an encrypted one. `password` is deliberately NOT persisted with the

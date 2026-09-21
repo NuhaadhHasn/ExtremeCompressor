@@ -29,6 +29,30 @@ if sys.platform == "win32" and os.path.isdir(r"C:\Windows\Fonts"):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_calibration(tmp_path, monkeypatch):
+    """Route J7's learned rates to tmp_path, like QSettings above.
+
+    ``excmp.calibrate.DEFAULT_PATH`` is ``~/.excmp/calibration.json`` and every
+    finished GUI job writes to it (`CompressWorker._calibrate`). Nothing
+    isolated it, so the suite's result depended on whether a real compression
+    had ever run on the machine — and the layout budgets are downstream of the
+    estimator, which is downstream of those rates.
+
+    Found on 2026-09-20 by I6's own end-to-end tests: they run real queue jobs,
+    which wrote a single zstd sample into that file, which changed Fast's
+    estimate, which gave Normal a "not worth it" note, which put a
+    point-estimate row at 53px against its 36px budget and the populated page
+    at 487px against 447. Two pixel gates failing for a reason that was not
+    about pixels — and the same two tests pass or fail depending on the order
+    they run in, which is the worst shape a guard test can have.
+    """
+    from excmp import calibrate
+
+    monkeypatch.setattr(calibrate, "DEFAULT_PATH",
+                        tmp_path / "calibration.json")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_qsettings(tmp_path, monkeypatch):
     """Route every QSettings() in the test process to tmp_path, as INI files.
 

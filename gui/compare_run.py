@@ -43,6 +43,8 @@ from excmp.planner import Profile, resolved_chain
 from excmp.sample import DEFAULT_SAMPLE_BYTES, MeasuredRun, Sample, pick_sample
 from excmp.tools import ToolInfo
 
+from .models import JobState
+
 #: Every profile, in the order the chooser lists them.
 ALL_PROFILES: tuple[Profile, ...] = (Profile.FAST, Profile.NORMAL,
                                      Profile.EXTREME, Profile.INSANE)
@@ -87,6 +89,7 @@ class ComparisonRun(QObject):
 
         self._owned: dict[str, tuple[Profile, ...]] = {}
         self._started = False
+        self._cleaned = False
 
     # -- the shape of the work, before committing to it --------------------
 
@@ -112,12 +115,24 @@ class ComparisonRun(QObject):
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.queue.jobDone.connect(self._on_done)
         self.queue.jobFailed.connect(self._on_failed)
+        # A cancelled job emits NEITHER of those. QueueManager retires it
+        # through `_retire`, which only emits `jobStateChanged`, so a run that
+        # listened to done and failed alone would wait forever for a job the
+        # queue had already finished with — and every one of these jobs has a
+        # visible x in Activity, by design. Closing the window does it too:
+        # `closeEvent -> shutdown() -> cancel_all()`.
+        self.queue.jobStateChanged.connect(self._on_state)
         inputs = [f.path for f in self.sample.files]
         for key, profiles in self._groups:
             lead = profiles[0]
             out = self.work_dir / f"compare-{lead.value}.excmp"
             job = self.queue.add_compress(inputs, out, lead,
-                                          options=self.options)
+                                          options=self.options,
+                                          # Throwaway archives: the number is
+                                          # the product and the file is deleted
+                                          # below, so this must not become a
+                                          # history row pointing at nothing.
+                                          extras={"measurement": True})
             self._owned[job.id] = tuple(profiles)
 
     def cancel(self) -> None:
@@ -126,8 +141,12 @@ class ComparisonRun(QObject):
         The archives are throwaway either way: their only product is the
         number already recorded in :attr:`results`.
         """
+        if not self._owned:
+            return                     # nothing in flight; already settled
         for job_id in list(self._owned):
             self.queue.cancel(job_id)
+        if not self._owned:
+            return                     # the queue settled us on the way round
         self._owned.clear()
         self._cleanup()
         self.finished.emit()
@@ -160,6 +179,22 @@ class ComparisonRun(QObject):
                 pass                   # a leftover in our own temp dir
         self._settle()
 
+    def _on_state(self, job_id: str, state: object) -> None:
+        """Only cancellation: done and failed have their own signals, and
+        reacting to those here would race them for the result.
+
+        No ``failed`` is emitted. A cancellation is something somebody chose,
+        not something that went wrong, and the card keeping its estimate is
+        already the right answer — a banner saying "insane could not be
+        measured" for each remaining profile would be four apologies for one
+        deliberate click.
+        """
+        if state is not JobState.CANCELLED:
+            return
+        if self._owned.pop(job_id, None) is None:
+            return
+        self._settle()
+
     def _on_failed(self, job_id: str, message: str) -> None:
         profiles = self._owned.pop(job_id, None)
         if profiles is None:
@@ -174,11 +209,19 @@ class ComparisonRun(QObject):
             self.finished.emit()
 
     def _cleanup(self) -> None:
-        try:
-            self.queue.jobDone.disconnect(self._on_done)
-            self.queue.jobFailed.disconnect(self._on_failed)
-        except (RuntimeError, TypeError):
-            pass                       # already disconnected, or queue gone
+        # Idempotent: cancelling a queued job makes the real queue emit its
+        # state change synchronously, so `cancel()` can find the run already
+        # settled by the time it gets to its own cleanup.
+        if self._cleaned:
+            return
+        self._cleaned = True
+        for signal, slot in ((self.queue.jobDone, self._on_done),
+                             (self.queue.jobFailed, self._on_failed),
+                             (self.queue.jobStateChanged, self._on_state)):
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass                   # already disconnected, or queue gone
         # Only ever our own directory, and only the archives we asked for.
         if self.work_dir.name == "compare" and self.work_dir.is_dir():
             shutil.rmtree(self.work_dir, ignore_errors=True)

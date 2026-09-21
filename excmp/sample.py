@@ -154,14 +154,44 @@ def _spread(items: Sequence[FileInfo]) -> Iterator[FileInfo]:
         ranges = nxt
 
 
-def _fill(candidates: Iterable[FileInfo], budget: int,
-          taken: set[int]) -> tuple[list[FileInfo], int]:
-    """Greedily take whatever fits, skipping what does not. Returns the files
-    and the bytes spent. ``taken`` holds ``id()`` of files already chosen, so
-    the leftover pass cannot buy the same file twice."""
+#: A file holding at least this share of its category's bytes is taken before
+#: the spread runs. See :func:`_fill`.
+_DOMINANT_SHARE = 0.25
+
+
+def _fill(candidates: Iterable[FileInfo], budget: int, taken: set[int],
+          pool_bytes: int = 0) -> tuple[list[FileInfo], int]:
+    """Take whatever fits, spread-first — but never let crumbs block the loaf.
+
+    A plain greedy walk of :func:`_spread` fills the budget from the middle of
+    the size distribution outwards, and a single dominant file is the last
+    thing it reaches. Measured on the shipped 100 MB cap with
+    ``setup.exe 95,000,000 B`` beside forty 300,000 B DLLs, that spent
+    **13,600,000 B of the cap and omitted the file that was 89% of the data** —
+    a sample of an installer that contains no installer.
+
+    So a file carrying at least ``_DOMINANT_SHARE`` of ``pool_bytes`` is taken
+    first if it fits. The threshold matters: taking the largest file
+    unconditionally would defeat rule 4, and does — on a 100-file 100 KB–10 MB
+    spread it collapses a three-file sample to two.
+
+    ``taken`` holds ``id()`` of files already chosen, so the leftover pass
+    cannot buy the same file twice.
+    """
     chosen: list[FileInfo] = []
     spent = 0
-    for info in candidates:
+    free = [c for c in candidates if id(c) not in taken]
+
+    if pool_bytes > 0:
+        for info in sorted(free, key=lambda f: -f.size):
+            if info.size < pool_bytes * _DOMINANT_SHARE:
+                break          # sorted descending: nothing later qualifies
+            if info.size <= budget:
+                chosen.append(info)
+                taken.add(id(info))
+                spent += info.size
+                break
+    for info in free:
         if id(info) in taken:
             continue
         if spent + info.size <= budget:
@@ -181,8 +211,12 @@ def pick_sample(infos: Sequence[FileInfo],
     infos = list(infos)
     source_files = len(infos)
     source_bytes = sum(f.size for f in infos)
+    # A caller can hand this anything - `tools/bench.py --sample` takes an int
+    # straight off the command line. A cap below zero used to reach the
+    # `min(infos, ...)` fallback with nothing to minimise and raise ValueError.
+    cap_bytes = max(0, cap_bytes)
 
-    if source_bytes <= cap_bytes:
+    if not infos or source_bytes <= cap_bytes:
         # Nothing to choose. Note this branch also covers the all-zero-byte
         # input, which would otherwise divide by zero below.
         return Sample(files=tuple(infos), cap_bytes=cap_bytes,
@@ -228,7 +262,8 @@ def pick_sample(infos: Sequence[FileInfo],
         budget = min(int(cap_bytes * share) - already, cap_bytes - used)
         if budget <= 0:
             continue
-        picked, spent = _fill(_spread(files), budget, taken)
+        picked, spent = _fill(list(_spread(files)), budget, taken,
+                              pool_bytes=sum(f.size for f in files))
         chosen.extend(picked)
         used += spent
 
@@ -248,7 +283,8 @@ def pick_sample(infos: Sequence[FileInfo],
     for category in order:
         if used >= cap_bytes:
             break
-        picked, spent = _fill(_spread(groups[category]), cap_bytes - used, taken)
+        picked, spent = _fill(list(_spread(groups[category])),
+                              cap_bytes - used, taken)
         chosen.extend(picked)
         used += spent
 

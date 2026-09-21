@@ -708,6 +708,12 @@ class MainWindow(QMainWindow):
             return
         self._infos = [info for info in self._infos
                        if not _is_under(Path(info.path), removed)]
+        # I6: different bytes, different answer. This path mutates the input
+        # without going back through analysis, so it is the one input change
+        # that `_on_analysis_ready` does not clean up after — and leaving the
+        # measurement here attributed a measured archive size to a folder that
+        # no longer contains the files it was measured on.
+        self._forget_measurements()
         self._refresh_pending_view()
         self._resummarize()
 
@@ -854,12 +860,6 @@ class MainWindow(QMainWindow):
         if not run.sample.files:
             return
         self._comparison = run
-        # Everything on the panel belongs to exactly one run. Keeping the last
-        # run's numbers here would mean a cancelled re-measure left a mix of
-        # two runs' figures under one caption.
-        self._measured = {}
-        self._measured_caption = ""
-        self._refresh_estimates()
         run.measured.connect(self._on_profile_measured)
         run.failed.connect(self._on_profile_measure_failed)
         run.finished.connect(self._on_measurement_finished)
@@ -881,11 +881,21 @@ class MainWindow(QMainWindow):
         self._begin_measurement()
 
     def _begin_measurement(self) -> None:
+        # Unconditionally, and first: this is a banner action, and the banner
+        # does not dismiss itself. Bailing out below without hiding it left a
+        # "Measure anyway" button on screen that did nothing when pressed.
+        self.banner.hide_banner()
         run = self._comparison
         if run is None or run.is_running():
             return
-        self.banner.hide_banner()
+        # Everything on the panel belongs to exactly one run — but the old
+        # numbers are cleared HERE, not when the button is pressed. Clearing
+        # them before the over-cap question was answered threw away a
+        # completed measurement for a run the user then declined.
+        self._measured = {}
+        self._measured_caption = ""
         run.start()
+        self._refresh_estimates()
         self._refresh_measure_button()
         self._refresh_actions()
 

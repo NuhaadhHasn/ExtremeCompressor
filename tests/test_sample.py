@@ -213,3 +213,36 @@ def test_no_cap_produces_a_sample_larger_than_the_input(cap):
     infos = [_f(f"f{i}", 1_000_000) for i in range(50)]
     sample = pick_sample(infos, cap_bytes=cap)
     assert sample.total_bytes <= sample.source_bytes
+
+
+# -- defects found by the 2026-09-20 adversarial review --------------------
+
+def test_a_dominant_file_is_not_crowded_out_by_the_crumbs_around_it():
+    """The installer case. 95 MB of setup.exe beside forty 300 KB DLLs is an
+    installer; a sample that spends 13.6 MB on DLLs and omits the setup is a
+    sample of something else. Reproduced at the shipped cap before the fix."""
+    infos = ([_f("setup.exe", 95_000_000, Category.EXECUTABLE)]
+             + [_f(f"lib{i:03d}.dll", 300_000, Category.EXECUTABLE)
+                for i in range(40)])
+    sample = pick_sample(infos)          # the shipped 100 MB cap
+    assert any(f.path.name == "setup.exe" for f in sample.files)
+    assert sample.total_bytes > 90_000_000, "spent the cap on crumbs"
+    assert sample.total_bytes <= DEFAULT_SAMPLE_BYTES
+
+
+def test_taking_the_dominant_file_does_not_replace_the_spread():
+    """The guard has to be a threshold, not "always take the largest": taking
+    the biggest file unconditionally collapses this sample from three files
+    to two and undoes the distribution walk."""
+    infos = [_f(f"f{i}", (i + 1) * 100_000) for i in range(100)]
+    sample = pick_sample(infos, cap_bytes=5_000_000)
+    assert len(sample.files) >= 3
+
+
+@pytest.mark.parametrize("cap", [0, -1, -1_000_000])
+def test_a_nonpositive_cap_is_clamped_rather_than_raising(cap):
+    """`tools/bench.py --sample` takes an int straight off the command line."""
+    assert pick_sample([], cap_bytes=cap).files == ()
+    sample = pick_sample([_f("a", 10), _f("b", 20)], cap_bytes=cap)
+    assert len(sample.files) == 1        # the smallest, and over_cap says so
+    assert sample.over_cap

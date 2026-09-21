@@ -1,4 +1,4 @@
-# I6 — measured preset comparison, and the two defects the render caught
+# I6 — measured preset comparison, and the nine defects found after the tests went green
 
 **2026-09-20**, branch `phase-i6-measured-presets`, this laptop
 (2-core i7-3540M, 16 GB, Windows 10 Pro 19045).
@@ -160,7 +160,67 @@ worth inventing a fifth kind of hedge for.
 
 ---
 
-## 5. What a comparison costs, and what it touches
+## 5. Seven defects an adversarial review found after it was committed
+
+Three independent reviewers over the committed diff — one on object lifecycle,
+one fuzzing the sampler, one asking only "does the UI ever state something
+untrue" — then every finding handed to a separate agent told to refute it.
+**Sixteen findings, nine refuted, seven confirmed with a reproduction.** The
+suite was green throughout; so was the render sweep.
+
+| # | defect | how it showed |
+|---|---|---|
+| 1 | **A cancelled job stranded the whole run** | `QueueManager` retires a cancelled job through `_retire`, which emits only `jobStateChanged` — not `jobDone`, not `jobFailed`. Every measurement job has a visible **x** in Activity. Pressing one left `is_running()` True forever: the button stuck on "Stop measuring" with nothing running, the run still connected as a live listener, the temp directory never removed. Closing the window does it too, via `shutdown() -> cancel_all()`. |
+| 2 | **Removing one file kept the old measurement** | `remove_selected_pending` mutates `_infos` in place and never goes back through analysis, so it was the one input-changing path `_forget_measurements` did not cover. Reproduced: after removing one of two files the card still read "Measured on all 2 files", and one row's accessible name said *"about 860 B … measured archive 3.3 MB"* — a 4,000× contradiction inside one sentence. |
+| 3 | **"Measure anyway" could become a dead button** | The banner does not dismiss itself; the callback must. A bail-out that skipped `hide_banner()` left a visible button that did nothing. |
+| 4 | **Throwaway archives went into the job history** | Their files are deleted the instant the byte count is read, so `Clear finished` wrote history rows pointing at paths that no longer exist. |
+| 5 | **Declining the over-cap question destroyed a finished measurement** | `toggle_measurement` cleared the cards *before* asking, so answering "Not now" threw away a completed run to start nothing. |
+| 6 | **Crumbs blocked the loaf in the sampler** | `setup.exe` at 95,000,000 B beside forty 300,000 B DLLs: the greedy spread filled the budget with DLLs and **spent 13.6 MB of a 100 MB cap while omitting the file that was 89% of the data**. A sample of an installer containing no installer. |
+| 7 | **A negative `--sample` raised `ValueError`** | `pick_sample([], cap_bytes=-1)` skipped the early return and reached `min()` on an empty sequence. `tools/bench.py` took the int straight off the command line. |
+
+All seven are fixed, each with a test that reproduces the original.
+
+### Then the fixes turned two pixel budgets red, and neither was about pixels
+
+`test_gui_compact` reported a point-estimate row at **53px against its 36px
+budget** and `test_gui_fit` the populated page at **487px against 447**. They
+also failed on the *pre-I6* commit when run alone, which is what gave it away:
+this was never a layout regression.
+
+`excmp/calibrate.py` writes J7's learned rates to `~/.excmp/calibration.json`,
+a global file **`conftest.py` did not isolate**. I6's end-to-end tests run real
+queue jobs; `CompressWorker._calibrate` wrote a single zstd sample
+(`rate 10,237,456 B/s, factor 0.4875`) into it; that changed `blended_rates()`,
+which changed Fast's estimate, which gave Normal a "not worth it" note, which
+is a full-width prose line.
+
+So **the suite's outcome depended on whether anyone had ever run the app on
+this machine.** CI has a clean home directory and would never have seen it; a
+developer who had used the app once would get two pixel failures with no
+apparent cause — and the project has already written down that *a false alarm
+in a guard test is worse than no test*, because the response to a wrongly-red
+test is to stop reading it.
+
+Fixed with an autouse fixture routing `calibrate.DEFAULT_PATH` to `tmp_path`,
+exactly as QSettings is routed, plus a test asserting the fixture is in force.
+This is the oldest bug found today — it predates I6 entirely and would have hit
+any future test that ran a real job.
+
+**Number 6 is the one worth carrying.** The fix is not "take the largest file",
+which was tried and collapsed the distribution walk — on a 100-file
+100 KB–10 MB spread it turns a three-file sample into two. It is a *threshold*:
+a file carrying at least 25% of its category's bytes is taken before the spread
+runs, everything else keeps the bisection. Both properties survive, and both
+have a test.
+
+**Number 1 is the one that says something about this codebase.** The bug was
+not in the new code's logic; it was in assuming a queue's "job finished"
+vocabulary was `jobDone` and `jobFailed`. It was not. Cancellation is a third
+word and it is spoken on a different channel.
+
+---
+
+## 6. What a comparison costs, and what it touches
 
 - **Four sequential compressions.** The queue pool is capped at one job by
   design, so a user's own Compress will queue behind a running comparison.
@@ -169,14 +229,16 @@ worth inventing a fifth kind of hedge for.
   finished job including these, so J7 learns from them. Left deliberately:
   they are real jobs on the user's real data, which is exactly what
   calibration wants.
-- **It feeds history**, if the user clicks Clear finished. Same argument.
+- **It does NOT feed history.** `Job.measurement` marks these, and
+  `clear_finished` skips them — their archives are deleted as soon as the byte
+  count is read, and a history row is a record of something you still have.
 - **Over-cap inputs ask first.** When the smallest file is larger than the cap
   there is no small sample to take, so the banner says so with the real size
   and the number of runs, and waits.
 
 ---
 
-## 6. `tools/bench.py --sample`
+## 7. `tools/bench.py --sample`
 
 The same selection from the same module, so a number in a benchmark doc and a
 number on a card mean the same thing. Measured today, Silesia at a 20 MB cap:
@@ -198,7 +260,7 @@ drops or starves a category, and they print into the written markdown too.
 
 ---
 
-## 7. Reproducing it
+## 8. Reproducing it
 
 ```
 .venv\Scripts\python.exe -m pytest tests\test_sample.py tests\test_i6_measured_presets.py -q

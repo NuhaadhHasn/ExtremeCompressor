@@ -2089,6 +2089,16 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       that disagreed), and then a column titled "Estimated size" carrying a
       measured one. The size column is now measured *only* when the sample was
       the whole input, and the header goes to "Size" when it is.
+      **Then seven more from an adversarial review of the committed diff** —
+      sixteen findings across three lenses, nine refuted, seven reproduced and
+      fixed. The two that mattered: **a cancelled job stranded the entire run**
+      (`QueueManager` retires a cancellation through `jobStateChanged` only,
+      never `jobDone`/`jobFailed`, and every measurement job has a visible x in
+      Activity), and **removing one pending file kept the old measurement** on
+      the cards, because that path mutates `_infos` without going back through
+      analysis. Also: a 95 MB `setup.exe` beside forty 300 KB DLLs made the
+      sampler spend 13.6 MB of a 100 MB cap and omit the file that was 89% of
+      the data. All seven have a test that reproduces the original.
 - [~] I7. ❌ **WON'T DO — decided 2026-09-10 by the owner. Do not build this,
       and do not re-open it in a later session.**
       Original item: i18n pipeline (`pyside6-lupdate`/`lrelease` + first `.ts` +

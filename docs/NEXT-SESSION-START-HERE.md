@@ -171,7 +171,9 @@ today by searching, not by reading the last note.**
   still behind a krinkels.org login. (An unbounded sweep timed out at 480 s, so
   the honest claim is "not in the plausible places".)
 - **No game-audio corpus.** Zero `.opus`, `.wem`, `.fsb`, `.bnk` anywhere,
-  including the whole external `Downloads-1` tree and the F: volume — the
+  including the F: volume and the external `Downloads-1` tree — and that tree
+  was **fully enumerated, 412,055 files**, with an extension histogram over all
+  of them, not sampled. That is the search B4's post-mortem asked for and the
   omission that made B4's original "blocked" verdict wrong. **No game is
   installed on this machine at all.** The only Vorbis is 39 UI sound effects
   (31 unique, 326,692 B) inside the odoo18/odoo19 source trees.
@@ -220,7 +222,60 @@ forcing the proportions would mean measuring 5 MB. So the bias is **reported**
 **ranks the profiles on identical bytes, it does not forecast the job**. A test
 asserts the measurement never moves the recommendation.
 
-### Rendering caught two defects again, and the suite caught neither
+### Nine defects, and the test suite found none of them
+
+I6 went green — 50 new tests, the full suite at 1,271 — and then **nine real
+defects turned up anyway**, in two passes.
+
+Two came from `tools/qa_sweep.py` and looking at the PNG (see below). The other
+seven came from an **adversarial review of the already-committed diff**: three
+reviewers on different lenses (object lifecycle / fuzz the sampler / "does the
+UI ever state something untrue"), then every finding handed to a separate agent
+told to refute it. Sixteen findings, **nine refuted, seven reproduced**.
+
+The two worth remembering:
+
+- **A cancelled job stranded the whole run.** `QueueManager` retires a
+  cancellation through `_retire`, which emits `jobStateChanged` and *neither*
+  `jobDone` nor `jobFailed`. Every measurement job has a visible **x** in
+  Activity, so one click left the run listening forever, the button stuck on
+  "Stop measuring", and the temp directory on disk. Closing the window does the
+  same thing via `shutdown() -> cancel_all()`. The bug was not in the logic —
+  it was in assuming a queue's vocabulary for "this job is over" was two words
+  when it is three, on two channels.
+- **Removing one pending file kept the old measurement.** `remove_selected_
+  pending` mutates `_infos` in place and never re-analyses, so it was the one
+  input-changing path `_forget_measurements` did not cover. One row's spoken
+  sentence read *"about 860 B … measured archive 3.3 MB"*.
+
+### ...and then the fixes exposed a tenth, in the test harness itself
+
+Two pixel budgets went red after the fixes — `test_gui_compact` at 53px against
+36, `test_gui_fit` at 487px against 447 — and **neither was about pixels.**
+They also failed on the pre-I6 commit when run in isolation, which is what gave
+it away.
+
+`excmp/calibrate.py` writes J7's learned rates to `~/.excmp/calibration.json`,
+a **global file `conftest.py` did not isolate**. I6's end-to-end tests run real
+queue jobs, `CompressWorker._calibrate` wrote one zstd sample into it, that
+changed `blended_rates()`, which changed Fast's estimate, which gave Normal a
+"not worth it" note, which is a full-width prose line — 53px on a row budgeted
+at 36, and 40px on a page budgeted at 447.
+
+**The suite's result depended on whether anyone had ever run the app on this
+machine.** CI, with a clean home directory, would never have seen it; a
+developer who had used the app once would see two unexplainable pixel failures.
+There is now an autouse fixture routing `calibrate.DEFAULT_PATH` to `tmp_path`
+like QSettings, plus a test asserting the fixture is in force. The stray
+`~/.excmp/calibration.json` the test runs created was deleted, restoring the
+pre-session state.
+
+**The lesson for the next feature: the refute-it pass is worth its cost.** Nine
+of sixteen findings were wrong, and the review would have been noise without
+it; the seven that survived included two that put a wrong number on screen with
+a measurement's authority, which is the one thing this product must not do.
+
+### Rendering caught two defects too, and the suite caught neither
 
 `tools/qa_sweep.py`, 05b. A row showed `Estimated size: about 225.9 KB` beside
 `Saved: 61% measured` — 61% of 371.5 KB is 144.9 KB, two numbers about one job

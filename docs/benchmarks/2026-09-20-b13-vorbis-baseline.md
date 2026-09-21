@@ -43,9 +43,15 @@ search"*, where a previous session declared B4 blocked having never looked in
 |---|---:|---:|---:|---:|---:|
 | `C:\Users\nuhaa\Downloads` | **39** | 0 | 0 | 0 | 0 |
 | `AppData\Local`, `Program Files`, `Program Files (x86)` | 10 | 0 | 0 | 0 | 0 |
-| `Desktop\Downloads-1` (the external drive, whole tree) | **0** | 0 | 0 | 0 | 0 |
+| `Desktop\Downloads-1` (the external drive, **all 412,055 files**) | **0** | 0 | 0 | 0 | 0 |
 | `C:\excmp-bench`, `Music`, `Videos`, `Documents`, `Pictures` | 0 | 0 | 0 | 0 | 0 |
 | `F:\` (a mounted 31 GB volume) | 0 | 0 | 0 | 0 | 0 |
+
+That external-drive row is not a bounded search that gave up: the whole tree
+was enumerated, **412,055 files**, and an extension histogram over all of them
+returns nothing for `.ogg`, `.opus`, `.wem`, `.fsb`, `.bnk` or `.oga`. (It is
+184,255 `.js` files and 26,865 `.json`, which is what a tree of programming
+tutorials looks like.) This is the search B4's post-mortem asked for.
 
 There is **no game installed on this machine at all** — no
 `Steam\steamapps`, no Epic, no GOG, no Riot, no Unity. Every `.ogg` found is a

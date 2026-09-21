@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-20**. **1,271 tests, 10 skipped, 1 strict-xfail.**
+> Status date: **2026-09-21**. **1,284 tests, 10 skipped, 1 strict-xfail.**
 > **Branch `phase-i6-measured-presets` is awaiting review**; everything else is
 > merged to `main`.
 >

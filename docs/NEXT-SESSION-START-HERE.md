@@ -38,12 +38,12 @@ Three things about that command, all measured, none guessable:
 |---|---|
 | `main` | docs only this session: three benchmark records + the roadmap |
 | branch | **`phase-i6-measured-presets`** — I6's code, **unmerged, awaiting review** |
-| tests | **1,271 passed, 10 skipped, 1 xfailed** (was 1,229 / 2 / 1) |
+| tests | **1,284 passed, 10 skipped, 1 xfailed** (was 1,229 / 2 / 1) |
 | corpus guard | clean — nothing under either real corpus was touched |
 | AI attribution | none, anywhere. Audited before each commit |
 
-**+50 tests**: `tests/test_sample.py` (22) and
-`tests/test_i6_measured_presets.py` (28).
+**+63 tests**: `tests/test_sample.py` (27), `tests/test_i6_measured_presets.py` (35), and one in `test_calibrate.py`
+pinning the isolation fixture.
 **+8 skips**: all one problem, and it is the first thing to deal with.
 
 ---
@@ -60,7 +60,7 @@ MISSING   lghub_installer.exe   58,146,712 B
 
 That single deletion switches off **all eight** backtest tests — the ones that
 score J1/J8's estimator against real measured data — and the suite reports
-`1271 passed` without a hint. It is the project's own recurring lesson
+`1,284 passed` without a hint. It is the project's own recurring lesson
 ("green is a claim about what the tests look at") happening again, this time
 caused by the corpus folder being live rather than by anything in the code.
 

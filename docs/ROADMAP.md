@@ -1,18 +1,17 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-21**. **1,284 tests, 10 skipped, 1 strict-xfail.**
+> Status date: **2026-09-21**. **1,292 tests, 2 skipped, 1 strict-xfail.**
 > **Branch `phase-i6-measured-presets` is awaiting review**; everything else is
-> merged to `main`.
+> merged to `main`. The two skips are the opt-in 57k-file corpus walk
+> (`EXCMP_SLOW_CORPUS=1`) and a test that only runs when no E1-pinned tool is
+> installed — nothing is silently switched off.
 >
-> ⚠️ **Eight of those ten skips are `test_estimate_backtest.py` switching
-> itself off**, because one pinned file — `lghub_installer.exe`, 58,146,712 B —
-> has been deleted from the live Programs corpus. The estimator's backtest
-> against real data is therefore **not running**, and the suite says nothing
-> about it beyond a skip. The skip now names the file. Restore it, or re-pin
-> `FILES` and re-derive the expected ratios; do not just drop the entry, the
-> assertions were fitted to the whole six-file set. The other two skips are the
-> opt-in 57k-file corpus walk (`EXCMP_SLOW_CORPUS=1`) and a test that only runs
-> when no E1-pinned tool is installed.
+> The J8 backtest was briefly disarmed (`lghub_installer.exe` deleted from the
+> live corpus) and is re-pinned to the re-downloaded build, 70,346,392 B up
+> from 58,146,712. **Its timing is now a median of three**: the same input took
+> 143.3s / 80.9s / 100.7s depending only on the OS file cache, and the cold run
+> alone would have failed a working estimator. Reading that corpus end to end
+> takes 1.7s at 426 MB/s, so the external drive is not the bottleneck once warm.
 >
 > **D7 is green.** The workflow has run on `windows-latest` and passed, as have
 > the last three pushes. Its *first* run failed three layout tests, and that was

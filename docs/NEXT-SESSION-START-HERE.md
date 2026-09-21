@@ -7,8 +7,8 @@
 > gated on and they came back positive, but read §3 before writing a line,
 > because the second corpus says something the first one does not.
 >
-> ⚠️ **Read §1 first.** Eight estimator tests are silently switching
-> themselves off because one file was deleted from the live corpus.
+> The estimator backtest is armed again. **Read §1** for the file-cache finding
+> that nearly recorded a working estimator as broken.
 
 ```
 .venv\Scripts\python.exe -m pytest -q
@@ -38,49 +38,68 @@ Three things about that command, all measured, none guessable:
 |---|---|
 | `main` | docs only this session: three benchmark records + the roadmap |
 | branch | **`phase-i6-measured-presets`** — I6's code, **unmerged, awaiting review** |
-| tests | **1,284 passed, 10 skipped, 1 xfailed** (was 1,229 / 2 / 1) |
+| tests | **1,292 passed, 2 skipped, 1 xfailed** (was 1,229 / 2 / 1) |
 | corpus guard | clean — nothing under either real corpus was touched |
 | AI attribution | none, anywhere. Audited before each commit |
 
 **+63 tests**: `tests/test_sample.py` (27), `tests/test_i6_measured_presets.py` (35), and one in `test_calibrate.py`
 pinning the isolation fixture.
-**+8 skips**: all one problem, and it is the first thing to deal with.
+**Skips are back to 2** — the opt-in 57k-file corpus walk and the no-E1-tool test. Nothing is silently switched off.
 
 ---
 
-## 1. ⚠️ Eight estimator tests are off, and the suite still says green
+## 1. ✅ The estimator backtest is armed again — and a cache nearly framed it
 
-`tests/test_estimate_backtest.py` is gated on the 2026-08-01 benchmark corpus
-being present **at its recorded sizes**. Five of its six pinned files are
-there. One is not:
+`tests/test_estimate_backtest.py` is gated on the 2026-08-01 corpus being
+present **at its recorded sizes**, and `lghub_installer.exe` had been deleted,
+switching off all eight backtest tests while the suite still said green. It was
+re-downloaded the same day and **came back as a newer build, 70,346,392 B
+against the 58,146,712 B that was pinned** — so the size gate went on refusing
+the comparison rather than quietly scoring against different bytes. Re-measured
+and re-pinned; all eight pass.
 
-```
-MISSING   lghub_installer.exe   58,146,712 B
-```
+**Why it had to be that file.** At `sample_ratio` 0.4653 lghub is the *only*
+compressible member of that corpus; the other five measure 0.82, 0.96, 0.97,
+1.00, 1.00. Every alternative in the folder was analysed, and the nearest
+executable by size — HandBrake — measures **0.9942**. Substituting it was tried
+and measured: Normal's saving fell from 2.80% to **0.0905%**, which would leave
+the estimator scored on data where predicting "no change at all" passes the
+±10% gate. The new build is the same shape as the old (ratio 0.4653 vs 0.4411,
+entropy 6.55 vs 6.51), so only the numbers move.
 
-That single deletion switches off **all eight** backtest tests — the ones that
-score J1/J8's estimator against real measured data — and the suite reports
-`1,284 passed` without a hint. It is the project's own recurring lesson
-("green is a claim about what the tests look at") happening again, this time
-caused by the corpus folder being live rather than by anything in the code.
+### ⚠️ The timing figure nearly went in wrong, and this one generalises
 
-**The skip now names the file** rather than saying "the corpus is not present",
-so `pytest -rs` is actionable — that one-line change rides on the
-`phase-i6-measured-presets` branch with the rest of this session's code, since
-a test edit is code and code does not go straight to `main` here.
+The first re-measurement of Normal read **143.3s** — *outside* the estimator's
+64.4–135.6s band. It looked like the estimator was broken. It was not. Three
+runs over byte-identical input, producing a byte-identical 707,893,728 B
+archive, took **143.3s, 80.9s, 100.7s**: a 1.77× spread with nothing moving but
+the OS file cache.
 
-Two ways to fix the underlying gap properly, and it is a judgement call:
+Reading all 733 MB of that corpus straight through takes **1.7s at 426 MB/s**.
+**The external drive is not the bottleneck once it is warm**, and the cold first
+pass costs ~40%. This contradicts the standing assumption that the external
+drive dominates these timings — it does, once, and then it does not.
 
-- **restore `lghub_installer.exe`** to
-  `Desktop\Downloads-1\PalluVaapaHDD\0No Need To Check\Programs\` — it is a
-  Logitech G Hub installer, re-downloadable — and all eight re-arm as they are;
-- or **re-pin `FILES`** in that test to a set that still exists, which means
-  re-deriving its expected ratios. Do not simply drop the missing entry: the
-  assertions were fitted to the whole six-file set.
+The pinned figure is now the median of three with the spread recorded beside
+it. Pinning the cold run would have baked a cache state into a guard and
+reported a working estimator as broken — and the old 103.8s sits between the
+two warm runs, which is the other reason to think 143.3 was the outlier.
 
-**Also measured today:** that folder is now **29 files / 4,992,790,741 B**.
-`CLAUDE.md` still says "6.4 GB across 42 files (2026-08-07)". The doc already
-warns to re-measure before quoting it; this is that warning being right.
+**Timing rule for this repo, then: never pin a single run, and never pin the
+first one.**
+
+### The corpus folder is live, and the guard will say so
+
+It is **31 files / 5,230,520,772 B** today, against CLAUDE.md's "6.4 GB across
+42 files (2026-08-07)". Re-measure before quoting it.
+
+`corpus_guard.py compare` reported **2 files ADDED** on the last run —
+`lghub_installer.exe` and `jellyfin_10.11.3_windows-x64.exe`. Both were the
+owner moving files in *while the suite ran*, not the suite: `modified: 0`,
+`removed: 0`, `Downloads\Programs\` is now empty, and the timestamps land
+inside the run window. The guard cannot tell "the user added this" from "the
+suite added this", so **a fresh snapshot immediately before the run is part of
+the procedure**, not optional. Re-snapshotted; it is clean now.
 
 ---
 
@@ -331,7 +350,6 @@ is an assumption and measuring it is the point of I6.
 ### Small
 | item | what |
 |---|---|
-| **corpus repair** | restore `lghub_installer.exe` or re-pin `FILES` — §1 |
 | **B12 vs zpaqfranz** | one afternoon, and it decides where LOLZ belongs |
 
 ### Medium

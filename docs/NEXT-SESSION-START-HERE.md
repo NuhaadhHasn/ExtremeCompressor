@@ -1,7 +1,7 @@
 # 🚦 START HERE — handoff (written 2026-09-20)
 
-> **One branch is awaiting review: `phase-i6-measured-presets`.** Docs are on
-> `main`. Nothing else is outstanding.
+> **Everything is merged and pushed. CI is green.** `main` = `origin/main` =
+> `609bc07`, working tree clean, nothing awaiting review.
 >
 > **Next phase: B12's implementation** — LOLZ now has the measurements it was
 > gated on and they came back positive, but read §3 before writing a line,
@@ -36,8 +36,8 @@ Three things about that command, all measured, none guessable:
 
 | | |
 |---|---|
-| `main` | docs only this session: three benchmark records + the roadmap |
-| branch | **`phase-i6-measured-presets`** — I6's code, **unmerged, awaiting review** |
+| `main` | `609bc07`, pushed; I6 merged in, CI green on `windows-latest` |
+| branch | `phase-i6-measured-presets` — **merged**, kept locally, safe to delete |
 | tests | **1,292 passed, 2 skipped, 1 xfailed** (was 1,229 / 2 / 1) |
 | corpus guard | clean — nothing under either real corpus was touched |
 | AI attribution | none, anywhere. Audited before each commit |
@@ -100,6 +100,45 @@ owner moving files in *while the suite ran*, not the suite: `modified: 0`,
 inside the run window. The guard cannot tell "the user added this" from "the
 suite added this", so **a fresh snapshot immediately before the run is part of
 the procedure**, not optional. Re-snapshotted; it is clean now.
+
+---
+
+## 1b. The next session has two jobs, and one of them needs Chrome
+
+The owner has signed into Chrome and asked for the blocked downloads to be
+fetched from there. **Do the unblocked measurement first** — it needs nothing
+external and it decides the shape of the item after it.
+
+### (a) B12 vs zpaqfranz — start here, no download needed
+
+LOLZ has only ever been measured against 7-Zip. **Insane's final codec is
+zpaqfranz**, so that is the comparison that decides where LOLZ actually
+belongs, and it is the one measurement standing between B12 and a decision.
+Everything needed is already on this machine: the pinned distribution at
+`C:\excmp-bench\lolz\`, and both corpora from §3 with their `.pcf`
+intermediates still sitting in `C:\excmp-bench\b12\`.
+
+### (b) The downloads, in Chrome, with per-item confirmation
+
+| target | unblocks | note |
+|---|---|---|
+| `balrogg` v1.1, krinkels.org resource `…-recompressor.601` | **B13** | behind a login. **Do not create or confirm an account** — if that address is still unconfirmed, the step is the owner's |
+| genuine Ogg Vorbis / Opus **music**, not UI blips | **B13**'s gate | open-source games ship real libvorbis: 0 A.D., SuperTuxKart, Xonotic, OpenRA |
+| `.wem` (Wwise) / `.fsb` (FMOD) banks | **B13 + B6** | the honest source is Wwise's and FMOD's own free sample projects. **Not** repack or warez bundles |
+| an Oodle/Kraken-compressed archive | **B6** | the untested half of B16; same corpus gap |
+
+**Rules that do not bend for convenience:** confirm each download with the
+owner by name, source and size before fetching; treat every binary as
+untrusted and pin its SHA-256 on arrival; and nothing measured on it moves
+routing until it has beaten `precomp → 7z` **and** restored byte-identically
+through `verify_restore`.
+
+**Why the corpus matters more than the tool.** §4 records 326 KB of UI sound
+effects as the only Vorbis on this machine and explicitly refuses to conclude
+anything from it. A real music corpus is what turns that refusal into a
+measurement — and high-bitrate Vorbis is *expected* to sit near 0%, so the
+honest possible outcome is that **B13 dies on contact with real data**. That is
+a result worth having, and it is cheaper to find out than to keep the item open.
 
 ---
 

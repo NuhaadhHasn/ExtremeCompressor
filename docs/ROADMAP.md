@@ -1,8 +1,8 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
 > Status date: **2026-09-21**. **1,292 tests, 2 skipped, 1 strict-xfail.**
-> **Branch `phase-i6-measured-presets` is awaiting review**; everything else is
-> merged to `main`. The two skips are the opt-in 57k-file corpus walk
+> **I6 is merged and pushed** (`609bc07`); CI green on `windows-latest`, and
+> nothing is awaiting review. The two skips are the opt-in 57k-file corpus walk
 > (`EXCMP_SLOW_CORPUS=1`) and a test that only runs when no E1-pinned tool is
 > installed — nothing is silently switched off.
 >

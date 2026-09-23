@@ -38,20 +38,50 @@ CORPUS = Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD"
 FILES = {
     "R-4.5.1-win.exe": 90_111_968,
     "Windows-KB890830-x64-V5.129.exe": 76_629_432,
-    "lghub_installer.exe": 58_146_712,
+    "lghub_installer.exe": 70_346_392,
     "DB.Browser.for.SQLite-v3.13.0-win64.msi": 19_783_680,
     "Winxvideo.AI.3.5.0.0.w64.rar": 212_734_622,
     "Wondershare UniConverter 15.0.9.15 (x64) pass=123.zip": 263_670_338,
 }
-TOTAL = sum(FILES.values())          # 721,076,752
+TOTAL = sum(FILES.values())          # 733,276,432
 
 # profile -> (measured saved fraction, measured total seconds including the
-# D9 restore+verify gate). Post-B11 chain, run 2026-08-01:
-#   normal  700,884,250 B, 103.8s (53.5 compress + 50.3 verify)
-#   extreme 699,648,205 B, 254.3s (197.5 compress + 56.8 verify)
+# D9 restore+verify gate).
+#
+# RE-BASELINED 2026-09-21. `lghub_installer.exe` was deleted from this live
+# folder and re-downloaded, and the new build is 70,346,392 B against the
+# 58,146,712 B that was measured - so the size gate did its job and refused
+# the comparison rather than quietly scoring against different bytes.
+#
+# Re-measured rather than adjusted, because that file is load-bearing: at
+# sample_ratio 0.4653 it is the ONLY compressible member of the corpus. The
+# other five measure 0.82, 0.96, 0.97, 1.00, 1.00, so substituting anything
+# else from the folder collapses the corpus's saving to ~0.1% and leaves the
+# estimator scored on data where predicting "no change at all" would pass.
+# (HandBrake, the nearest executable by size, measures 0.9942 and was tried:
+# normal fell from 2.80% to 0.0905%.) The new build is the same shape as the
+# old - ratio 0.4653 vs 0.4411, entropy 6.55 vs 6.51 - so the corpus keeps
+# its character and only its numbers move.
+#
+# Post-B11 chain, six files, 733,276,432 B:
+#   normal  707,893,728 B, 100.7s   (was 700,884,250 B / 103.8s over 721 MB)
+#   extreme 706,559,396 B, 355.9s   (was 699,648,205 B / 254.3s over 721 MB)
+#
+# THE TIME IS A MEDIAN OF THREE, AND THE FIRST ONE IS THE TRAP. Normal ran
+# 143.3s, then 80.9s, then 100.7s over byte-identical input producing a
+# byte-identical archive - a 1.77x spread with nothing but the OS file cache
+# moving. Reading all 733 MB of the corpus straight through takes **1.7s at
+# 426 MB/s**, so the external drive is NOT the bottleneck once it is warm, and
+# the cold first pass costs ~40%.
+#
+# Pinning 143.3 would have baked a cache state into the gate and reported the
+# estimator as broken: it predicts 88.1s with a 64.4-135.6s band, which brackets
+# both warm runs and misses only the cold one. The old 103.8s figure sits in the
+# middle of the warm pair, which is the other reason to think 143.3 was the
+# outlier rather than the truth.
 MEASURED = {
-    Profile.NORMAL: (0.0280, 103.8),
-    Profile.EXTREME: (0.0297, 254.3),
+    Profile.NORMAL: (0.0346, 100.7),
+    Profile.EXTREME: (0.0364, 355.9),
 }
 
 SIZE_TOLERANCE = 0.10   # +/-10% of the measured archive size
@@ -71,15 +101,29 @@ def _tolerance_for(profile: Profile) -> float:
     return PRECOMP_TIME_TOLERANCE if profile is Profile.EXTREME else TIME_TOLERANCE
 
 
-def _corpus_ready() -> bool:
-    return all((CORPUS / name).is_file()
-               and (CORPUS / name).stat().st_size == size
-               for name, size in FILES.items())
+def _corpus_gaps() -> list[str]:
+    """Which pinned files are missing or the wrong size, by name.
 
+    The generic "the corpus is not present" this used to say cost a session:
+    the folder is live, one 58 MB installer had been deleted, and all eight
+    tests below switched themselves off while the suite reported 1,271 passed.
+    A skip nobody can act on is a skip nobody notices.
+    """
+    gaps = []
+    for name, size in FILES.items():
+        path = CORPUS / name
+        if not path.is_file():
+            gaps.append(f"{name} (missing)")
+        elif path.stat().st_size != size:
+            gaps.append(f"{name} ({path.stat().st_size:,} B, expected {size:,})")
+    return gaps
+
+
+_GAPS = _corpus_gaps()
 
 pytestmark = pytest.mark.skipif(
-    not _corpus_ready(),
-    reason="the 2026-08-01 benchmark corpus is not present at its recorded sizes")
+    bool(_GAPS),
+    reason="the 2026-08-01 benchmark corpus has changed: " + "; ".join(_GAPS))
 
 
 @pytest.fixture(scope="module")

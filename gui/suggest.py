@@ -12,12 +12,14 @@ one says so before you start.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
 from excmp.estimate import DEFAULT_RATES, Rates, compare_profiles
 from excmp.planner import Plan, Profile, store_reason
+from excmp.sample import MeasuredRun, Sample
 from excmp.tools import ToolInfo
 
 from .format import fmt_eta, fmt_percent, fmt_size
@@ -475,20 +477,52 @@ class ComparisonRow:
     #: human, and re-parsing "about 3 hours" to decide whether to warn about
     #: it would be a formatting bug waiting to happen (J6).
     time_seconds: float = 0.0
+    #: I6: what this profile really saved when it was run on the sample, e.g.
+    #: "63%". Empty until a comparison has actually run this profile.
+    #:
+    #: It sits **beside** the estimate rather than replacing it, because the
+    #: two answer different questions: the estimate is about the whole input,
+    #: this is about the bytes that were measured. Merging them would produce
+    #: a number with a measurement's authority and an estimate's scope.
+    measured_saved_text: str = ""
+    #: The archive this profile really produced - but ONLY when the sample was
+    #: the whole input, because then it is not a projection, it is the answer.
+    #: On a genuine subset this stays empty and the estimate keeps the column:
+    #: scaling a sample's archive up to the folder's size would be an estimate
+    #: wearing a measurement's clothes.
+    measured_size_text: str = ""
+    #: The word under them. Always present when either measured field is, so a
+    #: reader never has to guess which of the two kinds of number they see.
+    measured_note: str = ""
 
 
 def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
                        summary: AnalysisSummary,
                        cores: int | None = None,
-                       rates: Rates = DEFAULT_RATES) -> list[ComparisonRow]:
+                       rates: Rates = DEFAULT_RATES,
+                       measured: Mapping[Profile, MeasuredRun] | None = None,
+                       measured_whole_input: bool = False,
+                       ) -> list[ComparisonRow]:
     """Every profile with its estimated size and time, recommendation marked.
 
     Reads the recommendation from :func:`recommend_with_estimates` rather than
     deciding again, so the highlighted row and the card badge can never disagree
     - and so the table never recommends a row it has itself flagged.
+
+    ``measured`` (I6) carries the profiles a comparison run has actually
+    executed on a sample. Those rows gain a second, measured saving beside the
+    estimate. It never changes the estimate, the recommendation or the flags:
+    a ratio measured on 56 MB of a 5 GB folder is a ranking, not a forecast,
+    and letting it move the recommendation would quietly turn it into one.
+
+    ``measured_whole_input`` says the sample was not a sample at all - every
+    file went through - so the measured archive size may take the size column
+    as well. It is a separate flag rather than something inferred here because
+    only the caller holds the :class:`~excmp.sample.Sample` that knows.
     """
     if not infos:
         return []
+    measured = dict(measured or {})
 
     estimates = compare_profiles(infos, tools, rates)
     recommended, reason = recommend_with_estimates(summary, estimates, cores)
@@ -528,6 +562,20 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
         # two-core laptop it is the difference between a job and a swap storm.
         ram_text = _ram_words(est.profile, cores, summary.total_bytes)
 
+        # I6. `_saved_words` caps its wording at 99% for an upper bound it
+        # cannot rule out; a measurement has no such problem, so it is
+        # reported plainly. `upper_bound=False` says exactly that: this
+        # number happened.
+        run = measured.get(est.profile)
+        measured_saved = ""
+        measured_size = ""
+        measured_note = ""
+        if run is not None and run.verified and run.orig_bytes > 0:
+            measured_saved = _saved_words(run.saved_fraction, upper_bound=False)
+            measured_note = "measured"
+            if measured_whole_input:
+                measured_size = fmt_size(run.final_bytes)
+
         rows.append(ComparisonRow(
             profile=est.profile,
             title=PROFILE_LABELS.get(est.profile, est.profile.value),
@@ -544,8 +592,45 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
             note=note,
             caveat=_short_caveat(est.warnings),
             tone="ok" if is_recommended else ("warn" if note else ""),
+            measured_saved_text=measured_saved,
+            measured_size_text=measured_size,
+            measured_note=measured_note,
         ))
     return rows
+
+
+def measurement_caption(sample: Sample, profiles_run: int) -> str:
+    """One line saying exactly what was measured, including what it missed.
+
+    Every clause here is load-bearing and each exists because the alternative
+    is a lie of omission:
+
+    - the byte count and share, because "measured" on 1.1% of a folder is a
+      different claim from "measured";
+    - the drift, because the sampler cannot always keep a category's share
+      (see :mod:`excmp.sample`) and a starved category moves the ratio;
+    - "ranks the profiles", because that is the only claim a sample supports.
+    """
+    if not profiles_run or not sample.files:
+        return ""
+    files = len(sample.files)
+    noun = "file" if files == 1 else "files"
+    if sample.is_whole_input:
+        where = f"Measured on all {files} {noun} ({fmt_size(sample.total_bytes)})"
+    else:
+        where = (f"Measured on {files} {noun} — {fmt_size(sample.total_bytes)}, "
+                 f"{sample.fraction * 100:.1f}% of this input")
+
+    left_out = list(sample.missing_categories) + list(sample.under_represented)
+    if left_out:
+        names = ", ".join(CATEGORY_LABELS.get(c, c.value) for c in left_out)
+        names = names[:1].upper() + names[1:]
+        return (f"{where}. {names} could not fit the sample in proportion, so "
+                f"this ranks the profiles rather than predicting the final size.")
+    if sample.is_whole_input:
+        return f"{where}. These are the real numbers for this job."
+    return f"{where}. Real ratios for those bytes, not a forecast for the rest."
+
 
 
 def comparison_caption(rows: list[ComparisonRow]) -> str:

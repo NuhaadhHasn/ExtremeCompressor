@@ -140,8 +140,11 @@ class ProfileRow(QFrame):
         self._selected = False
         self._note_label: QLabel | None = None
         # A row is taller than the 32px floor for exactly one honest reason:
-        # its estimate is a range, so its cells carry a second line.
-        self._has_range = bool(row.size_range or row.time_range)
+        # its cells carry a second line — because the estimate is a range, or
+        # (I6) because a measured saving needs the word "measured" under it so
+        # nobody has to guess which of the two kinds of number they are reading.
+        self._has_range = bool(row.size_range or row.time_range
+                               or row.measured_note or row.measured_size_text)
         # Its own objectName, not #Card: the row needs a 2px border in every
         # state so selection recolours instead of reflowing (W2-4).
         self.setObjectName("ProfileRow")
@@ -188,11 +191,26 @@ class ProfileRow(QFrame):
         self.retint(theme)
 
         if row.size_text:
+            # I6: once a profile has actually been run, its measured saving
+            # REPLACES the estimated one in this column rather than sitting
+            # beside it. Showing both invites the reader to average two
+            # numbers that answer different questions, and the estimate is
+            # still on the row anyway, in "Estimated size".
+            saved_main = row.measured_saved_text or row.saved_text
+            # The size column only goes measured when the whole input was
+            # run. Otherwise it keeps the estimate, and the two cells are
+            # answering about different byte counts — which is why the word
+            # "measured" is printed under each cell that earned it rather
+            # than once per row.
+            size_main = row.measured_size_text or row.size_text
+            size_sub = row.measured_note if row.measured_size_text else row.size_range
             cells = (
                 name_holder,
                 _cell(row.chain, row.caveat, values, tone="warn" if row.caveat else ""),
-                _cell(row.size_text, row.size_range, values),
-                _cell(row.saved_text, "", values),
+                _cell(size_main, size_sub, values,
+                      bold=bool(row.measured_size_text)),
+                _cell(saved_main, row.measured_note, values,
+                      bold=bool(row.measured_note)),
                 _cell(row.time_text, row.time_range, values,
                       tone="warn" if row.note else ""),
                 _cell(row.ram_text or "—", "", values),
@@ -229,6 +247,15 @@ class ProfileRow(QFrame):
                 row.title, row.chain, row.size_text, row.saved_text, row.time_text)
             if row.ram_text:
                 spoken += self.tr(", needs about %s of memory") % row.ram_text
+            # A number a sighted reader can see and a screen-reader user
+            # cannot is the exact defect the caveat line already recorded
+            # here once. The measured saving says it in words, and says that
+            # it is measured, because that is the whole of its meaning.
+            if row.measured_saved_text:
+                spoken += self.tr(", measured at %s saved on the sample") % (
+                    row.measured_saved_text)
+            if row.measured_size_text:
+                spoken += self.tr(", measured archive %s") % row.measured_size_text
         else:
             spoken = f"{row.title}: {row.chain}"
         # The caveat is the missing-tool sentence ("zpaqfranz missing - runs as
@@ -341,11 +368,13 @@ class CompareTable(QFrame):
         head_line = QHBoxLayout(self._head)
         head_line.setContentsMargins(12, 0, 12, 0)
         head_line.setSpacing(14)
+        self._head_labels: list[QLabel] = []
         for header, stretch in _COLUMNS:
             label = QLabel(self.tr(header), self._head)
             label.setObjectName("Muted")
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
             head_line.addWidget(label, stretch)
+            self._head_labels.append(label)
         # The header strip carries the column labels and the disclosure on one
         # line; _head keeps its own column stretches so the labels stay aligned
         # with the rows beneath.
@@ -404,7 +433,8 @@ class CompareTable(QFrame):
         return {row.profile: row for row in self._rows}
 
     # -- population -----------------------------------------------------------
-    def set_rows(self, rows: list[ComparisonRow]) -> None:
+    def set_rows(self, rows: list[ComparisonRow],
+                 measured_caption: str = "") -> None:
         if not rows:
             self._estimated = False
             self._show_placeholders()
@@ -414,9 +444,21 @@ class CompareTable(QFrame):
         # Its generic form ("ranges, not promises") says exactly what the (i)
         # disclosure says at greater length, so showing both is 34px spent
         # repeating yourself on the page with the tightest height budget.
+        #
+        # I6 buys the same 34px on a different argument: once numbers on this
+        # panel are measured rather than estimated, what they were measured
+        # ON is not a footnote, it is the scope of the claim. That sentence
+        # wins the slot outright — the flagged-row pointer is already repeated
+        # verbatim on the row it points at, and this is stated nowhere else.
         flagged = any(row.note for row in rows)
-        self._caption.setText(comparison_caption(rows) if flagged else "")
-        self._caption.setVisible(flagged)
+        if measured_caption:
+            caption = measured_caption
+        elif flagged:
+            caption = comparison_caption(rows)
+        else:
+            caption = ""
+        self._caption.setText(caption)
+        self._caption.setVisible(bool(caption))
         self._rebuild(rows)
 
     def rows(self) -> list[ProfileRow]:
@@ -447,7 +489,23 @@ class CompareTable(QFrame):
             ))
         self._rebuild(placeholder_rows)
 
+    def _set_headers(self, measured: bool) -> None:
+        """I6: a column that is showing a measured archive size must not be
+        titled "Estimated size".
+
+        Only the size column changes, and only when a measured size is
+        actually in it. "Saved" was already neutral, and "Estimated time"
+        stays honest because time is never measured here - a sample's
+        stopwatch says nothing about the whole job's duration.
+        """
+        for label, (header, _stretch) in zip(self._head_labels, _COLUMNS):
+            if header == "Estimated size" and measured:
+                label.setText(self.tr("Size"))
+            else:
+                label.setText(self.tr(header))
+
     def _rebuild(self, rows: list[ComparisonRow]) -> None:
+        self._set_headers(any(r.measured_size_text for r in rows))
         for widget in self._rows:
             self._column.removeWidget(widget)
             widget.setParent(None)

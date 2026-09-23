@@ -26,8 +26,10 @@ from excmp import __version__
 from excmp.analyzer import FileInfo
 from excmp.planner import Profile, plan as make_plan
 from excmp.safepath import UnsafePathError, safe_relpath
+from excmp.sample import MeasuredRun
 from excmp.tools import find_tools
 
+from .compare_run import ComparisonRun
 from .format import fmt_eta, fmt_size
 from .models import Job, JobKind, JobState
 from .queue_manager import AnalysisSignals, AnalysisWorker, QueueManager
@@ -115,6 +117,13 @@ class MainWindow(QMainWindow):
         self._pending: list[Path] = []
         self._infos: list[FileInfo] = []
         self._summary: AnalysisSummary | None = None
+        # I6. Held on the window rather than on the rows, because every
+        # profile click rebuilds and deletes every ProfileRow widget - a
+        # measured number parked on one would survive exactly until the next
+        # click. Cleared whenever the input changes, for the obvious reason.
+        self._measured: dict[Profile, MeasuredRun] = {}
+        self._measured_caption = ""
+        self._comparison: ComparisonRun | None = None
         self._analysis_pool = QThreadPool(self)
         self._analysis_notes: list[str] = []
         self._analysis_signals = AnalysisSignals(self)
@@ -446,6 +455,16 @@ class MainWindow(QMainWindow):
         self._name_error.setVisible(False)
 
         self.advanced_toggle = AdvancedToggle(self.advanced_panel, self.action_bar)
+        # I6: stop estimating and go and find out. Beside Compress rather than
+        # inside Advanced, because it is the answer to the question the whole
+        # Compress page is asking, and secondary-styled because it costs
+        # minutes — the estimate is still the default way to decide.
+        self.measure_button = QPushButton(self.tr("Measure presets"),
+                                          self.action_bar)
+        self.measure_button.setAccessibleName(
+            self.tr("Measure presets — run every profile on a sample of these "
+                    "files and report what each really saved"))
+        self.measure_button.setEnabled(False)
         self.clear_button = QPushButton(self.tr("Clear"), self.action_bar)
         self.compress_button = QPushButton(self.tr("Compress"), self.action_bar)
         self.compress_button.setProperty("variant", "primary")
@@ -457,6 +476,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self._name_error)
         row.addStretch(1)
         row.addWidget(self.advanced_toggle)
+        row.addWidget(self.measure_button)
         row.addWidget(self.clear_button)
         row.addWidget(self.compress_button)
 
@@ -562,7 +582,8 @@ class MainWindow(QMainWindow):
             *[cards[p] for p in
               (Profile.FAST, Profile.NORMAL, Profile.EXTREME, Profile.INSANE)
               if p in cards],
-            self.advanced_toggle, self.clear_button, self.compress_button,
+            self.advanced_toggle, self.measure_button, self.clear_button,
+            self.compress_button,
             self.clear_done_button, self.pause_button, self.queue_table,
         ]
         for first, second in zip(chain, chain[1:]):
@@ -583,6 +604,7 @@ class MainWindow(QMainWindow):
         # estimates arrive (found by the pre-merge audit).
         self.presets.rowsRebuilt.connect(self._set_tab_order)
         self.compress_button.clicked.connect(self.start_compression)
+        self.measure_button.clicked.connect(self.toggle_measurement)
         self.clear_button.clicked.connect(self.clear_pending)
         self.pause_button.clicked.connect(self._toggle_pause)
         self.clear_done_button.clicked.connect(self._clear_finished)
@@ -651,6 +673,7 @@ class MainWindow(QMainWindow):
         self._pending.clear()
         self._infos = []
         self._summary = None
+        self._forget_measurements()
         self.analysis_card.clear()
         self.compare_table.clear()
         self.results.hide_panel()
@@ -685,6 +708,12 @@ class MainWindow(QMainWindow):
             return
         self._infos = [info for info in self._infos
                        if not _is_under(Path(info.path), removed)]
+        # I6: different bytes, different answer. This path mutates the input
+        # without going back through analysis, so it is the one input change
+        # that `_on_analysis_ready` does not clean up after — and leaving the
+        # measurement here attributed a measured archive size to a folder that
+        # no longer contains the files it was measured on.
+        self._forget_measurements()
         self._refresh_pending_view()
         self._resummarize()
 
@@ -709,6 +738,7 @@ class MainWindow(QMainWindow):
             return
         self._infos = list(infos or [])
         self._summary = summary
+        self._forget_measurements()
         self.analysis_card.set_summary(summary)
 
         # The table's recommendation is the estimate-aware one, so take the badge
@@ -742,6 +772,7 @@ class MainWindow(QMainWindow):
     def _on_analysis_failed(self, message: str) -> None:
         self.analysis_card.set_error(message)
         self._summary = None
+        self._forget_measurements()
         self.compare_table.clear()
         self._refresh_actions()
         self.analysisFinished.emit()
@@ -781,12 +812,123 @@ class MainWindow(QMainWindow):
         # disagreed by 2.5x on 7-Zip alone, purely because one was on an
         # external drive - no constant is right for every machine.
         from excmp.calibrate import blended_rates
+        whole = (self._comparison is not None
+                 and self._comparison.sample.is_whole_input)
         rows = profile_comparison(self._infos, self.tools, self._summary,
-                                  rates=blended_rates())
-        self.compare_table.set_rows(rows)
+                                  rates=blended_rates(),
+                                  measured=self._measured,
+                                  measured_whole_input=whole)
+        self.compare_table.set_rows(rows, self._measured_caption)
         self._offer_remembered_profile()
         self._warn_if_long(rows)
         return rows
+
+    # -- I6: measuring instead of estimating ---------------------------------
+    def _forget_measurements(self) -> None:
+        """Different bytes, different answer. Anything else would leave last
+        folder's measured ratio sitting on this folder's card."""
+        if self._comparison is not None and self._comparison.is_running():
+            self._comparison.cancel()
+        self._comparison = None
+        self._measured = {}
+        self._measured_caption = ""
+        self._refresh_measure_button()
+
+    def _refresh_measure_button(self) -> None:
+        running = (self._comparison is not None
+                   and self._comparison.is_running())
+        self.measure_button.setText(
+            self.tr("Stop measuring") if running else self.tr("Measure presets"))
+        self.measure_button.setEnabled(running or bool(self._infos))
+
+    def toggle_measurement(self) -> None:
+        """Start a comparison run, or stop the one in flight."""
+        if self._comparison is not None and self._comparison.is_running():
+            self._comparison.cancel()
+            return
+        if not self._infos:
+            return
+        try:
+            options = self.advanced_panel.stage_options()
+        except ValueError:
+            # A bad Parameters line is the compress path's problem to report;
+            # measuring with the shipped defaults still answers the question.
+            options = None
+        run = ComparisonRun(self.queue, self.tools, self._infos,
+                            work_dir=Path(self.queue.temp_dir) / "compare",
+                            options=options, parent=self)
+        if not run.sample.files:
+            return
+        self._comparison = run
+        run.measured.connect(self._on_profile_measured)
+        run.failed.connect(self._on_profile_measure_failed)
+        run.finished.connect(self._on_measurement_finished)
+
+        # The price, before it is paid. A comparison is four compressions of
+        # up to 100 MB on a two-core laptop; starting one without saying so
+        # is how a deliberate measurement becomes a mystery hang.
+        sample = run.sample
+        if sample.over_cap:
+            self.banner.show_message(
+                self.tr("The smallest file here is %s, so there is no small "
+                        "sample to take — measuring will compress all of it, "
+                        "%d times.") % (fmt_size(sample.total_bytes),
+                                        run.job_count),
+                tone="warn",
+                actions=[(self.tr("Measure anyway"), self._begin_measurement),
+                         (self.tr("Not now"), self._abandon_measurement)])
+            return
+        self._begin_measurement()
+
+    def _begin_measurement(self) -> None:
+        # Unconditionally, and first: this is a banner action, and the banner
+        # does not dismiss itself. Bailing out below without hiding it left a
+        # "Measure anyway" button on screen that did nothing when pressed.
+        self.banner.hide_banner()
+        run = self._comparison
+        if run is None or run.is_running():
+            return
+        # Everything on the panel belongs to exactly one run — but the old
+        # numbers are cleared HERE, not when the button is pressed. Clearing
+        # them before the over-cap question was answered threw away a
+        # completed measurement for a run the user then declined.
+        self._measured = {}
+        self._measured_caption = ""
+        run.start()
+        self._refresh_estimates()
+        self._refresh_measure_button()
+        self._refresh_actions()
+
+    def _abandon_measurement(self) -> None:
+        self.banner.hide_banner()
+        self._comparison = None
+        self._refresh_measure_button()
+
+    def _on_profile_measured(self, profile: object) -> None:
+        """One profile landed. Repaint now rather than at the end — a run
+        stopped half way should leave behind the half it earned."""
+        run = self._comparison
+        if run is None or not isinstance(profile, Profile):
+            return
+        from .suggest import measurement_caption
+
+        self._measured = dict(run.results)
+        self._measured_caption = measurement_caption(run.sample,
+                                                     len(self._measured))
+        self._refresh_estimates()
+
+    def _on_profile_measure_failed(self, profile: object, message: str) -> None:
+        if not isinstance(profile, Profile):
+            return
+        # No number is invented for a profile that did not finish: the card
+        # keeps its estimate and the banner says which one dropped out.
+        self.banner.show_message(
+            self.tr("%s could not be measured: %s") % (profile.value, message),
+            tone="warn")
+
+    def _on_measurement_finished(self) -> None:
+        self._refresh_measure_button()
+        self._refresh_actions()
 
     def _dominant_category(self):
         """The category holding the most bytes, which is the judgement a
@@ -909,6 +1051,7 @@ class MainWindow(QMainWindow):
         self.advanced_panel.forget_password()
         self._profile_touched = False
         self._pending = []
+        self._forget_measurements()
         self.analysis_card.clear()
         self.compare_table.clear()
         self._infos = []
@@ -1231,6 +1374,7 @@ class MainWindow(QMainWindow):
             self._dest_label.setText(self.tr("add files to choose a destination"))
             self.name_edit.setPlaceholderText(self.tr("archive name"))
 
+        self._refresh_measure_button()
         pending = self.queue.pending_count()
         status = self._job_status_text()
         self.queue_status.setText(status)

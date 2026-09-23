@@ -31,6 +31,13 @@ SEVENZIP = ["sevenzip"]
 # The 2026-08-01 corpus, size-for-size, with the sample ratios measured off the
 # real files. Keeping the real numbers here means the always-run tests exercise
 # the same shape the corpus-gated backtest does.
+#
+# These are static fixture data, not a read of the disk, so they stay valid as
+# a record of that run. One entry has since diverged from the live folder:
+# `lghub_installer.exe` was deleted and re-downloaded on 2026-09-21 and the new
+# build is 70,346,392 B at ratio 0.4653. `test_estimate_backtest.py` re-pinned
+# to the new build; this row is deliberately left at the old one, because it is
+# describing the corpus the shipped rates were fitted to.
 # (name, size, category, entropy, mean ratio, max ratio)
 REAL_CORPUS = [
     ("R-4.5.1-win.exe", 90_111_968, Category.EXECUTABLE, 7.78, 0.8231, 1.0000),

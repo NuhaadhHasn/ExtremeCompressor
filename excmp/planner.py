@@ -109,6 +109,17 @@ def _resolve_chain(profile: Profile, tools: dict[str, ToolInfo | None]) -> tuple
     return stages, warnings
 
 
+def resolved_chain(profile: Profile, tools: dict[str, ToolInfo | None]) -> list[str]:
+    """The stages ``profile`` will really run on this machine.
+
+    Public because degradation collapses profiles together: with Precomp
+    absent, Extreme resolves to Normal's chain exactly, and anything that
+    *measures* a profile (I6) would otherwise run the same work twice and
+    report two independent-looking numbers for one chain.
+    """
+    return _resolve_chain(profile, tools)[0]
+
+
 def store_reason(info: FileInfo) -> str | None:
     """The plain-English sentence explaining why this file won't be piped,
     or None if it will be. Public because the GUI shows it per file - the

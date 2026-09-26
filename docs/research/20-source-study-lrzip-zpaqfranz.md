@@ -203,6 +203,17 @@ binding constraint is CPU (CM ~1-3 MB/s/core). `p` (paranoid) is the only
 RAM hazard (whole version in RAM). Sane Insane ceiling on target: `-m4 -t2`;
 `-m5` only for small precious sets.
 
+> **Measured 2026-09-23/26 (roadmap B12 round 3, filed as B17).** Three
+> corrections to this section.
+> (1) **Threads default is physical cores, not all cores.** On the 2C/4T
+> target, no `-t` reports `2T` and only `-ht` reaches `4T`.
+> (2) **RAM is inside the estimate.** At `-t2`, `-m4` peaked at 915 MiB and
+> `-m5` at 1,819 MiB on a 4-block input.
+> (3) **"`-m5` only for small precious sets" held on installers and failed on
+> deflate-expanded data.** On installers `-m5` was −0.60% for 3.0× the
+> compress time. On deflate data it was **−7.26%**. See
+> [benchmarks/2026-09-23](../benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md).
+
 ### 9. franz-blocks & vanilla-zpaq compatibility
 
 Franz metadata (hashes, CRC, dates, POSIX/symlink info) lives **inside the

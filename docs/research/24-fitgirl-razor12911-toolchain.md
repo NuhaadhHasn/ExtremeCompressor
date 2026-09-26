@@ -151,7 +151,10 @@ matches identical fragments at unlimited distance.
 
 1. **xtool is MIT and archived** — routing unchanged, pin the version.
 2. **Dropping SREP** — right call, better reason than the one we recorded.
-3. **LOLZ has no legal path** — nothing found to contradict it.
+3. **LOLZ has no legal path** — nothing found to contradict it. *(Moot since
+   the repo went private on 2026-09-01. LOLZ was then measured under B12,
+   and zpaqfranz `-m5` beat it on both corpora. That was measured
+   2026-09-23, and the deflate row was restore-verified 2026-09-26.)*
 4. **Analyzer-per-type architecture** — the same idea FreeArc uses.
 5. **B6's DLL-in-the-contract requirement** — now *source-confirmed*, not
    inferred. See §2.

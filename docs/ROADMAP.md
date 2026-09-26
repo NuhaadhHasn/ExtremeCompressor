@@ -1,6 +1,12 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-21**. **1,292 tests, 2 skipped, 1 strict-xfail.**
+> Status date: **2026-09-26**. **1,292 tests, 2 skipped, 1 strict-xfail**
+> (last full run 2026-09-21; no code has changed since).
+> **B12 is closed: measured, not integrated.** LOLZ lost to zpaqfranz `-m5`
+> on both corpora
+> ([round 3](benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md)).
+> **Next up: B17**, whether Insane should run zpaqfranz `-m5`, which the
+> same measurement found worth 7.26% on deflate data.
 > **I6 is merged and pushed** (`609bc07`); CI green on `windows-latest`, and
 > nothing is awaiting review. The two skips are the opt-in 57k-file corpus walk
 > (`EXCMP_SLOW_CORPUS=1`) and a test that only runs when no E1-pinned tool is
@@ -37,7 +43,8 @@
 > **G2 is done** (2026-09-01, branch `phase-g2-foreign-listing`, awaiting
 > review): foreign archives list, encrypted ones ask for a password instead of
 > hanging, and single members can be pulled out of either kind.
-> **Next up: J5-J7** (per-type memory, long-job confirm, self-calibration).
+> ~~**Next up: J5-J7**~~ (done 2026-09-03; see the status line above for
+> what is next).
 >
 > This is the complete, ordered plan for everything left. Companion deep-dives:
 > [06 best-compression-per-filetype](research/06-best-compression-per-filetype.md) ·
@@ -107,7 +114,9 @@ the verification gate like everything else.
 
 1. **B1** (zpaqfranz) — dedup back, no risk, completes Insane
 2. **B6** (xtool + Oodle) — the AAA gap; now vendorable, so the DLL problem is solvable
-3. **B12** (LOLZ) — final-codec upgrade
+3. ~~**B12** (LOLZ) — final-codec upgrade~~ ❌ measured 2026-09-23 to 26:
+   zpaqfranz `-m5` beats it on both corpora. Its successor is **B17** (Insane
+   at `-m5`)
 4. **B8** — re-benchmark and replace every `(est.)` with a measurement
 5. J5-J7, then D1-D3/D7 (QA + CI)
 
@@ -250,20 +259,79 @@ OSI rule comes back before anything ships.
       between two versions of one product, and high-bitrate Vorbis music is
       expected near 0%. The finding is recorded; the fix waits for data.
       **The structural hook, when the data arrives, is `_UNCOMPRESSED_AUDIO`**
-      (`planner.py:173`, B4's precedent) — not `_DEFLATE_MEDIA`, which would
+      (`planner.py:184`, B4's precedent) — not `_DEFLATE_MEDIA`, which would
       throw the file into a `precomp` that has been measured to find nothing
       in it.
 - [ ] B14. **DArc (Distended Arc) 3.04** - a *maintained* FreeArc fork
       (krinkels.org, 2026-09-07, `Mickey1s`). Supersedes the 2009 Haskell
       sources in `ExtremeCompressor-refs/freearc-orig` as the thing to measure
       if FreeArc is revisited. Same gate: it has to beat `precomp -> 7z`, not
-      `7z` alone.
+      `7z` alone, **and zpaqfranz `-m4`/`-m5`** (Insane's slot), which is
+      what sank LOLZ in B12 round 3. Also carries B12a (plain FreeArc).
 - [ ] B15. **ADDeX 0.1** - "Advanced Data Deduplication Engine" (krinkels.org,
       2026-09-07, `Mickey1s`). The SREP-replacement space, where zpaqfranz's CDC
       already sits. **Version 0.1 with one recorded download** - logged so it is
       not rediscovered, not recommended. Revisit if it matures.
-- [ ] B12. **An optional final codec — retargeted 2026-09-10 from LOLZ to
-      FreeArc, because LOLZ is not what this item assumed it was.**
+- [x] B12. ❌ **MEASURED AND NOT INTEGRATED 2026-09-23** — LOLZ loses to
+      the codec it would actually displace. Full numbers:
+      [benchmarks/2026-09-23-b12-round3](benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md).
+      No stage was written.
+
+      ### ❌ 2026-09-23 — against zpaqfranz, Insane's real final codec, it has no corpus left
+
+      The two earlier rounds measured LOLZ against 7-Zip. Insane's final codec
+      is **zpaqfranz**, so that was the comparison still missing. Same two
+      `.pcf` intermediates as 2026-09-20. Every zpaqfranz and LOLZ row was
+      restored and SHA-256 compared. The 7-Zip sizes are carried over from
+      2026-09-20 and were never restore-verified:
+
+      | final codec | installers (62.5 MB `.pcf`) | deflate (237 MB `.pcf`) |
+      |---|---:|---:|
+      | `7z -mx9` (Extreme) | 46,048,116 | 51,827,136 |
+      | `lolz -d64m` | 45,933,664 | 50,233,466 |
+      | **`zpaqfranz -m4`** (Insane today) | 46,191,810 | **46,575,605** |
+      | **`zpaqfranz -m5`** | **45,915,367** | **43,194,463** |
+
+      **zpaqfranz `-m5` is smaller than LOLZ on both corpora**: by 18,297 B
+      (0.04%) on the installers, which is a tie, and by **7,039,003 B (14.0%)**
+      on deflate data. `-m4`, which ships today, beats LOLZ by 7.3% on
+      deflate and loses to it by 0.56% on installers, and that 0.56% is
+      available from `-m5` without LOLZ. **One dependency, stated so it is
+      not lost:** the case against an Extreme-side LOLZ option rests on
+      Insane gaining `-m5`, whether as the default or as a choice. If B17
+      keeps `-m4` and offers nothing else, LOLZ stays the smallest codec
+      measured on installers, by 0.25% under Extreme and 0.56% under Insane.
+      That is B12's second reopening condition, below.
+
+      **Three findings that outlive the verdict:**
+      (1) **`-m5` is not the niche research/20 §8 took it for.** It is −0.60%
+      against `-m4` on installers (3.0× the compress time) but **−7.26% on
+      deflate data**, more than twice LOLZ's best corpus-level result
+      against `precomp → 7z` (3.06%). Filed as **B17**; nothing changed on
+      two corpora.
+      (2) **Threads cost zpaqfranz nothing**: `-t1` and `-t2` produced
+      byte-identical archives on both corpora, unlike LOLZ, where `-mt2` costs
+      ratio. And the app's default of threads **0** ("each tool chooses")
+      passes no `-t`. zpaqfranz then runs **2 threads on this laptop**
+      (measured: no switch reports `2T`, `-ht` reports `4T`), because it
+      counts physical cores, not the "all cores" research/20 §8 read from
+      the source. So the `-t2` rows are what default Insane runs here.
+      (3) **LOLZ decodes 276× faster than zpaqfranz `-m4`** (0.4 s against
+      110.5 s on the installers), and the D9 gate pays the decode on every
+      publish. Recorded, not acted on: B12 was a ratio question.
+      **zpaqfranz's `-m0` dedup in front of LOLZ lost 33,030 B** against
+      plain LOLZ. LOLZ's own long-distance matchfinder likely already covers
+      it.
+
+      **What could reopen it, and nothing else:** (a) no DXT or game data has
+      been through LOLZ, which is its headline claim. If a game corpus
+      arrives (B6/B13), the rematch is **against zpaqfranz `-m5`**, not
+      against 7-Zip. (b) If B17 ends with Insane on `-m4` and no `-m5`
+      option, LOLZ's 0.25–0.56% on installers is unmatched again, and
+      whether that is worth a stage is the owner's call.
+      **B12a (FreeArc) is not closed by this.** It was never measured, and it
+      now lives under **B14**, whose DArc 3.04 is the maintained FreeArc fork
+      and the thing to measure if FreeArc is revisited.
 
       ### ✅ 2026-09-20 — measured against the real route. It wins, twice, and the second win is the interesting one
 
@@ -308,7 +376,7 @@ OSI rule comes back before anything ships.
       it the project's calibrated two threads;
       (b) `cls-lolz_x64.exe` **segfaults on corrupt input and still leaves a
       0-byte output**, and silently writes a 0-byte output for a missing input.
-      A "did the file appear?" check — which is what `stages/precomp.py:57`
+      A "did the file appear?" check — which is what `stages/precomp.py:60`
       does — passes both. The SHA-256 gate is the only thing that catches it;
       (c) `-mmt` costs 7-Zip essentially nothing (byte-identical on corpus B),
       so the round-1 thread asymmetry explained nothing.
@@ -320,7 +388,7 @@ OSI rule comes back before anything ships.
       lands in Insane. Run that before writing the stage.
 
       **One correction to a committed number.** B16 ran `precomp -cn`; the app
-      runs **`-cn -intense`** (`stages/precomp.py:42`). On the same corpus that
+      runs **`-cn -intense`** (`stages/precomp.py:46-48`). On the same corpus that
       costs **82,086 bytes** — 51,827,136 rather than B16's 51,745,050. Anything
       comparing against "our route" should use the larger figure or re-run it.
 
@@ -368,7 +436,10 @@ OSI rule comes back before anything ships.
       gets the untrusted-stage treatment: pinned hash, no trust in its exit
       code, post-restore SHA-256 decides whether the archive publishes.
 
-      **B12a — FreeArc, the candidate that is actually testable.** `Arc.exe`
+      **B12a — FreeArc, the candidate that is actually testable.** *(Still
+      unmeasured. Carried by **B14** since 2026-09-23: DArc 3.04 is the
+      maintained fork, and it has to beat the shipped route, which
+      includes zpaqfranz.)* `Arc.exe`
       (3,647,488 B, sha256 `a2bbdde6…e905`) plus `facompress.dll` /
       `facompress_mt.dll` are in `ExtremeCompressor-refs/Repack-Tools/APEX/`.
       Rules, unchanged from the original item: pinned binary, no trust in its
@@ -385,6 +456,67 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
+- [ ] B17. **Insane at zpaqfranz `-m5`?** (new 2026-09-23, from B12 round 3.)
+      `DEFAULT_METHOD = 4` in `excmp/stages/zpaqfranz.py` (the
+      `ZpaqfranzStage` constructor's default) rests on research/20's reading
+      of the source: §8's "`-m5` only for small precious sets", and its
+      Gotchas line "on 2 cores, -m4 is the realistic Insane default". The
+      first measurement of it, bare zpaqfranz `-t2` on B12's two `.pcf`
+      intermediates:
+
+      | | `-m5` vs `-m4` size | compress | restore | peak RAM (compress) |
+      |---|---:|---:|---:|---:|
+      | installers, 62.5 MB (1 block) | **−0.60%** | 3.02× | 2.70× | 2.0× |
+      | deflate, 237 MB (4 blocks) | **−7.26%** | 3.2–6.4× † | 5.3–5.8× † | 2.0× |
+
+      † Not clean timings. 3.2× comes from 2026-09-23 file timestamps, and
+      6.4× from a timed 2026-09-26 run that shared the cores with other work.
+      The two restores took 1,076.7 s and 986.5 s. Both runs produced
+      43,194,463 B and restored byte-identically, so the size is firm and the
+      speed is not.
+
+      The source reading holds for installers and fails for deflate-expanded
+      data. **What has to happen before any default moves:**
+      (0) **plumbing first, on a branch.** Nothing can run Insane at `-m5`
+      today: `engine._stage_factory` builds `ZpaqfranzStage()` with no
+      argument, `StageOptions` (so the CLI's `--params`) reaches only 7-Zip
+      and zstd, and `tools/bench.py` calls `engine.compress` with no options
+      at all. `test_m5_is_reachable_but_deliberate`
+      covers the stage's own command builder, not the engine;
+      (1) end to end through `engine.compress`, not bare zpaqfranz, on both
+      corpora plus Silesia (B8's Insane row, 80.55% at `-m4`, is the anchor),
+      with repeats, because a single run is not a timing;
+      (2) the **D9 verify pass**, which replays the full restore. At `-m5`
+      the restore ran **2.70× slower on installers and 5.3–5.8× on deflate
+      data**, so the user's total wait grows by more than the compress
+      figure suggests;
+      (3) peak RAM on multi-block input. `excmp/ram.py` has a budget
+      (`_RAM_BUDGET = 0.55` of physical RAM) but **no zpaqfranz model**
+      (only LZMA2 and zstd), so modelling zpaqfranz is part of the job.
+      Measured at `-t2` on the 4-block deflate `.pcf`: 915 MiB compressing at
+      `-m4` and **1,819 MiB at `-m5`**, with a 1,691 MiB restore peak.
+      That's inside a 16 GB budget, but it's the number to model;
+      (4) the estimator: the `precomp+zpaqfranz` slope (0.873) is an `-m4`
+      number, and **`_CODEC_RATE`/`_VERIFY_RATE` have no `precomp+zpaqfranz`
+      key at all**, so Insane's time estimate falls back to 2.5 MB/s and
+      15 MB/s. Bare `-m4` measured about 0.53 / 0.57 MB/s (compress /
+      restore) on the 62 MB installer `.pcf` and 1.41 / 1.27 MB/s on the
+      237 MB deflate one. Those are different units from the estimator's,
+      so this is a lead rather than a proof. Also `gui/progress.py`'s stage
+      weight (50).
+      **Options, not decided:** keep `-m4`; move to `-m5`; or keep `-m4` and
+      expose `-m5` as a user choice. **B12 depends on the answer:** if Insane
+      ends up with no `-m5` at all, LOLZ's 0.25–0.56% on installers is
+      unmatched again (B12's reopening condition (b)).
+      Compatibility is not the obstacle: the one `zpaqfranz x` command, with
+      no method switch, restored `-m0`, `-m4` and `-m5` archives
+      byte-identically in this measurement. The engine does not record the
+      method in `StageRecord.params` (only `sevenzip`/`zstd` options are), so
+      if it ever becomes a user choice, recording it is part of the job.
+      **Threads, measured:** the app's default passes no `-t`, and zpaqfranz
+      then runs 2 threads on this laptop (`2T`; `-ht` gives `4T`), so `-t2`
+      is what default Insane runs here. `-t1` and `-t2` gave byte-identical
+      archives.
 
 ---
 
@@ -2295,8 +2427,13 @@ Honest, evidence-based answer ([research/09](research/09-fitgirl-installer-and-c
   synthetic corpus vs their 60-75% class).
 - **Modern Oodle/zstd AAA games**: we lose badly today — ~5-15% vs their 50-70% —
   because Precomp can't open Oodle streams. B6 (xtool + the game's own oo2core DLL)
-  closes most of it; the remainder is the lolz codec (~5-10%, no legal path) and
-  per-game hand tuning (structurally unavailable to an automatic tool).
+  closes most of it; the remainder is the lolz codec (~5-10%, no legal path —
+  *"no legal path" is moot since the repo went private. B12 then measured it
+  at −2.93% to +11.93% against plain 7-Zip on five single Silesia files (it
+  won on four structured-binary files and lost on English text), and
+  0.25-3.06% over `precomp → 7z` on two corpora, where zpaqfranz `-m5` beat
+  it. It is still unmeasured on the AAA/DXT game data this line is about*)
+  and per-game hand tuning (structurally unavailable to an automatic tool).
 - **Everything that isn't a game**: we're simply better — they don't route by type.
 - **Trust and safety**: we win everywhere. SHA-256 per-file ledger + chain replay vs
   CRC32 + an optional MD5 batch file; a maintained legal stack vs 2014-era abandoned

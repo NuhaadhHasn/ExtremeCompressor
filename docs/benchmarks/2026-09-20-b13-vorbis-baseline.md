@@ -146,7 +146,7 @@ Unchanged from the roadmap, now with its numbers filled in:
 2. Prove a byte-identical restore through `verify_restore`. Untrusted binary:
    pinned hash, no faith in its exit code.
 3. The structural hook already exists and is **`_UNCOMPRESSED_AUDIO`**
-   (`planner.py:173`), B4's precedent — an audio extension set checked before
+   (`planner.py:184`), B4's precedent — an audio extension set checked before
    the `_MEDIA` branch that keeps the file off the pipeline and hands it to a
    specialist packer. Not `_DEFLATE_MEDIA`, which throws the file into
    `precomp` where, as measured above, nothing is waiting for it.

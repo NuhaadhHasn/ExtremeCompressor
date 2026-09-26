@@ -41,7 +41,7 @@ Legend: ✅ = shipped · 🔜 = planned, phase noted · ⛔ = deliberately skipp
 | Maximum-ratio CM mode | zpaq/zpaqfranz -m4/-m5, PAQ | zpaqfranz `-m4 -t2` Insane profile (2-core realistic ceiling, doc 20 §8), 7.15-compatible archives only | 🔜 B1 |
 | Specialists (JPEG/PNG/WAV/PDF) | packJPG/brunsli in precomp; PeaZip backends | lepton-jpeg wheel (in-process), oxipng, FLAC 1.5 `-j`, qpdf — each behind the SHA-256 restore gate | 🔜 B2-B5 |
 | Per-game hand tuning | FitGirl (hours of human craft) | ⛔ structurally unavailable to an automatic tool — honesty recorded in doc 09 | — |
-| lolz codec | closed, no license | ⛔ zero legal path (doc 09) | — |
+| lolz codec | closed, no license | ❌ measured 2026-09-23 (the repo went private, so it was permitted): zpaqfranz `-m5` beats it on both corpora measured, so it was not integrated. Still untested on game/DXT data | B12 |
 
 ## 3. Trust & integrity (where we beat everyone)
 
@@ -95,6 +95,8 @@ Feature-for-feature, everything worth having from every studied tool is either
 **already ours**, **planned with a pinned design**, or **deliberately skipped
 with the reason recorded**. Nothing on this map requires copying a single line
 of GPL/LGPL code — the closed gaps (lolz, per-game hand-tuning) are closed to
-*everyone* without a license from their authors, and our trust column
+*everyone* without a license from their authors *(lolz: moot since the repo
+went private on 2026-09-01. It was measured under B12 and lost to zpaqfranz
+`-m5`)*, and our trust column
 (SHA-256 ledger, chain replay, honest reporting) is ahead of every tool
 studied, including the closed ones.

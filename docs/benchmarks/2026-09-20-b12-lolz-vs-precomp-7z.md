@@ -1,5 +1,11 @@
 # B12 — LOLZ against `precomp → 7z`, on two corpora, and why the second one matters
 
+> **Superseded on the verdict, not on the numbers (2026-09-23).** This
+> round's conclusion, that LOLZ "qualifies as an Insane-tier alternative", did
+> not survive the next measurement. Against zpaqfranz, Insane's actual final
+> codec, `-m5` is smaller on both corpora below. See
+> [2026-09-23-b12-round3](2026-09-23-b12-lolz-vs-zpaqfranz.md).
+
 **2026-09-20**, this laptop (2-core i7-3540M, 16 GB, Windows 10 Pro 19045).
 
 The 2026-09-11 session measured LOLZ against **7-Zip alone** and found a
@@ -80,7 +86,7 @@ numbers to make it now exist.
 ## 3. `-intense` is in the app's chain and it costs 82 KB here
 
 Worth recording because it corrects a number in a committed document. B16 ran
-`precomp -cn`; `excmp/stages/precomp.py:42` actually runs **`-cn -intense`**,
+`precomp -cn`; `excmp/stages/precomp.py:46-48` actually runs **`-cn -intense`**,
 which is what was used here.
 
 | | `.pcf` | → `7z -mx9 -mmt2` |
@@ -109,7 +115,7 @@ trusted:
   same code as "command not found".
 
 So a stage that checks "did the output file appear?" — which is what
-`PrecompStage` does at `excmp/stages/precomp.py:57` — passes both failures.
+`PrecompStage` does at `excmp/stages/precomp.py:60` — passes both failures.
 The post-restore SHA-256 gate is genuinely the only thing that catches this,
 which is the standing rule restated with a fresh example.
 
@@ -149,6 +155,9 @@ neither of which is in the distribution, and both begin by clearing `PATH`.
   Insane-tier option, Insane's current final codec is zpaqfranz, not 7-Zip.
   That comparison is the one that decides where it actually belongs, and it has
   not been run.
+  **→ Run 2026-09-23, and it decided against LOLZ:** zpaqfranz `-m5` is
+  smaller on both corpora, and `-m4` is 7.3% smaller on this deflate corpus.
+  See [2026-09-23-b12-round3](2026-09-23-b12-lolz-vs-zpaqfranz.md).
 - **Wall times from ~20:57 onward were taken with the full pytest suite running
   on the same two cores.** That covers `lolz -mt2` on corpus A and every corpus
   B row. Sizes are unaffected — all four rows reproduce byte-for-byte — and

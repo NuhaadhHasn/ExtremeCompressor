@@ -79,6 +79,16 @@ Ratio ≈ 1.5–2 points better than 7z-max (41.96% vs 43.52% on the krinkels co
   LZMA with faster decode — which is why elite repacks use it, and why we accept a
   permanent ~5–10% final-codec deficit (partially recovered by zpaqfranz on
   dedup-heavy data). Permanently off the table.
+  > **Measured since (roadmap B12, 2026-09-11 → 2026-09-26).** The repo went
+  > private and the binary was obtained. Against plain 7-Zip it ranged from
+  > −2.93% to +11.93% on five single Silesia files: it won on four
+  > structured-binary files and lost on English text. Against the shipped
+  > `precomp → 7z` it gained **3.06%** on deflate data and **0.249%** on real
+  > installers. **zpaqfranz `-m5` beat it on both of those corpora** (by 14.0%
+  > and 0.04%), but the app can't run `-m5` yet (roadmap B17). Until it can,
+  > LOLZ's 0.25–0.56% on installers is a small deficit the shipped product
+  > still carries. **On game data, which is what the ~5–10% was about, it is
+  > still unmeasured**: its DXT/texture models have never had a corpus.
 - **xtool (Razor12911)**: GitHub repo MIT but **archived 2023-10** at v0.7.9;
   development continues on Patreon (**v0.9.5, 2026-03-21**, no stated license —
   treat Patreon builds as unpinnable binaries, never bundle). Capabilities:
@@ -140,7 +150,8 @@ the comparison table should never have implied a single ordering.
 
 **Where we genuinely lose:** Oodle recompression until B6 lands (the single biggest
 gap on post-2018 games — tens of percent); the lolz final codec (~5–10%, permanent,
-no legal path); per-game manual tuning (structurally unavailable); lossy variants
+no legal path — *measured 2026-09-23 on non-game data, where zpaqfranz `-m5`
+beats it; still unmeasured on game data, see §3's note*); per-game manual tuning (structurally unavailable); lossy variants
 (refused by policy — lossless-first).
 
 **Where we genuinely win:** verification (SHA-256 per-file ledger + chain replay vs

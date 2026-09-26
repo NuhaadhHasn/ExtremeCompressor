@@ -38,7 +38,7 @@ Legend: ✅ = shipped · 🔜 = planned, phase noted · ⛔ = deliberately skipp
 | Long-range dedup (SREP's job) | srep (closed), lrzip rzip (GPL, POSIX-only) | Two-tier, all-legal: `zstd --long` / 7z big-dict for ≤2 GB distances + **zpaqfranz CDC dedup for unlimited distance** (verdict, doc 20 §4) | ✅ zstd; 🔜 B1 |
 | Solid-block file ordering | FreeArc "gerpn" sort, 7z `-mqs` | Pre-sort ourselves with the `(group, ext, similarity-bucket, size, name)` key incl. FreeArc's near-duplicate clustering trick (doc 18 §2, doc 19 §5) — and always pass `-mqs` | 🔜 B-series (S) |
 | x86 branch filter | 7z BCJ/BCJ2 auto (only mx≥8+MT) | Force `-mf=BCJ2` explicitly per router decision (doc 19 §4) | 🔜 B7 |
-| Maximum-ratio CM mode | zpaq/zpaqfranz -m4/-m5, PAQ | zpaqfranz `-m4 -t2` Insane profile (2-core realistic ceiling, doc 20 §8), 7.15-compatible archives only | 🔜 B1 |
+| Maximum-ratio CM mode | zpaq/zpaqfranz -m4/-m5, PAQ | zpaqfranz Insane profile, **`-m58` since B17** (method 5, 256 MiB blocks: the smallest setting measured, and the largest block that fits the RAM budget at two threads; doc 20 §8's `-m4` ceiling was measured and superseded), 7.15-compatible archives only | ✅ B1 + B17 |
 | Specialists (JPEG/PNG/WAV/PDF) | packJPG/brunsli in precomp; PeaZip backends | lepton-jpeg wheel (in-process), oxipng, FLAC 1.5 `-j`, qpdf — each behind the SHA-256 restore gate | 🔜 B2-B5 |
 | Per-game hand tuning | FitGirl (hours of human craft) | ⛔ structurally unavailable to an automatic tool — honesty recorded in doc 09 | — |
 | lolz codec | closed, no license | ❌ measured 2026-09-23 (the repo went private, so it was permitted): zpaqfranz `-m5` beats it on both corpora measured, so it was not integrated. Still untested on game/DXT data | B12 |

@@ -1,14 +1,16 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-26**. **1,292 tests, 2 skipped, 1 strict-xfail**
-> (last full run 2026-09-21; no code has changed since).
-> **B12 is closed: measured, not integrated.** LOLZ lost to zpaqfranz `-m5`
-> on both corpora
-> ([round 3](benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md)).
-> **Next up: B17**, whether Insane should run zpaqfranz `-m5`, which the
-> same measurement found worth 7.26% on deflate data.
-> **I6 is merged and pushed** (`609bc07`); CI green on `windows-latest`, and
-> nothing is awaiting review. The two skips are the opt-in 57k-file corpus walk
+> Status date: **2026-09-27**. **1,336 tests passed, 2 skipped, 1 strict-xfail** on
+> branch `phase-b17-insane-m5` (`main`: 1,292, 2026-09-21). Corpus guard clean.
+> **B17 is done and awaiting review: Insane runs zpaqfranz `-m58`**
+> ([record](benchmarks/2026-09-27-b17-insane-m58.md)). Silesia end to end:
+> 37,542,028 B against 41,216,918 at `-m4`, 8.92% smaller, 3.8× the wait.
+> **B12 is closed: measured, not integrated.** LOLZ lost to zpaqfranz on both
+> corpora ([round 3](benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md)).
+> **Next up: K6**, then I11. K6: Cancel may not reach zpaqfranz while it
+> restores silently, which at `-m58` can last 20+ minutes. I11: progress
+> through that same D9 restore, where the bar parks at 95%.
+> `main` = I6 merged (`609bc07`) plus docs; CI green on `windows-latest`. The two skips are the opt-in 57k-file corpus walk
 > (`EXCMP_SLOW_CORPUS=1`) and a test that only runs when no E1-pinned tool is
 > installed — nothing is silently switched off.
 >
@@ -326,9 +328,11 @@ OSI rule comes back before anything ships.
       **What could reopen it, and nothing else:** (a) no DXT or game data has
       been through LOLZ, which is its headline claim. If a game corpus
       arrives (B6/B13), the rematch is **against zpaqfranz `-m5`**, not
-      against 7-Zip. (b) If B17 ends with Insane on `-m4` and no `-m5`
-      option, LOLZ's 0.25–0.56% on installers is unmatched again, and
-      whether that is worth a stage is the owner's call.
+      against 7-Zip. (b) ~~If B17 ends with Insane on `-m4`~~, **resolved
+      2026-09-27**: B17 moved Insane to `-m58`, which is smaller than LOLZ on
+      the deflate corpus by 14.7% and on the installer `.pcf` by
+      18,297 B (0.04%). On that single-block `.pcf`, `-m58`'s archive is
+      exactly `-m5`'s size, 45,915,367 B.
       **B12a (FreeArc) is not closed by this.** It was never measured, and it
       now lives under **B14**, whose DArc 3.04 is the maintained FreeArc fork
       and the thing to measure if FreeArc is revisited.
@@ -456,68 +460,91 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
-- [ ] B17. **Insane at zpaqfranz `-m5`?** (new 2026-09-23, from B12 round 3.)
-      `DEFAULT_METHOD = 4` in `excmp/stages/zpaqfranz.py` (the
-      `ZpaqfranzStage` constructor's default) rests on research/20's reading
-      of the source: §8's "`-m5` only for small precious sets", and its
-      Gotchas line "on 2 cores, -m4 is the realistic Insane default". The
-      first measurement of it, bare zpaqfranz `-t2` on B12's two `.pcf`
-      intermediates:
+- [x] B17. ✅ **DONE 2026-09-27** (branch `phase-b17-insane-m5`, awaiting
+      review) — **Insane runs zpaqfranz `-m58`**: method 5 with 256 MiB
+      blocks. Full record:
+      [benchmarks/2026-09-27-b17](benchmarks/2026-09-27-b17-insane-m58.md).
+      The owner's call was "whatever is best for compression", so before
+      choosing, one more question was asked: does anything beat plain `-m5`?
+      Bigger blocks do. On the 237 MB deflate `.pcf`, every archive restored
+      and SHA-256 compared:
 
-      | | `-m5` vs `-m4` size | compress | restore | peak RAM (compress) |
-      |---|---:|---:|---:|---:|
-      | installers, 62.5 MB (1 block) | **−0.60%** | 3.02× | 2.70× | 2.0× |
-      | deflate, 237 MB (4 blocks) | **−7.26%** | 3.2–6.4× † | 5.3–5.8× † | 2.0× |
+      | setting | archive | vs `-m4` | peak RAM, two threads busy |
+      |---|---:|---:|---:|
+      | `-m4` (before B17) | 46,575,605 | — | 915 MiB |
+      | `-m5` (64 MiB blocks) | 43,194,463 | −7.26% | 1,819 MiB |
+      | `-m57` (128 MiB) | 42,933,026 | −7.82% | 2,903 MiB |
+      | **`-m58` (256 MiB)** | **42,852,397** | **−7.99%** | **4,916 MiB** |
 
-      † Not clean timings. 3.2× comes from 2026-09-23 file timestamps, and
-      6.4× from a timed 2026-09-26 run that shared the cores with other work.
-      The two restores took 1,076.7 s and 986.5 s. Both runs produced
-      43,194,463 B and restored byte-identically, so the size is firm and the
-      speed is not.
+      `-m58` is the smallest of everything measured in B12 and B17, and the
+      largest block whose two-thread peak fits `_RAM_BUDGET` (55% of 16 GB).
+      `-m59` could not be told apart from `-m58` on a 237 MB input and was not
+      pursued. Blocks only matter above 64 MiB, so a small job gets the same
+      archive as at `-m5`.
 
-      The source reading holds for installers and fails for deflate-expanded
-      data. **What has to happen before any default moves:**
-      (0) **plumbing first, on a branch.** Nothing can run Insane at `-m5`
-      today: `engine._stage_factory` builds `ZpaqfranzStage()` with no
-      argument, `StageOptions` (so the CLI's `--params`) reaches only 7-Zip
-      and zstd, and `tools/bench.py` calls `engine.compress` with no options
-      at all. `test_m5_is_reachable_but_deliberate`
-      covers the stage's own command builder, not the engine;
-      (1) end to end through `engine.compress`, not bare zpaqfranz, on both
-      corpora plus Silesia (B8's Insane row, 80.55% at `-m4`, is the anchor),
-      with repeats, because a single run is not a timing;
-      (2) the **D9 verify pass**, which replays the full restore. At `-m5`
-      the restore ran **2.70× slower on installers and 5.3–5.8× on deflate
-      data**, so the user's total wait grows by more than the compress
-      figure suggests;
-      (3) peak RAM on multi-block input. `excmp/ram.py` has a budget
-      (`_RAM_BUDGET = 0.55` of physical RAM) but **no zpaqfranz model**
-      (only LZMA2 and zstd), so modelling zpaqfranz is part of the job.
-      Measured at `-t2` on the 4-block deflate `.pcf`: 915 MiB compressing at
-      `-m4` and **1,819 MiB at `-m5`**, with a 1,691 MiB restore peak.
-      That's inside a 16 GB budget, but it's the number to model;
-      (4) the estimator: the `precomp+zpaqfranz` slope (0.873) is an `-m4`
-      number, and **`_CODEC_RATE`/`_VERIFY_RATE` have no `precomp+zpaqfranz`
-      key at all**, so Insane's time estimate falls back to 2.5 MB/s and
-      15 MB/s. Bare `-m4` measured about 0.53 / 0.57 MB/s (compress /
-      restore) on the 62 MB installer `.pcf` and 1.41 / 1.27 MB/s on the
-      237 MB deflate one. Those are different units from the estimator's,
-      so this is a lead rather than a proof. Also `gui/progress.py`'s stage
-      weight (50).
-      **Options, not decided:** keep `-m4`; move to `-m5`; or keep `-m4` and
-      expose `-m5` as a user choice. **B12 depends on the answer:** if Insane
-      ends up with no `-m5` at all, LOLZ's 0.25–0.56% on installers is
-      unmatched again (B12's reopening condition (b)).
-      Compatibility is not the obstacle: the one `zpaqfranz x` command, with
-      no method switch, restored `-m0`, `-m4` and `-m5` archives
-      byte-identically in this measurement. The engine does not record the
-      method in `StageRecord.params` (only `sevenzip`/`zstd` options are), so
-      if it ever becomes a user choice, recording it is part of the job.
-      **Threads, measured:** the app's default passes no `-t`, and zpaqfranz
-      then runs 2 threads on this laptop (`2T`; `-ht` gives `4T`), so `-t2`
-      is what default Insane runs here. `-t1` and `-t2` gave byte-identical
-      archives.
+      **End to end, through `engine.compress` with the D9 gate:** Silesia
+      37,542,028 B (82.29% saved, 12/12 verified) against B8's 41,216,918 at
+      `-m4`, **8.92% smaller**, in 3,810 s against 16.7 min. The 13-file
+      installer sample: 45,951,032 B (13/13 verified) against 46,223,108 at
+      `-m4`, 0.59% smaller (one block, so that is `-m5`'s gain).
+      **The estimator had never measured Insane's speed:** no
+      `precomp+zpaqfranz` rate key, so the 2.5 MB/s fallback predicted
+      41–285 s for that Silesia job. B17 adds measured keys, 0.091 MB/s codec
+      (two corpora within 8%) and 0.107 MB/s verify over piped bytes, and
+      re-anchors the slope at `-m58` (k = 0.945, was 0.873). The new estimate
+      for Silesia is 2,709–9,434 s against 3,810 measured. The installer
+      archive lands 0.8% under the new expected figure, as a check rather
+      than a fit.
 
+      **What the implementation corrected against the plan:**
+      (1) **The plan was `-m5`; the measurement said `-m58`.** B17 was filed
+      as "-m4 or -m5". The block-size digit was never in the question until
+      the probe asked it.
+      (2) **No plumbing was needed.** The handoff said "nothing can run Insane
+      at `-m5` without code". True, but the decision was a new *default*, and
+      `engine._stage_factory` builds the stage with no arguments, so changing
+      `DEFAULT_METHOD` is the whole switch. A test now pins that the engine's
+      stage and the default agree.
+      (3) **The RAM cell had never described zpaqfranz.** The comparison
+      table's peak-RAM column computed Insane with 7-Zip's LZMA2 formula,
+      7,084 MiB for a Silesia-sized job. `excmp/ram.py` now models zpaqfranz
+      from the measured peaks as *shared + per busy thread*. -m58's second
+      thread costs 2,155 MiB against its first's 2,761. It counts physical
+      cores, which is zpaqfranz's own default (`2T` here), and the cell
+      follows the chain, so Insane without zpaqfranz keeps LZMA2's figure.
+      (4) **Method-5 CM barely speeds up with a second thread here.** `-m57`
+      on two threads took 1,176 s, and `-m58` on one took 1,264 s.
+      (5) **The 2026-09-23 `-m5` "541 s" (from file timestamps) is an
+      outlier.** A 2026-09-27 speed check matched 09-23 on `-m4`, and every
+      timed method-5 run since took 1,070–1,264 s.
+      (6) **Rendering caught the first RAM model quoting 2.7 GB for a
+      371.5 KB job.** It charged every job a full 256 MiB block, but zpaq
+      sizes its model to the real block: 1 MiB peaked at 99.4 MiB, 16 MiB at
+      313.5 MiB. The model now follows that line (about 85 MiB plus 14.3 B
+      per byte) up to the full-block figures, and the demo job shows ~110 MiB.
+      The whole installer `.pcf` (895 MiB measured) checks it out of sample.
+      (7) **The adversarial review found four real gaps, all fixed test-first:**
+      the thread count was never held to the two threads the RAM case was
+      made for (8 threads would need ~17 GB), so `ram.zpaqfranz_threads` now
+      caps it at the budget (3 here) and the stage always passes `-t`;
+      `--low-memory` extraction never reached zpaqfranz; a J7 rate learned at
+      `-m4` would have overridden the measured `-m58` rate, so entries are now
+      stamped with the method; and a failed restore left its scratch folder.
+      A second pass found four more, also fixed. `estimate_time` billed
+      *stored* bytes at the chain's restore rate, which B17's measured rate
+      turned into a four-hour estimate for a 2 GB stored video; stored bytes
+      now cost `io_rate`. The RAM cell now shows a range, since Precomp may
+      inflate nothing or ~5×. Its inflation ignores stored files. And it
+      follows the Worker threads setting.
+      One older gap is filed, not fixed: **K6**, Cancel during a silent tool.
+      (8) **Two layout guards moved, with evidence.** With Insane's time now
+      honest, its "Extreme is ~24× quicker" note fires on the suite's
+      fixture, so the row is 69 px (budget 56) and the page 504 px (ceiling
+      447). With the note suppressed the page is exactly 447, identical to
+      `main`. Both guards are re-baselined to the measured heights, on B8's
+      precedent.
+      **Archives written at `-m4` before B17 still restore:** extraction names
+      no method, pinned by a real round-trip test.
 ---
 
 ## 🔴 2026-09-04 — four confirmed defects, every one reproduced on this machine
@@ -832,6 +859,24 @@ file in the fixture.
 - [x] K3. ✅ Skipped at analysis, guarded at hash and copy, reported by name
 - [x] K4. ✅ Read ceiling decoupled and raised; compress window **fitted** to input
 - [x] K5. ✅ `rmtree_force` at all 11 call sites, premise pinned by its own test
+- [ ] K6. **Cancel may not reach a tool that prints nothing** (found
+      2026-09-27 by B17's adversarial review, older than B17).
+      `stages/base.run_tool` checks `ctx.cancel` only when the tool emits a
+      line. In B17's end-to-end runs, zpaqfranz's restore printed its first
+      percentage 52 s before the end of a 26-minute Silesia restore. If it
+      prints no lines at all in that time, Cancel and window-close hang for
+      the length of an Insane D9 pass. **Measured 2026-09-27, so this is not a hypothesis any more:**
+      raw stdout bytes timestamped during `zpaqfranz x` of a `-m58` archive
+      (16 MiB, one block, `-t2`): the header arrives by 0.3 s, then
+      **nothing at all** until the summary at 151.4 s. With `-verbose` it's
+      the same: header by 0.09 s, then silence until 141.1 s. So
+      `run_tool`'s per-line cancel check cannot fire for the whole restore.
+      Capture: `C:\excmp-bench\b17\k6\k6-capture.json`
+      (`k6_capture.py` beside it).
+      The likely fix is a watcher thread that waits on `ctx.cancel` and kills
+      the process (as `run_capture`'s watchdog already does), then raises
+      "cancelled" rather than "exited with code 1". It touches every stage,
+      so every stage's cancel path needs a test.
 
 ---
 
@@ -2263,6 +2308,19 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       matching, so "oa" finds "Open archive". **Still open from this item:**
       settings search fed by the same registry, drag-out extract, and the jump
       list.
+- [ ] I11. **Progress through the D9 restore** (new 2026-09-27, from B17).
+      `ChainProgress` tops out at 95% and keeps its peak. The pre-publish
+      restore reports through the same stage ids, so the bar sits at 95% for
+      the whole self-test. That was tolerable for 7-Zip. At `-m58` the
+      restore is about 40% of an Insane job: 1,556 s of 3,810 on Silesia.
+      And **zpaqfranz prints no restore progress until it is nearly done**:
+      its first percentage came 52 s (Silesia) and 3 s (installers) before
+      the end, so even a verify-aware bar gets no signal from it. **Measured
+      since (K6's capture): zpaqfranz `x` prints nothing between its header
+      and its summary, `-verbose` included.** There is nothing to parse. The
+      honest design is a visible "verifying" phase with elapsed time against
+      the estimate's own D9 share, which `_VERIFY_RATE` can now give for
+      Insane.
 - [x] J1. **Sample-based size estimator** (`excmp/estimate.py`, engine-side, Qt-free).
       Do not use a static ratio table — **measure**. The analyzer already reads up
       to 3×1 MiB per file for entropy (`analyzer.sample_entropy`); compress those

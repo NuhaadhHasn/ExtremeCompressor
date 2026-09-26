@@ -213,6 +213,12 @@ RAM hazard (whole version in RAM). Sane Insane ceiling on target: `-m4 -t2`;
 > deflate-expanded data.** On installers `-m5` was −0.60% for 3.0× the
 > compress time. On deflate data it was **−7.26%**. See
 > [benchmarks/2026-09-23](../benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md).
+>
+> **B17 (2026-09-27) acted on it: Insane runs `-m58`**, method 5 with 256 MiB
+> blocks. On the deflate `.pcf` that is 7.99% under `-m4`, and it peaks at
+> 2,761 MiB on one busy thread and 4,916 MiB on two. The "2 threads x ~1 GB"
+> estimate above holds for `-m5`'s 64 MiB blocks only. Bigger blocks cost
+> more. See [benchmarks/2026-09-27](../benchmarks/2026-09-27-b17-insane-m58.md).
 
 ### 9. franz-blocks & vanilla-zpaq compatibility
 

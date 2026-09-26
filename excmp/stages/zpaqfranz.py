@@ -57,11 +57,38 @@ from .base import Stage, StageContext, StageError, run_tool
 #: to an exact layout.
 _PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
 
-#: -m4 is the realistic ceiling on two cores. Both -m4 and -m5 use 64 MiB
-#: blocks; -m5's gain is CM depth at roughly 2-3x the CPU (research/20 §8),
-#: and at ~0.4-0.55 GB/thread for -m4 the target machine has headroom either
-#: way — the constraint is time, not memory.
-DEFAULT_METHOD = 4
+#: -m58 since B17 (2026-09): method 5 with 256 MiB blocks. It was -m4 on
+#: research/20's reading of the source: both use 64 MiB blocks and -m5 only
+#: adds CM depth "at ~2-3x the CPU", so -m4 looked like the realistic
+#: ceiling on two cores. The owner's instruction was "whatever is best for
+#: compression", so this is the smallest setting measured, and the largest
+#: block whose two-thread peak still fits the RAM budget on the 16 GB target.
+#:
+#: Measured with bare zpaqfranz, every archive restored and SHA-256 compared:
+#:
+#:     237 MB deflate .pcf        archive      vs -m4
+#:       -m4  (64 MiB blocks)   46,575,605
+#:       -m5  (64 MiB blocks)   43,194,463    -7.26%
+#:       -m57 (128 MiB blocks)  42,933,026    -7.82%
+#:       -m58 (256 MiB blocks)  42,852,397    -7.99%
+#:     62.5 MB installers .pcf
+#:       -m4                    46,191,810
+#:       -m5                    45,915,367    -0.60%
+#:
+#: -m5 was already the smallest codec measured on both corpora, LOLZ
+#: included (B12). Block size matters only above 64 MiB, which is exactly
+#: where Insane's overnight jobs live. A job smaller than one block gets the
+#: same archive at -m58 as at -m5.
+#:
+#: The price, measured: RAM grows with the block, 910 MiB per busy thread at
+#: -m5 and 2,761 MiB at -m58 (`excmp/ram.py` models it); an input smaller than
+#: 512 MB is at most two blocks and may keep only one thread busy; and the
+#: restore, which the D9 gate replays before every publish, is as slow as
+#: the compress, because context mixing is symmetric.
+#:
+#: Archives written at -m4 before B17 restore unchanged: extraction names no
+#: method, because every zpaq block carries its own decoder description.
+DEFAULT_METHOD = 58
 
 
 def _parse_percent(line: str) -> float | None:
@@ -74,7 +101,8 @@ class ZpaqfranzStage(Stage):
     tool_name = "zpaqfranz"
 
     def __init__(self, method: int = DEFAULT_METHOD, test_after_add: bool = False):
-        #: 4 or 5. See :data:`DEFAULT_METHOD` for why 5 is not the default.
+        #: zpaq's method number: 4 or 5, optionally followed by a block-size
+        #: digit (58 = method 5, 2^8 MiB blocks). See :data:`DEFAULT_METHOD`.
         self.method = int(method)
         #: Add ``-test`` so zpaqfranz decompress-checks its own output in the
         #: same command. Off by default because the engine already replays

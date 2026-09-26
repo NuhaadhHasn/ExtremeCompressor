@@ -12,13 +12,13 @@ one says so before you start.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
 from excmp.estimate import DEFAULT_RATES, Rates, compare_profiles
-from excmp.planner import Plan, Profile, store_reason
+from excmp.planner import Plan, Profile, precomp_inflation, store_reason
 from excmp.sample import MeasuredRun, Sample
 from excmp.tools import ToolInfo
 
@@ -381,7 +381,8 @@ def _saved_words(fraction: float, upper_bound: bool) -> str:
 
 
 def _ram_words(profile: Profile, cores: int | None,
-               input_bytes: int = 0) -> str:
+               input_bytes: int = 0, stages: Sequence[str] | None = None,
+               inflation: int = 1) -> str:
     """Peak compression RAM for a profile on this machine.
 
     **Fast is no longer blank.** It used to be, on the stated grounds that
@@ -395,10 +396,27 @@ def _ram_words(profile: Profile, cores: int | None,
     Fast's figure moves with the input, because `ZstdStage` fits its window to
     the data rather than pinning it - so a small job honestly reports a small
     number here.
-    """
-    from excmp.ram import (effective_dict, lzma2_compress_ram,
-                           lzma2_default_dict, zstd_compress_ram)
 
+    **B17: Insane follows its chain, not its name.** When the chain really
+    ends in zpaqfranz, the figure is zpaqfranz's measured model; with
+    zpaqfranz missing, Insane falls back to 7-Zip and LZMA2's figure is
+    correct again. Before this, Insane always quoted LZMA2: 7,084 MiB for a
+    Silesia-sized job at the default thread count, where zpaqfranz peaked at
+    1,819 MiB (-m5) or 2,761 MiB (-m58) on a comparable 237 MB input.
+    ``cores`` of None means each tool's own default, and zpaqfranz's is
+    physical cores (measured: ``2T`` on this 4-logical-processor laptop), not
+    `os.cpu_count()`. ``inflation`` is Precomp's worst-case multiplier: the
+    block count depends on what zpaqfranz receives, not on the original size.
+    """
+    from excmp.ram import (ZPAQFRANZ_METHOD, effective_dict,
+                           lzma2_compress_ram, lzma2_default_dict,
+                           physical_cores, zpaqfranz_compress_ram,
+                           zstd_compress_ram)
+
+    if stages and stages[-1] == "zpaqfranz":
+        fed = input_bytes * (inflation if "precomp" in stages else 1)
+        return fmt_size(zpaqfranz_compress_ram(
+            ZPAQFRANZ_METHOD, cores or physical_cores(), fed))
     if profile is Profile.FAST:
         from excmp.stages.zstdstage import _window_log_for
         return fmt_size(zstd_compress_ram(_window_log_for(input_bytes)))
@@ -526,6 +544,7 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
 
     estimates = compare_profiles(infos, tools, rates)
     recommended, reason = recommend_with_estimates(summary, estimates, cores)
+    inflation = precomp_inflation(infos)
     rows: list[ComparisonRow] = []
     for est in estimates:
         chain = " → ".join(STAGE_LABELS.get(s, s)
@@ -560,7 +579,8 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
         # Peak RAM for this profile on THIS machine. 7-Zip's Add dialog is the
         # only other place you can see this before starting, and on a 16 GB
         # two-core laptop it is the difference between a job and a swap storm.
-        ram_text = _ram_words(est.profile, cores, summary.total_bytes)
+        ram_text = _ram_words(est.profile, cores, summary.total_bytes,
+                              stages=est.stages, inflation=inflation)
 
         # I6. `_saved_words` caps its wording at 99% for an upper bound it
         # cannot rule out; a measurement has no such problem, so it is

@@ -330,3 +330,118 @@ def zstd_decompress_ram(window_log: int) -> int:
     14 MiB for a narrow frame under a 2 GiB *ceiling*, which is why the
     ceiling is safe to raise but the frame's own window still costs."""
     return int((1 << window_log) + 16 * MIB)
+
+
+# --- zpaqfranz (B17) --------------------------------------------------------
+#
+# Insane's final codec never had a model here, so the comparison table quoted
+# LZMA2's figure for it: 7,084 MiB for a Silesia-sized (212 MB) job at the
+# default thread count, where zpaqfranz measured 1,819 MiB at -m5 on a
+# comparable 237 MB input. Every number below is a measurement: bare
+# zpaqfranz v64.8j, `PeakWorkingSetSize` from the exited process handle, on
+# B12's two .pcf intermediates (docs/benchmarks/2026-09-23-b12-lolz-vs-
+# zpaqfranz.md):
+#
+#     method  threads  input                       peak
+#       -m4      2     62,482,862 B (1 block)      441 MiB
+#       -m4      1     62,482,862 B (1 block)      442 MiB
+#       -m4      2     236,958,376 B (4 blocks)    915 MiB
+#       -m4      1     236,958,376 B (4 blocks)    421 MiB
+#       -m5      2     62,482,862 B (1 block)      895 MiB
+#       -m5      2     236,958,376 B (4 blocks)  1,819 MiB
+#
+# So the peak is a per-thread cost times the threads that actually have a
+# block to work on. zpaqfranz compresses independent 64 MiB blocks (it echoes
+# plain -m4/-m5 as -m46/-m56), so a one-block input cannot occupy a second
+# thread however many it is given. The per-thread constant is the two-thread,
+# four-block peak halved: the largest per-thread figure measured, so the model
+# errs high, which is the safe direction for a "will this fit?" column.
+#
+# Block size is the second lever, and memory grows with it. The B17 probe on
+# the same 237 MB .pcf, restored and SHA-256 compared like everything above:
+#
+#       -m57     2     236,958,376 B (2 x 128 MiB)   2,903 MiB
+#       -m58     2     236,958,376 B (1 x 256 MiB)   2,761 MiB (one thread busy)
+#
+# -m57's constant is its two-thread peak halved. -m58's is its one-thread peak
+# as measured, because a 237 MB input is a single 256 MiB block.
+_ZPAQFRANZ_PER_THREAD: dict[int, int] = {
+    4: 959_545_344 // 2,      # 457.5 MiB
+    5: 1_907_761_152 // 2,    # 909.7 MiB
+    57: 3_043_823_616 // 2,   # 1,451.4 MiB
+    58: 2_894_667_776,        # 2,760.6 MiB
+}
+
+
+def _zpaqfranz_block_bytes(method: int) -> int:
+    """Plain -m4/-m5 use 64 MiB blocks (zpaqfranz echoes them as -m46/-m56).
+    A two-digit method's second digit is the block size as a power of two
+    in MiB, so -m58 is 256 MiB."""
+    return (1 << (method % 10)) * MIB if method >= 10 else 64 * MIB
+
+#: The method the Insane stage runs. Duplicated from
+#: `excmp.stages.zpaqfranz.DEFAULT_METHOD` rather than imported, because this
+#: module sits below the stages. `tests/test_b17_insane_m5.py` asserts the two
+#: agree, so the table can't describe a job that is not the one that runs.
+ZPAQFRANZ_METHOD = 58
+
+
+def zpaqfranz_compress_ram(method: int, threads: int, input_bytes: int) -> int:
+    """Peak working set for one zpaqfranz add, in bytes.
+
+    ``input_bytes`` is what zpaqfranz itself receives. In the Insane chain
+    that is Precomp's output, which can be several times the original, so a
+    caller holding only the original size should inflate it (see
+    `planner.precomp_inflation`). Under-counting blocks under-states the
+    peak, which is the dangerous direction.
+
+    Only measured methods are answered: -m4, -m5, -m57 and -m58. -m1 to -m3,
+    and blocks above 256 MiB, have never been run here, and borrowing a
+    neighbour's figure for them would be a number nobody took.
+    """
+    per_thread = _ZPAQFRANZ_PER_THREAD.get(int(method))
+    if per_thread is None:
+        raise ValueError(f"no measured peak for zpaqfranz -m{method}")
+    blocks = max(1, -(-int(input_bytes) // _zpaqfranz_block_bytes(int(method))))
+    return per_thread * max(1, min(int(threads) or 1, blocks))
+
+
+def physical_cores() -> int:
+    """Physical CPU cores, which is what zpaqfranz uses when given no ``-t``.
+
+    Measured on the target laptop (2 cores, 4 logical processors): no switch
+    reports ``2T``, ``-t2`` reports ``2T``, and only ``-ht`` reaches ``4T``.
+    `os.cpu_count()` answers 4 there, so using it would double zpaqfranz's
+    quoted RAM.
+
+    Windows only, through GetLogicalProcessorInformation. Anywhere it can't
+    answer, this falls back to the logical count: that over-states the peak
+    rather than under-stating it.
+    """
+    import ctypes
+    import os
+
+    logical = os.cpu_count() or 1
+    if os.name != "nt":
+        return logical
+    try:
+        from ctypes import wintypes
+
+        class _Info(ctypes.Structure):          # SYSTEM_LOGICAL_PROCESSOR_INFORMATION
+            _fields_ = [("ProcessorMask", ctypes.c_size_t),
+                        ("Relationship", ctypes.c_int),
+                        ("_union", ctypes.c_ulonglong * 2)]
+
+        kernel32 = ctypes.windll.kernel32
+        size = wintypes.DWORD(0)
+        kernel32.GetLogicalProcessorInformation(None, ctypes.byref(size))
+        count = size.value // ctypes.sizeof(_Info)
+        if count <= 0:
+            return logical
+        buf = (_Info * count)()
+        if not kernel32.GetLogicalProcessorInformation(buf, ctypes.byref(size)):
+            return logical
+        cores = sum(1 for entry in buf if entry.Relationship == 0)  # RelationProcessorCore
+        return max(1, min(cores, logical)) if cores else logical
+    except Exception:                                        # noqa: BLE001
+        return logical

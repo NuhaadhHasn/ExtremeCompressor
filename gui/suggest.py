@@ -19,6 +19,7 @@ from pathlib import Path
 from excmp.analyzer import Category, FileInfo
 from excmp.estimate import DEFAULT_RATES, Rates, compare_profiles
 from excmp.planner import Plan, Profile, precomp_inflation, store_reason
+from excmp.planner import plan as make_plan
 from excmp.sample import MeasuredRun, Sample
 from excmp.tools import ToolInfo
 
@@ -382,7 +383,8 @@ def _saved_words(fraction: float, upper_bound: bool) -> str:
 
 def _ram_words(profile: Profile, cores: int | None,
                input_bytes: int = 0, stages: Sequence[str] | None = None,
-               inflation: int = 1) -> str:
+               inflation: int = 1, piped_bytes: int | None = None,
+               threads: int | None = None) -> str:
     """Peak compression RAM for a profile on this machine.
 
     **Fast is no longer blank.** It used to be, on the stated grounds that
@@ -410,13 +412,18 @@ def _ram_words(profile: Profile, cores: int | None,
     """
     from excmp.ram import (ZPAQFRANZ_METHOD, effective_dict,
                            lzma2_compress_ram, lzma2_default_dict,
-                           physical_cores, zpaqfranz_compress_ram,
+                           zpaqfranz_compress_ram, zpaqfranz_threads,
                            zstd_compress_ram)
 
     if stages and stages[-1] == "zpaqfranz":
-        fed = input_bytes * (inflation if "precomp" in stages else 1)
+        # Stored files never reach zpaqfranz, so only piped bytes count.
+        base = piped_bytes if piped_bytes is not None else input_bytes
+        fed = base * (inflation if "precomp" in stages else 1)
+        # `threads` is the Worker threads setting, the same request the
+        # stage hands `zpaqfranz_threads`, so the cell and the job agree.
         return fmt_size(zpaqfranz_compress_ram(
-            ZPAQFRANZ_METHOD, cores or physical_cores(), fed))
+            ZPAQFRANZ_METHOD,
+            zpaqfranz_threads(threads or cores or 0, ZPAQFRANZ_METHOD), fed))
     if profile is Profile.FAST:
         from excmp.stages.zstdstage import _window_log_for
         return fmt_size(zstd_compress_ram(_window_log_for(input_bytes)))
@@ -486,6 +493,9 @@ class ComparisonRow:
     time_text: str
     time_range: str
     ram_text: str = ""    # peak compression RAM - nobody else shows this
+    #: B17: "low – high" when the peak depends on what Precomp finds (a
+    #: zpaqfranz chain), shown as the cell's second line. Empty otherwise.
+    ram_range: str = ""
     recommended: bool = False
     reason: str = ""      # why it is recommended (from recommend_profile)
     note: str = ""        # the trade-off warning, when a cheaper profile wins
@@ -520,6 +530,7 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
                        rates: Rates = DEFAULT_RATES,
                        measured: Mapping[Profile, MeasuredRun] | None = None,
                        measured_whole_input: bool = False,
+                       zpaq_threads: int | None = None,
                        ) -> list[ComparisonRow]:
     """Every profile with its estimated size and time, recommendation marked.
 
@@ -544,7 +555,6 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
 
     estimates = compare_profiles(infos, tools, rates)
     recommended, reason = recommend_with_estimates(summary, estimates, cores)
-    inflation = precomp_inflation(infos)
     rows: list[ComparisonRow] = []
     for est in estimates:
         chain = " → ".join(STAGE_LABELS.get(s, s)
@@ -579,8 +589,22 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
         # Peak RAM for this profile on THIS machine. 7-Zip's Add dialog is the
         # only other place you can see this before starting, and on a 16 GB
         # two-core laptop it is the difference between a job and a swap storm.
-        ram_text = _ram_words(est.profile, cores, summary.total_bytes,
-                              stages=est.stages, inflation=inflation)
+        ram_text, ram_range = _ram_words(est.profile, cores, summary.total_bytes), ""
+        if est.stages and est.stages[-1] == "zpaqfranz":
+            # Inflation over *this profile's piped files* only: averaged over
+            # stored files too, a stored video used to lower the quoted peak.
+            piped = {f for r in make_plan(infos, est.profile, tools).routes
+                     if r.action == "pipeline" for f in r.files}
+            inflation = precomp_inflation([i for i in infos if i.path in piped]) \
+                if piped else 1
+            lo = _ram_words(est.profile, cores, summary.total_bytes,
+                            stages=est.stages, inflation=1,
+                            piped_bytes=est.size.piped_bytes, threads=zpaq_threads)
+            ram_text = _ram_words(est.profile, cores, summary.total_bytes,
+                                  stages=est.stages, inflation=inflation,
+                                  piped_bytes=est.size.piped_bytes,
+                                  threads=zpaq_threads)
+            ram_range = f"{lo} – {ram_text}" if lo != ram_text else ""
 
         # I6. `_saved_words` caps its wording at 99% for an upper bound it
         # cannot rule out; a measurement has no such problem, so it is
@@ -604,6 +628,7 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
             size_range=_span(est.size.low, est.size.high, fmt_size),
             saved_text=saved_text,
             ram_text=ram_text,
+            ram_range=ram_range,
             time_text=fmt_eta(est.time.expected),
             time_range=_span(est.time.low, est.time.high, fmt_eta),
             time_seconds=est.time.expected,

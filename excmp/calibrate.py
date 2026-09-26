@@ -41,6 +41,7 @@ from typing import Sequence
 
 from .atomic import PublishError, atomic_write_text
 from .estimate import Rates
+from .ram import ZPAQFRANZ_METHOD
 
 #: Where the store lives when nobody says otherwise. Beside the temp dir the
 #: app already uses, so a user who clears ``~/.excmp`` clears this too.
@@ -75,6 +76,12 @@ class ChainCalibration:
     #: J1-note-3 blind spot: no cheap probe can predict what Precomp will
     #: find, so watching what it actually achieved is the only real fix.
     factor: float | None = None
+    #: B17. The zpaq method a zpaqfranz chain's rate was learned at. Insane
+    #: moved from -m4 to -m58 without the chain key changing, so a rate learned
+    #: before B17 would silently replace the measured -m58 rate - and -m4 runs
+    #: several times faster. Entries for a zpaqfranz chain without the current
+    #: method are dropped on load.
+    zpaq_method: int | None = None
 
 
 @dataclass
@@ -114,8 +121,12 @@ def load(path: Path | None = None) -> Calibration:
         factor = _coerce(entry.get("factor"))
         if factor is not None and not (0 < factor <= 1.5):
             factor = None
-        chains[key] = ChainCalibration(rate=rate, samples=int(samples),
-                                       factor=factor)
+        method = _coerce(entry.get("zpaq_method"))
+        if "zpaqfranz" in key and (method is None or int(method) != ZPAQFRANZ_METHOD):
+            continue    # learned at another zpaq method, e.g. -m4 before B17
+        chains[key] = ChainCalibration(
+            rate=rate, samples=int(samples), factor=factor,
+            zpaq_method=int(method) if method is not None else None)
     return Calibration(chains=chains)
 
 
@@ -123,7 +134,9 @@ def _save(cal: Calibration, target: Path) -> None:
     payload = {"chains": {
         key: {"rate": round(entry.rate, 6), "samples": entry.samples,
               **({"factor": round(entry.factor, 6)}
-                 if entry.factor is not None else {})}
+                 if entry.factor is not None else {}),
+              **({"zpaq_method": entry.zpaq_method}
+                 if entry.zpaq_method is not None else {})}
         for key, entry in cal.chains.items()}}
     # D8: flushed and read back, and the previous store survives a failed
     # write. This file is the only record of how fast each chain actually runs
@@ -176,7 +189,8 @@ def record(stages: Sequence[str], piped_bytes: int, elapsed_s: float,
         cal.chains[key] = ChainCalibration(
             rate=rate,
             samples=(prior.samples + 1) if prior is not None else 1,
-            factor=factor)
+            factor=factor,
+            zpaq_method=ZPAQFRANZ_METHOD if "zpaqfranz" in key else None)
         _save(cal, target)
     except (OSError, ValueError, TypeError, PublishError):
         # PublishError is a RuntimeError, so it is named explicitly: D8's

@@ -47,6 +47,7 @@ import re
 import shutil
 from pathlib import Path
 
+from .. import ram
 from ..tools import find_tools, require
 from ..tempclean import rmtree_force
 from .base import Stage, StageContext, StageError, run_tool
@@ -80,9 +81,10 @@ _PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
 #: where Insane's overnight jobs live. A job smaller than one block gets the
 #: same archive at -m58 as at -m5.
 #:
-#: The price, measured: RAM grows with the block, 910 MiB per busy thread at
-#: -m5 and 2,761 MiB at -m58 (`excmp/ram.py` models it); an input smaller than
-#: 512 MB is at most two blocks and may keep only one thread busy; and the
+#: The price, measured: RAM grows with the block. -m5 peaked at 1,819 MiB with
+#: two threads busy, while -m58 peaked at 2,761 MiB with one and 4,916 MiB with
+#: two (`excmp/ram.py` models it; that's inside the 55% budget on 16 GB). An
+#: input under 256 MiB is one block and keeps only one thread busy; and the
 #: restore, which the D9 gate replays before every publish, is as slow as
 #: the compress, because context mixing is symmetric.
 #:
@@ -135,17 +137,29 @@ class ZpaqfranzStage(Stage):
         # two-version archive whose first version nobody asked for.
         if dst.exists():
             dst.unlink()
-        run_tool(self.build_compress_cmd(src, dst, ctx.threads, self._exe()),
+        # Always an explicit, capped -t: with none, zpaqfranz takes every
+        # physical core, and at -m58 each busy thread costs ~2.1 GiB.
+        threads = ram.zpaqfranz_threads(ctx.threads, self.method)
+        run_tool(self.build_compress_cmd(src, dst, threads, self._exe()),
                  ctx, self.id, _parse_percent)
         if not dst.exists():
             raise StageError(f"{self.id}: archive was not created")
         return dst
 
     # -- extract ------------------------------------------------------------
-    def build_extract_cmd(self, src: Path, dst: Path, exe: str) -> list[str]:
+    def build_extract_cmd(self, src: Path, dst: Path, exe: str,
+                          threads: int = 0) -> list[str]:
         """``x ... -to <dir>``. Deliberately not ``t -paranoid -to``: see the
-        module docstring — that variant can block on a captcha."""
-        return [exe, "x", str(src), "-to", str(dst), "-longpath"]
+        module docstring — that variant can block on a captcha.
+
+        ``threads`` >= 1 adds ``-t``. G7's ``--low-memory`` (extract_threads=1)
+        never reached zpaqfranz before B17, and at -m58 each restoring thread
+        holds about 2.7 GiB. No method switch, ever: the archive describes its
+        own decoder."""
+        cmd = [exe, "x", str(src), "-to", str(dst), "-longpath"]
+        if threads and threads >= 1:
+            cmd.append(f"-t{int(threads)}")
+        return cmd
 
     def extract(self, src: Path, dst: Path, ctx: StageContext) -> Path:
         """Extract, then put the payload where the chain expects it.
@@ -175,8 +189,19 @@ class ZpaqfranzStage(Stage):
             rmtree_force(scratch)
         scratch.mkdir(parents=True, exist_ok=True)
 
-        run_tool(self.build_extract_cmd(src, scratch, self._exe()),
-                 ctx, self.id, _parse_percent)
+        # Capped like compress, at Insane's own method: restore memory is the
+        # compress figure again, and an older -m4 archive needs less.
+        threads = ram.zpaqfranz_threads(getattr(ctx, "extract_threads", 0),
+                                        ram.ZPAQFRANZ_METHOD)
+        try:
+            run_tool(self.build_extract_cmd(src, scratch, self._exe(), threads),
+                     ctx, self.id, _parse_percent)
+        except BaseException:
+            # A failed or cancelled restore used to leave its partial output in
+            # ctx.temp_dir, outside every job directory's cleanup. At -m58 that
+            # can be most of a .pcf.
+            rmtree_force(scratch)
+            raise
 
         found = [p for p in scratch.rglob("*") if p.is_file()]
         if len(found) != 1:

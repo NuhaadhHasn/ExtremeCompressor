@@ -43,9 +43,9 @@ before ever claiming success.
   intermittent restore-corruption bug inside `srep64.exe`; correctness beats
   the ~3.5 points it was worth.)
 - **4 profiles** — `fast` (zstd-19 long mode) · `normal` (7z max) · `extreme`
-  (full chain) · `insane` (Precomp → zpaqfranz `-m5`: unlimited-distance
-  dedup plus context mixing, the smallest archives this app makes, and an
-  overnight job on a two-core laptop). Profiles degrade gracefully when a
+  (full chain) · `insane` (Precomp → zpaqfranz `-m58`: unlimited-distance
+  dedup plus context mixing in 256 MiB blocks, the smallest archives this
+  app makes, and an overnight job on a two-core laptop). Profiles degrade gracefully when a
   tool isn't installed.
 - **Lossless media guarantee** — video/audio/images are stored bit-exact by
   default; quality is never touched. (Opt-in AV1/Opus "Shrink" mode is on the
@@ -303,8 +303,8 @@ The legacy Tkinter prototype in `main.py` still runs but is superseded.
 - [x] Engine core: analyzer, router, stages, verified `.excmp` roundtrip, CLI
 - [x] Extreme chain with real Precomp + SREP, first benchmarks
 - [x] PySide6 GUI (drop zone, suggestions, queue, progress, results, extract)
-- [x] zpaqfranz backend → completes the `insane` profile (B1), now at `-m5`,
-  measured smallest on every corpus tried (B17)
+- [x] zpaqfranz backend → completes the `insane` profile (B1), now at `-m58`,
+  the smallest setting measured (B17)
 - [x] Per-file-type specialists: JPEG (lepton), PNG (via Precomp), WAV (FLAC)
 - [x] SHA-pinned tool downloader (E1)
 - [ ] Opt-in video/audio Shrink mode (FFmpeg + SVT-AV1, quality-targeted)

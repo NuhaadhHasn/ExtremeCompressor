@@ -200,6 +200,10 @@ def test_the_disclosure_is_not_a_tooltip(populated):
     assert chooser.info_toggle.focusPolicy() != 0
 
 
+#: One line of a profile row's trade-off note: 69 - 50 px, measured B17.
+NOTE_LINE_PX = 19
+
+
 def test_profile_rows_are_compact_where_they_honestly_can_be(populated,
                                                              reference_fonts):
     """§2.4 budgeted every row at 32px. That holds for a row whose estimate is
@@ -221,7 +225,12 @@ def test_profile_rows_are_compact_where_they_honestly_can_be(populated,
 
     for row in rows:
         if row.shows_range():
-            assert row.height() <= 56, f"{row.profile.value} row is {row.height()}px"
+            # B17: a range row that also carries a trade-off note is one line
+            # taller. Measured 2026-09-27: Insane 69px against the other
+            # rows' 50 once its measured time made the "Extreme is ~24x
+            # quicker" note true. The note's own visibility is asserted below.
+            limit = 56 + (NOTE_LINE_PX if row.has_note() else 0)
+            assert row.height() <= limit, f"{row.profile.value} row is {row.height()}px"
         if row.has_note():
             assert row._note_label.isVisibleTo(row), (
                 f"{row.profile.value} lost its warning to the diet")

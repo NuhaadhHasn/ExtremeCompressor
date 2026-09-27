@@ -8,11 +8,18 @@
 > git switch main && git merge --no-ff phase-b17-insane-m5 && git push
 > ```
 >
-> **Next phase: K6 — Cancel during a silent tool**, then I11. Both come from
-> the same fact B17 exposed: zpaqfranz restores for 20+ minutes at `-m58`
-> without printing a percentage. `run_tool` checks Cancel only when a line
-> arrives, and the progress bar parks at 95%. §3 has both specs, and step
-> one for both is the same measurement.
+> **K6 is also done, on branch `phase-k6-cancel-silent-tool`**, pushed and
+> awaiting review. Cancel now reaches a tool that prints nothing, which is
+> zpaqfranz for the whole of a restore. The two branches are independent;
+> merge K6 the same way:
+>
+> ```
+> git switch main && git merge --no-ff phase-k6-cancel-silent-tool && git push
+> ```
+>
+> **Next phase: I11 — progress through the D9 restore.** At `-m58` the
+> restore is ~40% of an Insane job, the bar parks at 95%, and zpaqfranz
+> prints nothing to parse (measured). §3 has the spec.
 
 ```
 .venv\Scripts\python.exe -m pytest -q
@@ -184,11 +191,15 @@ timings can't be read off the progress callback: tools print late.
 
 ---
 
-## 3. Next phase: K6, then I11
+## 3. Next phase: I11 (K6 is done, on its branch)
 
-**K6 — Cancel during a silent tool.** Spec: [ROADMAP.md, K6](ROADMAP.md)
-(under K5). `stages/base.run_tool` checks `ctx.cancel` only when the tool
-emits a line. **Already measured, at the end of this session:** during
+**K6 — done 2026-09-27, branch `phase-k6-cancel-silent-tool`.** `run_tool`
+gained a watcher thread that kills the child on Cancel and reports
+"cancelled", not "exited with code 1". Before the fix, a silent 60 s child
+with Cancel at 0.5 s held each of three new tests for the full 60 s. Full
+suite on that branch: **1,297 passed, 2 skipped, 1 xfailed** (2026-09-27, corpus guard clean). The background, kept for the record:
+`stages/base.run_tool` used to check `ctx.cancel` only when the tool
+emitted a line. **Already measured, at the end of this session:** during
 `zpaqfranz x` of a `-m58` archive, raw stdout is the header by 0.3 s, then
 **nothing at all** until the summary at 151 s. `-verbose` is the same. So
 Cancel and window-close can't be honoured during any Insane restore: 20+
@@ -265,8 +276,8 @@ legitimate outcome**, and a cheaper one than keeping the item open.
 ### Small / medium
 | item | what |
 |---|---|
-| **K6** | **recommended next**: Cancel during a silent tool (zpaqfranz restores), §3 |
-| **I11** | then: progress through the D9 restore, §3 |
+| **I11** | **recommended next**: progress through the D9 restore, §3 |
+| **K6** | ✅ done 2026-09-27, branch `phase-k6-cancel-silent-tool`, awaiting review |
 | **B13** | blocked on a krinkels.org download **and** a game-audio corpus (§5) |
 | **B14** | DArc 3.04, the maintained FreeArc fork, now also carrying B12a (plain FreeArc, never measured). It must beat the *shipped* route, including zpaqfranz in Insane's slot, which is what sank LOLZ |
 | **D6b** | more fuzz targets if wanted; the parser is covered |

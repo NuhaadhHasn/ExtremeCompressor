@@ -7,9 +7,10 @@
 > 37,542,028 B against 41,216,918 at `-m4`, 8.92% smaller, 3.8× the wait.
 > **B12 is closed: measured, not integrated.** LOLZ lost to zpaqfranz on both
 > corpora ([round 3](benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md)).
-> **Next up: K6**, then I11. K6: Cancel may not reach zpaqfranz while it
-> restores silently, which at `-m58` can last 20+ minutes. I11: progress
-> through that same D9 restore, where the bar parks at 95%.
+> **K6 is done too, on its own branch `phase-k6-cancel-silent-tool`**: Cancel
+> now reaches a tool that prints nothing, such as zpaqfranz during a restore.
+> **Next up: I11**, progress through the D9 restore, where the bar parks at
+> 95% and zpaqfranz prints nothing to parse.
 > `main` = I6 merged (`609bc07`) plus docs; CI green on `windows-latest`. The two skips are the opt-in 57k-file corpus walk
 > (`EXCMP_SLOW_CORPUS=1`) and a test that only runs when no E1-pinned tool is
 > installed — nothing is silently switched off.
@@ -859,7 +860,16 @@ file in the fixture.
 - [x] K3. ✅ Skipped at analysis, guarded at hash and copy, reported by name
 - [x] K4. ✅ Read ceiling decoupled and raised; compress window **fitted** to input
 - [x] K5. ✅ `rmtree_force` at all 11 call sites, premise pinned by its own test
-- [ ] K6. **Cancel may not reach a tool that prints nothing** (found
+- [x] K6. ✅ **DONE 2026-09-27** (branch `phase-k6-cancel-silent-tool`,
+      awaiting review). `run_tool` now has a watcher thread that waits on
+      `ctx.cancel` and kills the child, then reports "cancelled" before it
+      looks at the exit code. **Test-first, and the failure was exact:** a
+      child that sleeps 60 s without printing, with Cancel fired at 0.5 s,
+      made each of three new tests wait the full 60 s (182 s total) before
+      the fix. After it, all five pass in seconds, along with the existing
+      engine-level cancel tests (`test_crash_consistency`,
+      `test_engine_control`). Full suite: **1,297 passed, 2 skipped, 1 xfailed** (2026-09-27, corpus guard clean).
+      **Cancel may not reach a tool that prints nothing** (found
       2026-09-27 by B17's adversarial review, older than B17).
       `stages/base.run_tool` checks `ctx.cancel` only when the tool emits a
       line. In B17's end-to-end runs, zpaqfranz's restore printed its first

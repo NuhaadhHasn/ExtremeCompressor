@@ -104,6 +104,25 @@ def run_tool(
         cwd=str(cwd) if cwd else None,
         creationflags=CREATE_NO_WINDOW,
     )
+    # K6: a watcher thread owns cancellation, not the read loop. The loop only
+    # runs when the tool prints, and zpaqfranz prints *nothing* for the whole
+    # of a restore (measured: header by 0.3 s, then silence until the summary
+    # 151 s later, -verbose included). At -m58 that silence is ~25 minutes on
+    # a Silesia-sized job, and Cancel and window-close waited for all of it.
+    # Killing the child closes its pipe, so the read below sees EOF at once.
+    finished = threading.Event()
+
+    def _watch_for_cancel() -> None:
+        while not finished.is_set():
+            if ctx.cancel.wait(0.25):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                return
+
+    watcher = threading.Thread(target=_watch_for_cancel, daemon=True)
+    watcher.start()
     tail: list[str] = []
     assert proc.stdout is not None
     try:
@@ -122,8 +141,14 @@ def run_tool(
                 if pct is not None:
                     ctx.progress_cb(stage_id, max(0.0, min(100.0, pct)))
     finally:
+        finished.set()
         proc.stdout.close()
     code = proc.wait()
+    if ctx.cancel.is_set():
+        # Checked before the exit code: a killed tool exits non-zero, and
+        # "exited with code 1" would tell the user it failed when they
+        # stopped it.
+        raise StageError(f"{stage_id}: cancelled")
     if code != 0:
         raise StageError(
             f"{stage_id}: '{cmd[0]}' exited with code {code}\n" + "\n".join(tail[-15:])

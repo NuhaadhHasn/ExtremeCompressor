@@ -46,8 +46,9 @@ Three things about that command, all measured, none guessable:
 |---|---|
 | `main` | docs-only commits on top of the I6 merge (`609bc07`); B12 closed there |
 | branch | **`phase-b17-insane-m5`** — B17, pushed, **not merged** (merge command above) |
-| tests | **1,336 passed, 2 skipped, 1 xfailed** on the branch (2026-09-27, 19 min 07 s, machine held awake). `main` is still 1,292 (2026-09-21) |
-| corpus guard | clean: snapshot right before the run, 154 files, 0 added / 0 removed / 0 modified |
+| branch | **`phase-k6-cancel-silent-tool`** — K6, pushed, **not merged**, independent of B17; both merge into `main` cleanly, in either order (checked with `git merge-tree`) |
+| tests | B17 branch **1,336 passed, 2 skipped, 1 xfailed** (19 min 07 s). K6 branch **1,297 passed, 2 skipped, 1 xfailed** (19 min 14 s). Both 2026-09-27, machine held awake. `main` is 1,292 (2026-09-21) |
+| corpus guard | clean around both runs: snapshot right before each, 154 files, 0 added / 0 removed / 0 modified |
 | AI attribution | none, anywhere. Audited before each commit |
 
 ---

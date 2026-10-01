@@ -450,6 +450,26 @@ def zpaqfranz_compress_ram(method: int, threads: int, input_bytes: int) -> int:
     return int(min(full, _ZPAQFRANZ_SMALL_BASE[int(method)] + slope * in_flight))
 
 
+def lzma2_auto_threads(dict_bytes: int, level: int = 9,
+                       total_ram: int | None = None,
+                       cores: int | None = None) -> int:
+    """7-Zip's thread count for "auto": one per physical core, capped at what
+    fits `_RAM_BUDGET`.
+
+    The cap is needed because passing any -mmt switches off 7-Zip's own rule,
+    which fits memory "by changing the number of working threads, if the
+    number of threads was not specified". On the 2-core target the cap never
+    bites (2 threads at mx9 is ~3 GiB by this model); on a 6-core 8 GB
+    machine a forced -mmt6 would want ~9 GiB.
+    """
+    total = total_ram if total_ram is not None else total_ram_bytes()
+    n = max(1, int(cores) if cores else physical_cores())
+    budget = total * _RAM_BUDGET
+    while n > 1 and lzma2_compress_ram(dict_bytes, n, level) > budget:
+        n -= 1
+    return n
+
+
 def zpaqfranz_threads(requested: int, method: int,
                       total_ram: int | None = None) -> int:
     """How many threads zpaqfranz may use: the request, or physical cores

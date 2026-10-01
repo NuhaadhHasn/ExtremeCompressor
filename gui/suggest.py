@@ -238,7 +238,10 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
     what this data *can* do under the best chain, not what the currently
     selected profile happens to manage.
     """
-    cores = cores or os.cpu_count() or 2
+    # Physical cores: os.cpu_count() reports logical processors, and the
+    # sentence below used to tell a 2-core laptop it had 4 cores.
+    from excmp.ram import physical_cores
+    cores = cores or physical_cores()
     heavy_tools = summary.tools.get("precomp", False)
 
     if summary.floor_store_fraction >= MOSTLY_INCOMPRESSIBLE:
@@ -427,7 +430,11 @@ def _ram_words(profile: Profile, cores: int | None,
     if profile is Profile.FAST:
         from excmp.stages.zstdstage import _window_log_for
         return fmt_size(zstd_compress_ram(_window_log_for(input_bytes)))
-    threads = cores or (os.cpu_count() or 2)
+    # The threads SevenZipStage will really pass: the Worker threads setting
+    # when there is one, else one per physical core. os.cpu_count() here
+    # quoted the 4-thread figure.
+    from excmp.ram import physical_cores
+    threads = threads or cores or physical_cores()
     # Clamped to the data: 7-Zip does the same before quoting its own figure,
     # and without it a 371 KB job was advertised as needing 6 GB.
     dict_bytes = effective_dict(lzma2_default_dict(9), input_bytes)
@@ -589,7 +596,8 @@ def profile_comparison(infos: list[FileInfo], tools: dict[str, ToolInfo | None],
         # Peak RAM for this profile on THIS machine. 7-Zip's Add dialog is the
         # only other place you can see this before starting, and on a 16 GB
         # two-core laptop it is the difference between a job and a swap storm.
-        ram_text, ram_range = _ram_words(est.profile, cores, summary.total_bytes), ""
+        ram_text, ram_range = _ram_words(est.profile, cores, summary.total_bytes,
+                                         threads=zpaq_threads), ""
         if est.stages and est.stages[-1] == "zpaqfranz":
             # Inflation over *this profile's piped files* only: averaged over
             # stored files too, a stored video used to lower the quoted peak.

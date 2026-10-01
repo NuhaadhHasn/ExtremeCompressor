@@ -55,6 +55,14 @@ def redact(cmd: list[str]) -> list[str]:
     return [("-p***" if a.startswith("-p") and len(a) > 2 else a) for a in cmd]
 
 
+
+def _dict_bytes(text: str) -> int:
+    """"256m" -> bytes, the -md= spelling the stage is configured with."""
+    text = text.strip().lower()
+    unit = {"k": 1 << 10, "m": 1 << 20, "g": 1 << 30}.get(text[-1:], 1)
+    number = text[:-1] if text[-1:] in "kmg" else text
+    return int(number or 0) * unit
+
 class SevenZipStage(Stage):
     id = "sevenzip"
 
@@ -121,11 +129,35 @@ class SevenZipStage(Stage):
         src, dst = Path(src), Path(dst)
         if dst.exists():
             dst.unlink()
-        cmd = self.build_compress_cmd(src, dst, ctx.threads, self._exe())
+        # "Auto" (0) is one thread per physical core, passed explicitly. Left
+        # to itself 7-Zip takes every logical processor - 4 on the 2-core
+        # target - and measured on 645 MB of installers (three LZMA2 blocks)
+        # that produced a 0.14% larger archive at more than twice the peak RAM
+        # (5,549 MiB against 2,702 MiB at 2 threads), though 1.75x faster. On a
+        # single-block input the bytes and RAM matched, and 2 threads was the
+        # fastest setting.
+        # tests/test_default_threads.py has the table.
+        threads = self._auto_threads(ctx.threads)
+        cmd = self.build_compress_cmd(src, dst, threads, self._exe())
         run_tool(cmd, ctx, self.id, _parse_percent)
         if not dst.exists():
             raise StageError(f"{self.id}: archive was not created")
         return dst
+
+    def _auto_threads(self, requested: int) -> int:
+        """The -mmt to pass: the user's count, else one per physical core
+        capped at the RAM budget, else nothing at all when the Parameters line
+        already carries -mmt or -mmemuse - those are the user's own word on
+        threads and memory, and a forced count would override 7-Zip's
+        memory fitting behind their back."""
+        if requested:
+            return requested
+        if any(a.lower().startswith(("-mmt", "-mmemuse")) for a in self.extra_args):
+            return 0
+        from ..ram import lzma2_auto_threads, lzma2_default_dict
+        dict_bytes = (_dict_bytes(self.dict_size) if self.dict_size
+                      else lzma2_default_dict(self.level))
+        return lzma2_auto_threads(dict_bytes, self.level)
 
     def build_extract_cmd(self, src: Path, dst: Path, exe: str,
                           include: list[str] | None = None,

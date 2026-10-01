@@ -73,20 +73,23 @@ class SettingsTab(QScrollArea):
         column.setContentsMargins(GUTTER, VGAP, GUTTER, VGAP)
         column.setSpacing(GAP_INTRA)
 
+        from excmp.ram import physical_cores
         cores = os.cpu_count() or 2
         self.threads = QSpinBox(page)
         self.threads.setRange(0, max(2, cores * 4))
         # os.cpu_count() reports LOGICAL processors: the target machine is a
-        # 2-core i7-3540M that reports 4. Saying "4 cores" beside a line about
-        # a two-core laptop was a contradiction on screen.
+        # 2-core i7-3540M that reports 4, and "auto (4 cores)" once sat beside
+        # a line calling it a two-core laptop. Auto now gives 7-Zip and
+        # zpaqfranz one thread per physical core (Fast's in-process zstd keeps
+        # its own default), so the label names physical_cores().
         self.threads.setSpecialValueText(
-            self.tr("auto (%d available)") % cores)
+            self.tr("auto (%d cores)") % physical_cores())
         self.threads.setAccessibleName(self.tr("Worker threads"))
         column.addWidget(SettingsRow(
             self.tr("Worker threads"),
-            self.tr("0 lets each tool choose. Lower it to keep the machine "
-                    "usable during a long job — the compressors will happily "
-                    "take every thread you have."),
+            self.tr("Auto gives 7-Zip and zpaqfranz one thread per physical "
+                    "core. Lower it to keep the machine usable during a long "
+                    "job."),
             self.threads, page))
 
         temp_row = QWidget(page)

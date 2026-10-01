@@ -25,9 +25,11 @@ STAGE_WEIGHTS: dict[str, float] = {
     "precomp": 35.0,
     "srep": 20.0,
     "sevenzip": 40.0,
-    # Mid-range context mixing at -m4: heavier per byte than LZMA2 at mx9,
-    # and it is doing the CDC dedup pass in the same breath.
-    "zpaqfranz": 50.0,
+    # B17: -m58 context mixing is 90-93% of an Insane job's compress time on
+    # every corpus measured (vs Precomp: 1,264 s to 141 s on the deflate zip,
+    # ~360 s to 9 s on the installer sample, ~2,050 s to 3 s on Silesia). At
+    # the old 50 the bar crossed half way while zpaqfranz had barely started.
+    "zpaqfranz": 400.0,
     "zstd": 100.0,   # the whole fast profile is this one stage
 }
 DEFAULT_WEIGHT = 25.0

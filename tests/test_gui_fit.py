@@ -134,7 +134,17 @@ def test_the_empty_compress_page_needs_no_scrolling(window, qtbot, size,
 #
 # Kept at the exact measured height rather than rounded up, so any *further*
 # growth still trips this.
-POPULATED_PAGE_MEASURED = 447
+#
+# B17 moved it to 504, for the same kind of reason. Insane's time used to come
+# from a 2.5 MB/s fallback, because `_CODEC_RATE` had no key for its chain; it
+# is now measured (0.091 MB/s at -m58). On this fixture that makes Insane
+# ~24x slower than Extreme for the same result, and the chooser says so: a
+# one-line note on the Insane row (+19px: 69 against the other rows' 50) and
+# the caption that points at it (+38px). Measured both ways on 2026-09-27:
+# with that note suppressed the page is exactly 447, identical to main. So
+# every pixel of the growth is the warning. Hiding a true warning to keep the
+# page short was rejected for the same reason B8 rejected hiding the ranges.
+POPULATED_PAGE_MEASURED = 504
 POPULATED_PAGE_TARGET = 300       # research/23 §2.4
 
 

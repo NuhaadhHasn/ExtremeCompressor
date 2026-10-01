@@ -35,16 +35,48 @@ EXE = "C:/zpaqfranz.exe"
 # The switches
 # ---------------------------------------------------------------------------
 
-def test_add_uses_m4_by_default():
-    """-m4, not -m5. Both use 64 MiB blocks; -m5 buys CM depth at ~2-3x the
-    CPU, which on two cores is the wrong trade. research/20 §8."""
+def test_insane_uses_m58_by_default():
+    """B17: -m58, not -m4. The owner's instruction was "whatever is best for
+    compression". Measured on the 237 MB deflate .pcf, every archive restored
+    and SHA-256 compared:
+
+        -m4  46,575,605    -m5 (64 MiB blocks)  43,194,463
+        -m57 (128 MiB) 42,933,026    -m58 (256 MiB)  42,852,397
+
+    -m5 was already the smallest codec measured on both B12 corpora, LOLZ
+    included, and bigger blocks took another 0.79% off. -m58 is the largest
+    block whose two-thread peak fits the RAM budget on the 16 GB target.
+    """
     cmd = ZpaqfranzStage().build_compress_cmd(Path("in"), Path("out.zpaq"), 2, EXE)
+    assert "-m58" in cmd
+    assert not [a for a in cmd if a in ("-m4", "-m5", "-m57")], cmd
+
+
+def test_m4_stays_reachable():
+    """The faster setting is still one argument away, for anyone who wants
+    Insane's dedup without -m58's wait and RAM."""
+    cmd = ZpaqfranzStage(method=4).build_compress_cmd(Path("in"), Path("o.zpaq"), 2, EXE)
     assert "-m4" in cmd and "-m5" not in cmd
 
 
-def test_m5_is_reachable_but_deliberate():
-    cmd = ZpaqfranzStage(method=5).build_compress_cmd(Path("in"), Path("o.zpaq"), 2, EXE)
-    assert "-m5" in cmd
+def test_the_engine_runs_insane_at_the_default_method():
+    """The engine builds this stage with no arguments, so the default *is* what
+    Insane runs. A default changed here but shadowed by an explicit method in
+    `_stage_factory` would pass the test above and ship -m4 anyway."""
+    from excmp.engine import _stage_factory
+    from excmp.stages.zpaqfranz import DEFAULT_METHOD
+    stage = _stage_factory()["zpaqfranz"]
+    assert stage.method == DEFAULT_METHOD == 58
+
+
+def test_extract_names_no_method():
+    """Restoring must not depend on how the archive was written: a zpaq block
+    carries its own decoder description. Archives made at -m4 before B17 are
+    restored by the same command as those made at -m58 after it."""
+    for method in (4, 5, 57, 58):
+        cmd = ZpaqfranzStage(method=method).build_extract_cmd(
+            Path("a.zpaq"), Path("out"), EXE)
+        assert not [a for a in cmd if a.startswith("-m")], cmd
 
 
 def test_longpath_is_always_on():
@@ -211,6 +243,22 @@ def test_a_real_roundtrip_is_byte_identical(tmp_path):
         f"the real filename must survive; got {out.name}")
     assert "C_" not in str(out), (
         f"the stored absolute path leaked into the restore: {out}")
+    assert hashlib.sha256(out.read_bytes()).hexdigest() == digest
+
+
+@needs_tool
+def test_an_archive_written_before_b17_still_restores(tmp_path):
+    """Every Insane archive made before B17 was written at -m4. The stage as
+    it now stands - defaulting to -m58 - must restore one byte for byte, or
+    changing the default would have orphaned the user's existing archives.
+    """
+    payload = tmp_path / "old.tar"
+    payload.write_bytes(b"written at -m4 before B17\n" * 4000 + bytes(range(256)) * 64)
+    digest = hashlib.sha256(payload.read_bytes()).hexdigest()
+
+    ctx = StageContext(temp_dir=tmp_path / "tmp")
+    archive = ZpaqfranzStage(method=4).compress(payload, tmp_path / "old.zpaq", ctx)
+    out = ZpaqfranzStage().extract(archive, tmp_path / "restored", ctx)
     assert hashlib.sha256(out.read_bytes()).hexdigest() == digest
 
 

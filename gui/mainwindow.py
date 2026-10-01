@@ -817,7 +817,9 @@ class MainWindow(QMainWindow):
         rows = profile_comparison(self._infos, self.tools, self._summary,
                                   rates=blended_rates(),
                                   measured=self._measured,
-                                  measured_whole_input=whole)
+                                  measured_whole_input=whole,
+                                  zpaq_threads=(self.advanced_panel.threads.value()
+                                                or self.settings_tab.threads.value()))
         self.compare_table.set_rows(rows, self._measured_caption)
         self._offer_remembered_profile()
         self._warn_if_long(rows)

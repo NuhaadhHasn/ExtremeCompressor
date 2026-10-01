@@ -1,17 +1,22 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-09-27**. **1,336 tests passed, 2 skipped, 1 strict-xfail** on
-> branch `phase-b17-insane-m5` (`main`: 1,292, 2026-09-21). Corpus guard clean.
-> **B17 is done and awaiting review: Insane runs zpaqfranz `-m58`**
-> ([record](benchmarks/2026-09-27-b17-insane-m58.md)). Silesia end to end:
-> 37,542,028 B against 41,216,918 at `-m4`, 8.92% smaller, 3.8× the wait.
-> **B12 is closed: measured, not integrated.** LOLZ lost to zpaqfranz on both
-> corpora ([round 3](benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md)).
-> **K6 is done too, on its own branch `phase-k6-cancel-silent-tool`**: Cancel
-> now reaches a tool that prints nothing, such as zpaqfranz during a restore.
-> **Next up: I11**, progress through the D9 restore, where the bar parks at
-> 95% and zpaqfranz prints nothing to parse.
-> `main` = I6 merged (`609bc07`) plus docs; CI green on `windows-latest`. The two skips are the opt-in 57k-file corpus walk
+> Status date: **2026-10-01**. **Everything is merged into `main`**: B17
+> (Insane at zpaqfranz `-m58`), K6 (Cancel reaches a silent tool), and
+> 2026-10-01's two measured fixes. Tests: **1,358 passed, 2 skipped, 1
+> strict-xfail** (30 min 38 s on the i5-7200U). Corpus guard clean.
+> **Target machine is now a Dell Inspiron 15-3567, i5-7200U (2C/4T), 15.9 GB**
+> (owner-confirmed). Timings recorded before 2026-10-01 are i7-3540M numbers.
+> **2026-10-01, both measured, both shipped**
+> ([record](benchmarks/2026-10-01-threads-and-ogg.md)):
+> (1) **default threads now really is one per physical core.** 7-Zip used to
+> take all 4 logical threads, which gave a 0.14% larger archive at 5,549 MiB
+> against 2,702 MiB peak RAM. It is capped at the RAM budget too.
+> (2) **B13a, real music:** an Ogg file whose own probe says it shrinks is now
+> piped. 18 real Vorbis/Opus files went from +0.004% (stored) to **1.11%
+> saved**, all restored byte-identically.
+> **Next up: I11**, progress through the D9 restore.
+> CI was last seen green on `windows-latest` at the I6 merge (`609bc07`); the
+> 2026-10-01 merge runs it again on push. The two skips are the opt-in 57k-file corpus walk
 > (`EXCMP_SLOW_CORPUS=1`) and a test that only runs when no E1-pinned tool is
 > installed — nothing is silently switched off.
 >
@@ -195,7 +200,28 @@ OSI rule comes back before anything ships.
       **The gate is unchanged and it is the same one Precomp passed:** measure
       `xtool -mzlib -> 7z` against `precomp -> 7z` on our own corpora, prove a
       byte-identical restore, and treat the binary as untrusted.
-- [ ] B13. **balrogg — lossless Vorbis/Opus recompression** (new 2026-09-15,
+- [x] B13a. ✅ **DONE 2026-10-01: Ogg routing measured on real music, and
+      fixed.** 18 real Ogg Vorbis/Opus files from Wikimedia Commons
+      (169,975,314 B, SHA-1 verified on download, owner-approved). The app
+      stored all of them and grew the archive by 7,005 B, while 7-Zip took
+      1.52% and zstd 1.62%. The gain sat exactly where the analyzer's probe
+      already saw it (probe < 1.0: 1.7–6.0%; probe 1.0: ≤ 1.24%, Opus ~0%). Now
+      an Ogg file whose probe says it shrinks is piped: **1.112% saved end to
+      end, 18/18 verified**, piping 30% of the bytes. Restricted to Ogg, the
+      one compressed-media format measured. Record:
+      [benchmarks/2026-10-01](benchmarks/2026-10-01-threads-and-ogg.md).
+- [x] K7. ✅ **DONE 2026-10-01: default threads matched to the docs, by
+      measurement.** "Auto" passed no `-mmt`, so 7-Zip took all 4 logical
+      threads. One per physical core gave the smallest archive short of
+      `-mmt1`, at under half the RAM on multi-block inputs. It's capped by
+      `ram.lzma2_auto_threads` at `_RAM_BUDGET`, and a user's own
+      `-mmt`/`-mmemuse` is left in charge. The RAM cells, labels and the
+      recommendation now count physical cores. Backtest re-pinned on the new
+      target (Normal 91.0 s, Extreme 454.1 s, medians of three).
+- [ ] B13. **balrogg — lossless Vorbis/Opus recompression.** **2026-10-01:
+      the music corpus exists now** (`C:\excmp-bench\b13\music`, 18 files), and
+      balrogg's gate is **1.112%** end to end (B13a). Still needs the binary,
+      which needs the owner to sign in to krinkels.org. (New 2026-09-15,
       found on krinkels.org; v1.1 dated 2026-09-06, author `Mickey1s`,
       "demonically compacting (up to 15%) lossless Vorbis/Opus recompressor").
       **The strongest untested lead in the project, because it targets a bucket

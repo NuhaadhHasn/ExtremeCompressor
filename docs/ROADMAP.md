@@ -2,8 +2,9 @@
 
 > Status date: **2026-10-01**. **Everything is merged into `main`**: B17
 > (Insane at zpaqfranz `-m58`), K6 (Cancel reaches a silent tool), and
-> 2026-10-01's two measured fixes. Tests: **1,358 passed, 2 skipped, 1
-> strict-xfail** (30 min 38 s on the i5-7200U). Corpus guard clean.
+> 2026-10-01's two measured fixes. Tests: **1,359 passed, 2 skipped, 1
+> strict-xfail** locally; CI green (1,319 passed, 42 skipped on the runner).
+> Corpus guard clean.
 > **Target machine is now a Dell Inspiron 15-3567, i5-7200U (2C/4T), 15.9 GB**
 > (owner-confirmed). Timings recorded before 2026-10-01 are i7-3540M numbers.
 > **2026-10-01, both measured, both shipped**

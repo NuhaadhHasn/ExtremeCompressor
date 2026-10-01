@@ -40,9 +40,9 @@ Three things about that command, all measured, none guessable:
 |---|---|
 | `main` | everything merged: B17, K6, and 2026-10-01's threads + Ogg fixes. Pushed |
 | branches | **none** besides `main`. `phase-b17-insane-m5`, `phase-k6-cancel-silent-tool`, `phase-threads-default` and `phase-i6-measured-presets` were merged and deleted (local and remote) |
-| tests | **1,358 passed, 2 skipped, 1 xfailed** on the merged tree (2026-10-01, 30 min 38 s on the i5-7200U, machine held awake) |
+| tests | **1,359 passed, 2 skipped, 1 xfailed** on `main` (2026-10-01, 20 min 28 s on the i5-7200U, machine held awake; an earlier run that day took 30 min 38 s) |
 | corpus guard | clean: fresh snapshot right before the run, 154 files, 0 added / 0 removed / 0 modified |
-| CI | last seen green at the I6 merge. The 2026-10-01 push runs it again, so check the Actions tab |
+| CI | **green** on the CI-fix branch before it merged (1,319 passed, 42 skipped on the runner). The first 2026-10-01 push to `main` **failed** two tests; see §2 |
 | AI attribution | none, anywhere. Audited before each commit |
 
 ---
@@ -92,6 +92,18 @@ does when it's absent.**
 had measured 0.9487 on a file 7-Zip then took 5.98% off. Where a measurement
 and a category rule disagree, the measurement should win, but only for formats
 you've measured. That's why the change is Ogg-only.
+
+### CI's runner is not the target, and a RAM-aware cap notices
+
+The first push of the merge failed two of B17's own tests on CI with
+`'2.7 GB' != '2.7 GB'`. The zpaqfranz thread cap scales with the host's RAM.
+On the runner it allowed one thread, so two figures the tests compared were
+equal. Reproduced locally by simulating a 7 GiB host (the CI log doesn't
+state the runner's RAM): the old test file fails exactly those two, and the
+fixed one passes. **Tests that depend on cores or RAM must pin the machine
+they describe**; they now pin 2 cores / 16 GiB, and a new test covers the
+small-machine side. CI runs on every branch push, so a fix goes green on its
+branch before it reaches `main`.
 
 ### Reviews: two lenses plus a skeptic keep paying
 

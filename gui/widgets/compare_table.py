@@ -213,7 +213,7 @@ class ProfileRow(QFrame):
                       bold=bool(row.measured_note)),
                 _cell(row.time_text, row.time_range, values,
                       tone="warn" if row.note else ""),
-                _cell(row.ram_text or "—", "", values),
+                _cell(row.ram_text or "—", row.ram_range, values),
             )
             for cell, (_header, stretch) in zip(cells, _COLUMNS):
                 line.addWidget(cell, stretch)
@@ -245,7 +245,9 @@ class ProfileRow(QFrame):
         if row.size_text:
             spoken = self.tr("%s: %s, %s, saves %s, takes %s") % (
                 row.title, row.chain, row.size_text, row.saved_text, row.time_text)
-            if row.ram_text:
+            if row.ram_range:
+                spoken += self.tr(", needs %s of memory") % row.ram_range
+            elif row.ram_text:
                 spoken += self.tr(", needs about %s of memory") % row.ram_text
             # A number a sighted reader can see and a screen-reader user
             # cannot is the exact defect the caveat line already recorded

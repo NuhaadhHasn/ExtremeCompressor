@@ -185,10 +185,12 @@ def test_the_theme_is_remembered_too(qtbot):
         second.queue.shutdown()
 
 
-def test_the_thread_label_does_not_claim_physical_cores(window):
+def test_the_thread_label_names_physical_cores_truthfully(window):
     """os.cpu_count() reports LOGICAL processors - the target machine is a
-    2-core i7-3540M that reports 4. "auto (4 cores)" sat directly beside a
-    description calling it a two-core laptop."""
+    2-core i7-3540M that reports 4, and "auto (4 cores)" once sat directly
+    beside a description calling it a two-core laptop. Auto now means one
+    thread per physical core, so the label names that count - and it must be
+    the physical count, never os.cpu_count()."""
+    from excmp.ram import physical_cores
     label = window.settings_tab.threads.specialValueText().lower()
-    assert "core" not in label, label
-    assert "auto" in label
+    assert label == f"auto ({physical_cores()} cores)", label

@@ -68,15 +68,22 @@ class AdvancedPanel(QFrame):
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(10)
 
+        from excmp.ram import physical_cores
+        #: The Settings tab's thread count, wired in by MainWindow: the job
+        #: runs `this panel or Settings`, so the RAM note has to as well.
+        self.fallback_threads = lambda: 0
         cores = os.cpu_count() or 2
         self.threads = QSpinBox(self)
         self.threads.setRange(0, max(2, cores * 4))
         self.threads.setValue(0)
-        self.threads.setSpecialValueText(self.tr("auto (%d available)") % cores)
+        # Auto is one thread per physical core (measured best for 7-Zip; see
+        # tests/test_default_threads.py), so the label can name that count.
+        self.threads.setSpecialValueText(
+            self.tr("auto (%d cores)") % physical_cores())
         self.threads.setAccessibleName(self.tr("Worker threads"))
         self.threads.setToolTip(self.tr(
-            "0 lets each tool pick. Lower it to keep the machine usable "
-            "during a long job."))
+            "Auto gives 7-Zip and zpaqfranz one thread per physical core. "
+            "Lower it to keep the machine usable during a long job."))
 
         self.temp_dir = QLineEdit(str(default_temp), self)
         self.temp_dir.setAccessibleName(self.tr("Temporary directory"))
@@ -110,6 +117,8 @@ class AdvancedPanel(QFrame):
             "own size in RAM while compressing. The list stops where this "
             "machine would run out."))
         self.dict_size.currentIndexChanged.connect(self._show_ram)
+        # The thread count changes the figure as much as the dictionary does.
+        self.threads.valueChanged.connect(self._show_ram)
 
         self.params = QLineEdit("", self)
         self.params.setPlaceholderText(self.tr("extra 7-Zip switches, e.g. -mqs"))
@@ -242,7 +251,11 @@ class AdvancedPanel(QFrame):
             self.ram_note.setText("")
             return
         size = _parse_dict(chosen)
-        threads = self.threads.value() or (os.cpu_count() or 2)
+        # Same order the job uses: this panel, then the Settings tab, then one
+        # thread per physical core.
+        from excmp.ram import physical_cores
+        threads = (self.threads.value() or self.fallback_threads()
+                   or physical_cores())
         self.ram_note.setText(self.tr(
             "About %s of memory while compressing, %s to extract.")
             % (fmt_size(lzma2_compress_ram(size, threads)),

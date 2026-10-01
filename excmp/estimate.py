@@ -104,7 +104,13 @@ _CODEC_SLOPE: Mapping[str, float] = MappingProxyType({
     "zstd": 0.650,                  # Silesia anchor only
     "sevenzip": 0.726,              # two anchors, cross-checked to 1.1%
     "precomp+sevenzip": 0.769,      # two anchors, cross-checked to 0.3%
-    "precomp+zpaqfranz": 0.873,     # Silesia anchor only
+    # B17: re-anchored at -m58, the method Insane now runs. Silesia through
+    # engine.compress, 2026-09-27: 37,542,028 B, ratio 0.1771 at probe
+    # 0.4047, so factor 0.4377 and k = 0.945. At -m4 it was 0.873 (B8,
+    # ratio 0.1945). Still one anchor: the installer run below is a time
+    # anchor, and its size is checked by the estimator backtest-style test in
+    # tests/test_b17_insane_method.py rather than fitted.
+    "precomp+zpaqfranz": 0.945,     # Silesia anchor only, at -m58
 })
 
 
@@ -143,6 +149,13 @@ _CODEC_RATE: Mapping[str, float] = MappingProxyType({
     # no-op - srep's dedup used to SHRINK 7-Zip's input, so removing it costs
     # some throughput as well as ratio. Geometric mean of the two regimes.
     "precomp+sevenzip": 1.41e6,
+    # B17. Insane had no key at all before this, so it fell back to 2.5 MB/s:
+    # a Silesia job was predicted at 99 s and took 3,810 s. Measured at -m58
+    # through engine.compress, piped bytes over (compress - restore) seconds:
+    # 0.094 MB/s on Silesia (212 MB, Precomp found nothing) and 0.087 MB/s on
+    # the 13-file installer sample (Precomp working). Two corpora, two
+    # regimes, 8% apart; geometric mean.
+    "precomp+zpaqfranz": 0.091e6,
 })
 
 # For a chain with no anchor of its own. 0.95 was carried over from when this
@@ -171,6 +184,12 @@ _VERIFY_RATE: Mapping[str, float] = MappingProxyType({
     #                      the same extract measured 50.3s inside the gate and
     #                      19.9s user-side minutes later. Coarse on purpose.
     "precomp+sevenzip": 6.5e6,   # 12.7 no-op regime / 3.5 working regime
+    # B17, -m58. Context mixing restores as slowly as it compresses, so D9
+    # costs Insane nearly a second compress. *Piped* bytes over the
+    # engine.extract seconds, since stored bytes are now billed at io_rate:
+    # 211,938,580 / 1,555.7 s = 0.136 MB/s (Silesia, nothing stored) and
+    # 31,953,310 / 378.1 s = 0.0845 MB/s (installers). Geometric mean.
+    "precomp+zpaqfranz": 0.107e6,
 })
 _FALLBACK_VERIFY_RATE = 15e6
 
@@ -641,8 +660,13 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     rate = rates.rate_for(stages)
     codec_seconds = piped_bytes / rate if rate else 0.0
     verify_rate = rates.verify_rate_for(stages)
-    verify_seconds = ((stored_bytes + piped_bytes) / verify_rate
-                      if verify_rate else 0.0)
+    # B17: stored files are restored by a zip copy (`extract_stored`), not
+    # through the chain, so only piped bytes pay the chain's restore rate.
+    # Billing them all at the chain rate cost little at 7-Zip's 21 MB/s, but
+    # at Insane's measured ~0.1 MB/s a 2 GB stored video beside 20 MB of text
+    # was estimated at over four hours.
+    verify_seconds = ((stored_bytes / rates.io_rate if rates.io_rate else 0.0)
+                      + (piped_bytes / verify_rate if verify_rate else 0.0))
     spread = max(1.0, rates.spread_for(stages))
 
     base = io_seconds + verify_seconds

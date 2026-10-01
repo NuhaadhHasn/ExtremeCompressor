@@ -136,6 +136,15 @@ def store_reason(info: FileInfo) -> str | None:
         return ("uncompressed PCM audio: stored as-is because the FLAC tool "
                 "is not installed - fetching it would shrink this ~43% with "
                 "no loss")
+    if (info.path.suffix.lower() in _OGG_AUDIO
+            and info.sample_ratio_max < 1.0):
+        # B13, measured on 18 real music files: the Ogg files the probe
+        # could shrink compressed 1.7-6.0% under 7-Zip, byte-identically, and
+        # the ones it could not stayed within 1.24% (the five Opus files at
+        # ~0%). Checked before the entropy rule on purpose: Ogg's page
+        # framing makes the bytes look random, and the probe is a measurement
+        # of this file rather than a statistic about it.
+        return None
     if info.category in _MEDIA:
         return (
             "media file: already compressed by its codec; stored losslessly so "
@@ -182,6 +191,12 @@ _DEFLATE_MEDIA = {".png"}
 #: Precomp to expand, whereas a WAV stays on the store route and is packed
 #: there by `flacaudio`, the way B2 packs a JPEG with lepton.
 _UNCOMPRESSED_AUDIO = {".wav", ".aiff", ".aif", ".w64", ".rf64"}
+
+#: Ogg audio containers (Vorbis, Opus), the one compressed-media family that
+#: has been measured (B13, 2026-10-01). An Ogg file whose own probe says it
+#: shrinks is piped; every other media file keeps "stored as-is" until its
+#: format is measured too. tests/test_b13_ogg_probe.py has the table.
+_OGG_AUDIO = {".ogg", ".oga", ".opus"}
 
 #: How far Precomp inflates its output mid-pipeline, per data type. The
 #: generic figure is 5x (research/10 C-3), but **PNG measured ~50x** — 15 PNGs

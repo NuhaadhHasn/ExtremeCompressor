@@ -238,6 +238,9 @@ class MainWindow(QMainWindow):
         # (Not a Qt.Popup: its Browse buttons open QFileDialogs, which would
         # dismiss a popup, returning the user to a vanished panel.)
         self.advanced_panel = AdvancedPanel(DEFAULT_TEMP, self)
+        self.advanced_panel.fallback_threads = self.settings_tab.threads.value
+        self.settings_tab.threads.valueChanged.connect(
+            lambda _value: self.advanced_panel._show_ram())
         self.advanced_panel.format_box.currentIndexChanged.connect(
             lambda _i: self._sync_suffix_label())
         self._build_action_bar()
@@ -817,7 +820,9 @@ class MainWindow(QMainWindow):
         rows = profile_comparison(self._infos, self.tools, self._summary,
                                   rates=blended_rates(),
                                   measured=self._measured,
-                                  measured_whole_input=whole)
+                                  measured_whole_input=whole,
+                                  zpaq_threads=(self.advanced_panel.threads.value()
+                                                or self.settings_tab.threads.value()))
         self.compare_table.set_rows(rows, self._measured_caption)
         self._offer_remembered_profile()
         self._warn_if_long(rows)

@@ -79,9 +79,25 @@ TOTAL = sum(FILES.values())          # 733,276,432
 # both warm runs and misses only the cold one. The old 103.8s figure sits in the
 # middle of the warm pair, which is the other reason to think 143.3 was the
 # outlier rather than the truth.
+#
+# RE-MEASURED 2026-10-01, for two reasons at once. The target machine is now
+# an i5-7200U (the 100.7 / 355.9 s pins above were i7-3540M numbers), and
+# "auto" threads now passes 7-Zip one thread per physical core (2) instead
+# of letting it take all 4 logical processors. Same six files, same
+# measurement (engine.compress wall time, D9 included), three runs each,
+# median pinned:
+#   normal  707,893,728 B   100.3 / 70.1 / 91.0 s    -> 91.0
+#   extreme 706,559,667 B   454.1 / 475.4 / 334.5 s  -> 454.1
+# Normal's bytes are unchanged to within 1 B (rep 3: 707,893,727, the
+# container is not byte-reproducible): its 160 MB piped share (153 MiB) is one
+# 256 MiB LZMA2 block, so thread count cannot split it. Extreme pipes 444 MB
+# (423 MiB), already past one block before Precomp expands anything, which is
+# where 2 threads trades time for RAM; its whole archive differs from the
+# 4-thread run by 271 B in 707 MB.
+# Extreme's spread (1.42x) is wider than Normal's and is recorded, not hidden.
 MEASURED = {
-    Profile.NORMAL: (0.0346, 100.7),
-    Profile.EXTREME: (0.0364, 355.9),
+    Profile.NORMAL: (0.0346, 91.0),
+    Profile.EXTREME: (0.0364, 454.1),
 }
 
 SIZE_TOLERANCE = 0.10   # +/-10% of the measured archive size

@@ -32,7 +32,8 @@ from excmp.stages.base import StageContext
 from excmp.tools import ToolInfo, find_tools
 
 from .models import Job, JobKind, JobState
-from .progress import ChainProgress, EtaEstimator, expected_chain
+from .progress import (VERIFY_STAGE, VERIFYING, VERIFYING_LATE, ChainProgress,
+                       EtaEstimator, expected_chain)
 from .suggest import AnalysisSummary, strongest_profile, summarize
 
 # Don't flood the event loop: 7-Zip's -bsp1 emits a line per percent and
@@ -184,6 +185,26 @@ class ListingWorker(QRunnable):
             self.signals.ready.emit(listing)
 
 
+def _time_split(summary: AnalysisSummary | None) -> tuple[float | None, float | None]:
+    """(compress, verify) expected seconds for a job's bar, if it has an analysis.
+
+    The same rates the comparison table quotes, this machine's calibration
+    included, so the bar's self-test share agrees with the promised time.
+    """
+    if summary is None:
+        return None, None
+    from excmp.calibrate import blended_rates
+    from excmp.estimate import time_split
+
+    try:
+        return time_split(summary.store_bytes, summary.pipeline_bytes,
+                          summary.chain, blended_rates())
+    except Exception:                                   # noqa: BLE001
+        # An estimate is a nicety for the bar; a job never fails for want
+        # of one.
+        return None, None
+
+
 class _EngineWorker(QRunnable):
     """Shared plumbing: a StageContext wired to throttled Qt signals."""
 
@@ -196,16 +217,25 @@ class _EngineWorker(QRunnable):
         self.ctx.progress_cb = self._on_progress
         self.ctx.log_cb = self._on_log
         chain = job.summary.chain if job.summary else []
-        self._chain = ChainProgress(chain or expected_chain(["sevenzip"]))
+        compress_s, verify_s = _time_split(job.summary)
+        self._chain = ChainProgress(chain or expected_chain(["sevenzip"]),
+                                    compress_s=compress_s, verify_s=verify_s)
         self._eta = EtaEstimator()
+        self._clock = time.monotonic
         self._t0 = 0.0
         self._last_emit = 0.0
         self._last_pct = -1.0
+        # I11: when the D9 self-test began, and how long it took once done.
+        self._verify_t0: float | None = None
+        self._verify_elapsed = 0.0
 
     # -- callbacks, running on the worker thread ---------------------------
     def _on_progress(self, stage: str, pct: float) -> None:
+        now = self._clock()
+        if stage == VERIFY_STAGE:
+            self._on_verify(pct, now)
+            return
         overall = self._chain.update(stage, pct)
-        now = time.monotonic()
         if (overall - self._last_pct < _MIN_PCT_DELTA
                 and now - self._last_emit < _MIN_INTERVAL_S
                 and overall < 100.0):
@@ -214,6 +244,31 @@ class _EngineWorker(QRunnable):
         self._last_emit = now
         eta = self._eta.update(overall / 100.0, now - self._t0)
         self.signals.progress.emit(self.job_id, stage, overall, eta)
+
+    def _on_verify(self, pct: float, now: float) -> None:
+        """The D9 self-test: timed against the estimate, never parsed.
+
+        The engine sends a heartbeat about once a second, already slower than
+        the throttle, so every report is drawn. The remaining time is the
+        estimate's, not the EMA's: the bar's position here comes from that
+        same estimate, and feeding it back into the EMA would only echo it.
+        """
+        if self._verify_t0 is None:
+            self._verify_t0 = now
+        elapsed = now - self._verify_t0
+        if pct >= 100.0:
+            self._verify_elapsed = elapsed
+            overall = self._chain.verify_done()
+            eta: float | None = None
+            label = VERIFYING
+        else:
+            overall = self._chain.verify(elapsed)
+            eta = self._chain.verify_remaining(elapsed)
+            spent = self._chain.verify_s is not None and eta is None
+            label = VERIFYING_LATE if spent else VERIFYING
+        self._last_pct = overall
+        self._last_emit = now
+        self.signals.progress.emit(self.job_id, label, overall, eta)
 
     def _on_log(self, stage: str, line: str) -> None:
         line = _clean_log_line(line)
@@ -336,7 +391,11 @@ class CompressWorker(_EngineWorker):
             return
         factor = (result.final_bytes / result.orig_bytes
                   if result.orig_bytes else None)
-        record(stages, piped_bytes=piped, elapsed_s=result.elapsed_s,
+        # I11: the self-test is estimated separately (`_VERIFY_RATE`), so it
+        # must not also be learned as part of the codec's rate. Counting it in
+        # both put the whole restore into an Insane estimate twice.
+        codec_s = result.elapsed_s - self._verify_elapsed
+        record(stages, piped_bytes=piped, elapsed_s=codec_s,
                achieved_factor=factor)
 
     def _add_recovery(self, archive) -> None:

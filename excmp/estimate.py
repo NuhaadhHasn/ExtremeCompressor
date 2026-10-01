@@ -657,16 +657,9 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
 
     stages = _stages_of(the_plan)
     io_seconds = stored_bytes / rates.io_rate if rates.io_rate else 0.0
-    rate = rates.rate_for(stages)
-    codec_seconds = piped_bytes / rate if rate else 0.0
-    verify_rate = rates.verify_rate_for(stages)
-    # B17: stored files are restored by a zip copy (`extract_stored`), not
-    # through the chain, so only piped bytes pay the chain's restore rate.
-    # Billing them all at the chain rate cost little at 7-Zip's 21 MB/s, but
-    # at Insane's measured ~0.1 MB/s a 2 GB stored video beside 20 MB of text
-    # was estimated at over four hours.
-    verify_seconds = ((stored_bytes / rates.io_rate if rates.io_rate else 0.0)
-                      + (piped_bytes / verify_rate if verify_rate else 0.0))
+    compress_seconds, verify_seconds = time_split(stored_bytes, piped_bytes,
+                                                  stages, rates)
+    codec_seconds = compress_seconds - io_seconds
     spread = max(1.0, rates.spread_for(stages))
 
     base = io_seconds + verify_seconds
@@ -675,6 +668,28 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
         expected=base + codec_seconds,
         high=base + codec_seconds * spread,
     )
+
+
+def time_split(stored_bytes: int, piped_bytes: int, stages: Sequence[str],
+               rates: Rates = DEFAULT_RATES) -> tuple[float, float]:
+    """(compress, verify) expected seconds for one job.
+
+    I11: the progress bar gives the D9 self-test its own share of the job, so
+    the two halves of :func:`estimate_time` are exposed rather than summed.
+    One formula serves both, so the bar and the comparison table can never
+    disagree about how long the self-test takes.
+    """
+    io_seconds = stored_bytes / rates.io_rate if rates.io_rate else 0.0
+    rate = rates.rate_for(stages)
+    codec_seconds = piped_bytes / rate if rate else 0.0
+    verify_rate = rates.verify_rate_for(stages)
+    # B17: stored files are restored by a zip copy (`extract_stored`), not
+    # through the chain, so only piped bytes pay the chain's restore rate.
+    # Billing them all at the chain rate cost little at 7-Zip's 21 MB/s, but
+    # at Insane's measured ~0.1 MB/s a 2 GB stored video beside 20 MB of text
+    # was estimated at over four hours.
+    verify_seconds = io_seconds + (piped_bytes / verify_rate if verify_rate else 0.0)
+    return io_seconds + codec_seconds, verify_seconds
 
 
 def compare_profiles(infos: list[FileInfo], tools: dict[str, ToolInfo | None],

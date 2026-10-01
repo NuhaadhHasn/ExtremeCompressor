@@ -15,6 +15,7 @@ import errno
 import os
 import shutil
 import tempfile
+import threading
 import time
 import zipfile
 from contextlib import contextmanager
@@ -1689,19 +1690,50 @@ def verify_archive(archive: Path, ctx: StageContext,
     )
 
 
+#: I11: seconds between the self-test's "still running" reports.
+_VERIFY_HEARTBEAT_S = 1.0
+
+
+@contextmanager
+def _heartbeat(beat, interval: float):
+    """Call ``beat()`` every ``interval`` seconds until the block exits."""
+    stop = threading.Event()
+
+    def run() -> None:
+        while not stop.wait(interval):
+            beat()
+
+    thread = threading.Thread(target=run, name="excmp-verify-heartbeat",
+                              daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+
+
 def _verify_before_publish(archive: Path, ctx: StageContext) -> int:
     """The publish gate: verify BEFORE the atomic rename makes this the user's
     output. Deliberately implemented in terms of the public verb, so the button
     and the gate can never drift into meaning different things.
 
-    Progress is muted (the job's bar sits in the 95% band that
-    ``gui.progress`` reserves for exactly this); cancel/pause/logs pass through.
+    The restore's own stage reports are muted: they describe the restore, not
+    the job. What the job hears instead (I11) is ``("verify", 0.0)`` when the
+    self-test starts, the same again every ``_VERIFY_HEARTBEAT_S`` while it
+    runs, and ``("verify", 100.0)`` only once every hash matched. The 0.0 is
+    not a measurement: zpaqfranz prints nothing during a restore, so there is
+    none to give. The heartbeat is what lets the GUI time the phase against
+    its estimate without a timer of its own. Cancel/pause/logs pass through.
     """
     quiet = StageContext(temp_dir=ctx.temp_dir, threads=ctx.threads,
                          log_cb=ctx.log_cb, cancel=ctx.cancel, pause=ctx.pause)
     ctx.log_cb("verify", "restoring the whole archive to check every hash "
                          "before publishing…")
-    result = verify_archive(archive, quiet)
+    ctx.progress_cb("verify", 0.0)
+    with _heartbeat(lambda: ctx.progress_cb("verify", 0.0), _VERIFY_HEARTBEAT_S):
+        result = verify_archive(archive, quiet)
+    ctx.progress_cb("verify", 100.0)
     ctx.log_cb("verify", f"self-test passed: {result.files_restored} file(s) "
                          f"restored, {result.verified} hash(es) verified in "
                          f"{result.elapsed_s:.1f}s")

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QPlainTextEdit,
                                QWidget)
 
 from ..format import fmt_duration, fmt_eta, fmt_size
+from ..progress import VERIFYING_LATE
 from ..models import Job, JobKind, JobState
 from ..theme import repolish
 
@@ -187,7 +188,10 @@ class QueueTable(QTreeWidget):
             return
         row.bar.setValue(int(job.percent))
         row.bar.setAccessibleDescription(f"{int(job.percent)} percent")
-        row.item.setText(COL_ETA, fmt_eta(job.eta_s) if job.state is JobState.RUNNING else "—")
+        # I11: past its estimate the self-test has no remaining time to give,
+        # and "estimating…" would promise one is coming. The state says why.
+        running = job.state is JobState.RUNNING and job.stage != VERIFYING_LATE
+        row.item.setText(COL_ETA, fmt_eta(job.eta_s) if running else "—")
         if job.stage:
             row.item.setText(COL_STATE, f"{job.state.label} · {job.stage}")
 

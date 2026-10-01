@@ -31,6 +31,7 @@ from excmp.tools import find_tools
 
 from .compare_run import ComparisonRun
 from .format import fmt_eta, fmt_size
+from .progress import VERIFYING, VERIFYING_LATE
 from .models import Job, JobKind, JobState
 from .queue_manager import AnalysisSignals, AnalysisWorker, QueueManager
 from .suggest import (AnalysisSummary, profile_comparison, recommend_profile,
@@ -1418,6 +1419,11 @@ class MainWindow(QMainWindow):
         when a job completes while the user is elsewhere.
         """
         active = self._active_job()
+        if active is not None and active.stage == VERIFYING_LATE:
+            return self.tr("%s · verifying, past estimate") % active.display_name
+        if active is not None and active.stage == VERIFYING and active.eta_s is not None:
+            return self.tr("%s · verifying · %s left") % (active.display_name,
+                                                          fmt_eta(active.eta_s))
         if active is not None:
             return (self.tr("%s · estimating…") % active.display_name
                     if active.eta_s is None else

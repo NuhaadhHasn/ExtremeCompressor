@@ -15,7 +15,10 @@
 > (2) **B13a, real music:** an Ogg file whose own probe says it shrinks is now
 > piped. 18 real Vorbis/Opus files went from +0.004% (stored) to **1.11%
 > saved**, all restored byte-identically.
-> **Next up: I11**, progress through the D9 restore.
+> **Next session is an owner agenda, in this order:** open the Wwise/FMOD
+> download tabs for the owner, fetch balrogg 1.4 and DArc 3.0.4 from GitHub,
+> then **I11**, **B13**, **B14**, **B18**, and B6 if an Oodle sample exists.
+> The handoff (`docs/NEXT-SESSION-START-HERE.md` §3) has each spec.
 > CI was last seen green on `windows-latest` at the I6 merge (`609bc07`); the
 > 2026-10-01 merge runs it again on push. The two skips are the opt-in 57k-file corpus walk
 > (`EXCMP_SLOW_CORPUS=1`) and a test that only runs when no E1-pinned tool is
@@ -49,8 +52,8 @@
 > each other, and §3.3's 32px touch floor wins. See
 > [benchmarks/2026-08-07-ui-wave2b](benchmarks/2026-08-07-ui-wave2b.md).
 >
-> **G2 is done** (2026-09-01, branch `phase-g2-foreign-listing`, awaiting
-> review): foreign archives list, encrypted ones ask for a password instead of
+> **G2 is done** (2026-09-01, branch `phase-g2-foreign-listing`, merged
+> 2026-09-01): foreign archives list, encrypted ones ask for a password instead of
 > hanging, and single members can be pulled out of either kind.
 > ~~**Next up: J5-J7**~~ (done 2026-09-03; see the status line above for
 > what is next).
@@ -219,7 +222,14 @@ OSI rule comes back before anything ships.
       `-mmt`/`-mmemuse` is left in charge. The RAM cells, labels and the
       recommendation now count physical cores. Backtest re-pinned on the new
       target (Normal 91.0 s, Extreme 454.1 s, medians of three).
-- [ ] B13. **balrogg — lossless Vorbis/Opus recompression.** **2026-10-01:
+- [ ] B13. **balrogg — lossless Vorbis/Opus recompression.** **2026-10-01,
+      no login needed after all:** the krinkels page says balrogg is GPL-3 and
+      hosted at `github.com/iczelia/balrogg`. Release **1.4** (2026-09-10) ships
+      `balrogg-x86_64.exe`, 247,315 B, published SHA-256
+      `b3a52670bf37eaf941933bf67fbfdcd140638240fa3d20bb9e9bd6c923097db2`. It
+      claims 8–12% on `.ogg` and 3–8% on `.opus`, refuses files it can't
+      reproduce exactly (exit 1), and works as `balrogg e in.ogg out.blr` /
+      `balrogg d`. **2026-10-01:
       the music corpus exists now** (`C:\excmp-bench\b13\music`, 18 files), and
       balrogg's gate is **1.112%** end to end (B13a). Still needs the binary,
       which needs the owner to sign in to krinkels.org. (New 2026-09-15,
@@ -293,7 +303,13 @@ OSI rule comes back before anything ships.
       throw the file into a `precomp` that has been measured to find nothing
       in it.
 - [ ] B14. **DArc (Distended Arc) 3.04** - a *maintained* FreeArc fork
-      (krinkels.org, 2026-09-07, `Mickey1s`). Supersedes the 2009 Haskell
+      (krinkels.org, 2026-09-07, `Mickey1s`). **2026-10-01: it's on GitHub**,
+      `github.com/DavidLee18/DArc`, GPL-3.0, now a Rust rewrite (`darc` and
+      `unarc`). Release **v3.0.4** (2026-08-27) ships
+      `darc-3.0.4-windows-amd64.zip`, 5,032,728 B, published SHA-256
+      `112d021f2ffc981bddb4a94f34f56118ae48f8d40b4e18772a27892a4747b83a`.
+      Fetch it from there, not the forum. The slot it would take is
+      Insane's, now `-m58` (42,852,397 B on the deflate `.pcf`). Supersedes the 2009 Haskell
       sources in `ExtremeCompressor-refs/freearc-orig` as the thing to measure
       if FreeArc is revisited. Same gate: it has to beat `precomp -> 7z`, not
       `7z` alone, **and zpaqfranz `-m4`/`-m5`** (Insane's slot), which is
@@ -488,8 +504,19 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
-- [x] B17. ✅ **DONE 2026-09-27** (branch `phase-b17-insane-m5`, awaiting
-      review) — **Insane runs zpaqfranz `-m58`**: method 5 with 256 MiB
+- [ ] B18. **Three settings nobody has measured** (filed 2026-10-01).
+      (a) **zstd threads**: `ZstdStage` passes `threads=-1` (all logical
+      processors) and ignores the Worker threads setting. Measure it against
+      2 on size, time and peak RAM, on Silesia and the installer sample.
+      (b) **`precomp -intense`**: in the chain since the start, it cost
+      82,086 B on B16's corpus. Measure with and without it on both B12
+      corpora, and on game data if B6's sample arrives.
+      (c) **MP3 and video**: B13a showed the analyzer's probe predicts real
+      gains on Ogg. Find a corpus of each (read-only search, e.g. the
+      `Downloads-1` tree) and check whether the same rule should extend.
+      Change routing only for what's measured.
+- [x] B17. ✅ **DONE 2026-09-27** (branch `phase-b17-insane-m5`, merged to `main`
+      2026-10-01) — **Insane runs zpaqfranz `-m58`**: method 5 with 256 MiB
       blocks. Full record:
       [benchmarks/2026-09-27-b17](benchmarks/2026-09-27-b17-insane-m58.md).
       The owner's call was "whatever is best for compression", so before
@@ -888,7 +915,7 @@ file in the fixture.
 - [x] K4. ✅ Read ceiling decoupled and raised; compress window **fitted** to input
 - [x] K5. ✅ `rmtree_force` at all 11 call sites, premise pinned by its own test
 - [x] K6. ✅ **DONE 2026-09-27** (branch `phase-k6-cancel-silent-tool`,
-      awaiting review). `run_tool` now has a watcher thread that waits on
+      merged to `main` 2026-10-01). `run_tool` now has a watcher thread that waits on
       `ctx.cancel` and kills the child, then reports "cancelled" before it
       looks at the exit code. **Test-first, and the failure was exact:** a
       child that sleeps 60 s without printing, with Cancel fired at 0.5 s,
@@ -2277,8 +2304,8 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       copying: extension-exclusion list before showing Extract, smart-extract
       subfolder only when the archive root isn't a single folder, multi-part-
       aware folder naming
-- [x] I6. ✅ **DONE 2026-09-20**, branch `phase-i6-measured-presets` (awaiting
-      review). Full write-up:
+- [x] I6. ✅ **DONE 2026-09-20**, branch `phase-i6-measured-presets` (merged
+      2026-09-23). Full write-up:
       [benchmarks/2026-09-20-i6](benchmarks/2026-09-20-i6-measured-presets.md).
       A **Measure presets** button runs every distinct chain on a ≤100 MB
       sample as real queue jobs and prints the measured saving onto the cards

@@ -1,16 +1,24 @@
 # 🚦 START HERE — handoff (written 2026-10-01)
 
-> **Everything is merged into `main` and pushed. No branch is awaiting
-> review**, and the old feature branches are deleted, locally and on GitHub.
+> **Everything is merged into `main` and pushed; CI is green on `main`. No
+> branch exists besides `main`.**
 >
-> **Next phase: I11 — progress through the D9 restore.** At Insane's `-m58`
-> the pre-publish restore is about 40% of the job, the bar sits at 95% the
-> whole time, and zpaqfranz prints nothing to parse (measured). §3 has the
-> spec.
+> **Next session is an owner agenda, not a single phase.** The owner asked on
+> 2026-10-01 for these, **in this order** (§3 has each spec):
 >
-> **The target machine changed.** It's now a Dell Inspiron 15-3567,
-> i5-7200U (2 cores / 4 threads), 15.9 GB, confirmed by the owner. **Every
-> timing recorded before 2026-10-01 is an i7-3540M number.** Run
+> 0. **Name the session**, then **open the download tabs** for the owner.
+> 1. **Fetch balrogg 1.4 and DArc 3.0.4 from GitHub**, with one approval.
+> 2. **I11**: progress through the D9 restore.
+> 3. **B13**: balrogg against the 1.112% music gate.
+> 4. **B14**: DArc against the shipped route.
+> 5. **B18**: the small unmeasured settings.
+> 6. **B6**, only if the owner has provided an Oodle sample by then.
+>
+> Each code item gets its own branch, merged after suite + review + CI green
+> (CLAUDE.md, Commits).
+>
+> **Target machine:** Dell Inspiron 15-3567, i5-7200U (2 cores / 4 threads),
+> 15.9 GB. **Timings recorded before 2026-10-01 are i7-3540M numbers.** Run
 > `Get-CimInstance Win32_Processor` before quoting a speed.
 
 ```
@@ -19,15 +27,13 @@
 
 Three things about that command, all measured, none guessable:
 
-- **The runtime is not a stable number.** On the old i7-3540M it ran from
-  14 m 52 s to 1 h 07 m depending on free disk space and contention. On this
-  i5-7200U the first full run (2026-10-01, 1,361 tests) took 30 min 38 s.
-  Measure it; don't quote it.
+- **The runtime is not a stable number.** On this i5-7200U the full suite has
+  taken 30 min 38 s and 20 min 28 s on the same day (2026-10-01). On the old
+  i7-3540M it ranged from 14 m 52 s to 1 h 07 m. Measure it; don't quote it.
 - **`pytest`'s elapsed time is not a measurement on a laptop that sleeps.**
-  Hold the machine awake with
-  `ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)`.
-  `C:\excmp-bench\b17\suite.py` does that and wraps the corpus guard around
-  the run.
+  `C:\excmp-bench\b17\suite.py` holds the machine awake
+  (`SetThreadExecutionState`) and wraps the corpus guard around the run.
+  **Use it.**
 - **Clear `%TEMP%\pytest-of-<you>` first, and freeze the code before
   starting.** Editing `excmp/`, `gui/`, `tools/` or `tests/` mid-run
   invalidates the run. Editing `docs/` does not.
@@ -38,28 +44,23 @@ Three things about that command, all measured, none guessable:
 
 | | |
 |---|---|
-| `main` | everything merged: B17, K6, and 2026-10-01's threads + Ogg fixes. Pushed |
-| branches | **none** besides `main`. `phase-b17-insane-m5`, `phase-k6-cancel-silent-tool`, `phase-threads-default` and `phase-i6-measured-presets` were merged and deleted (local and remote) |
-| tests | **1,359 passed, 2 skipped, 1 xfailed** on `main` (2026-10-01, 20 min 28 s on the i5-7200U, machine held awake; an earlier run that day took 30 min 38 s) |
-| corpus guard | clean: fresh snapshot right before the run, 154 files, 0 added / 0 removed / 0 modified |
-| CI | **green** on the CI-fix branch before it merged (1,319 passed, 42 skipped on the runner). The first 2026-10-01 push to `main` **failed** two tests; see §2 |
+| `main` | everything merged: B17, K6, K7 (threads), B13a (Ogg routing), the CI test fix. Pushed |
+| branches | only `main`, locally and on GitHub |
+| tests | **1,359 passed, 2 skipped, 1 xfailed** locally (2026-10-01, 20 min 28 s, corpus guard clean) |
+| CI | **green on `main`** (1,319 passed, 42 skipped on the runner; the skips are pixel-budget tests on the runner's fonts, plus real-corpus tests) |
 | AI attribution | none, anywhere. Audited before each commit |
 
 ---
 
-## 1. What shipped since the last handoff
+## 1. What shipped (B12 → 2026-10-01)
 
 | item | what | record |
 |---|---|---|
-| **B12** ❌ | LOLZ measured against zpaqfranz and **not integrated**: `-m5` beats it on both corpora | [2026-09-23](benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md) |
-| **B17** ✅ | **Insane runs zpaqfranz `-m58`** (256 MiB blocks): 7.99% under `-m4` on deflate data, Silesia 37,542,028 B (−8.92%). RAM model, thread cap, measured estimator rates | [2026-09-27](benchmarks/2026-09-27-b17-insane-m58.md) |
-| **K6** ✅ | **Cancel reaches a tool that prints nothing.** zpaqfranz is silent for an entire restore, and Cancel used to wait it out | ROADMAP K6 |
-| **K7** ✅ | **Default threads = one per physical core, now in the code.** 7-Zip used to take all 4 logical threads: 0.14% larger archive, 5,549 vs 2,702 MiB peak RAM. RAM-capped, and a user's own `-mmt`/`-mmemuse` is respected | [2026-10-01](benchmarks/2026-10-01-threads-and-ogg.md) |
-| **B13a** ✅ | **Real music measured; Ogg routing fixed.** An Ogg file whose probe says it shrinks is piped: 18 real Vorbis/Opus files went from +0.004% to **1.112% saved**, 18/18 verified | [2026-10-01](benchmarks/2026-10-01-threads-and-ogg.md) |
-
-The 18 music files are in `C:\excmp-bench\b13\music` (Wikimedia Commons,
-SHA-1 verified, owner-approved). That's B13's corpus, and balrogg now has a
-gate to beat.
+| **B12** ❌ | LOLZ measured, not integrated: zpaqfranz `-m5` beats it on both corpora | [2026-09-23](benchmarks/2026-09-23-b12-lolz-vs-zpaqfranz.md) |
+| **B17** ✅ | Insane runs zpaqfranz **`-m58`**: Silesia 37,542,028 B (−8.92% vs `-m4`) | [2026-09-27](benchmarks/2026-09-27-b17-insane-m58.md) |
+| **K6** ✅ | Cancel reaches a tool that prints nothing | ROADMAP K6 |
+| **K7** ✅ | Default threads = one per physical core, RAM-capped: 0.14% smaller, 2,702 vs 5,549 MiB peak | [2026-10-01](benchmarks/2026-10-01-threads-and-ogg.md) |
+| **B13a** ✅ | Ogg piped when its own probe says it shrinks: real music **1.112% saved** (was +0.004%) | [2026-10-01](benchmarks/2026-10-01-threads-and-ogg.md) |
 
 ---
 
@@ -69,133 +70,170 @@ gate to beat.
 
 Windows reported an i7-3540M until 2026-09-27 and an i5-7200U on 2026-10-01.
 The disk and profile moved, so `C:\excmp-bench` survived. A timing is a
-statement about a CPU, and nothing in the repo records which one unless you
-write it down. Sizes and peak RAM don't depend on the CPU.
+statement about a CPU. Sizes and peak RAM don't depend on the CPU.
+
+### Both B13 and B14 tools are on GitHub, with published hashes
+
+The handoff used to say balrogg needed a krinkels.org login. **It doesn't.**
+The krinkels page says balrogg is GPL-3 and hosted at
+`github.com/iczelia/balrogg`, which has CI-built releases with a SHA-256 per
+asset. DArc's krinkels page links `github.com/DavidLee18/DArc` (GPL-3.0), which
+has the same. Prefer those over forum downloads: a published digest to pin
+against, and an E1-style fetch.
 
 ### "The docs say X" and "the code does X" are two claims
 
-CLAUDE.md said default threads is 2 for months. The code's default was 0, and
-7-Zip then took 4. A reviewer can't see that from either file alone. Measuring
-what the tool did settled it: `-mmt` none = `-mmt4`, byte for byte.
+CLAUDE.md said default threads is 2 for months; the code let 7-Zip take 4.
+Measuring what the tool did settled it.
 
 ### Passing a switch can turn off a tool's own safety
 
-Forcing `-mmt` disables 7-Zip's built-in fitting of threads to 80% of RAM. On
-the 2-core target that's harmless; on a 6-core 8 GB machine it would have
-asked for about 9 GB. The adversarial review caught it, and auto is now capped
-by `ram.lzma2_auto_threads`. **Before forcing any switch, check what the tool
-does when it's absent.**
+Forcing `-mmt` disables 7-Zip's built-in fitting of threads to RAM. Auto is
+now capped by `ram.lzma2_auto_threads`. **Before forcing any switch, check
+what the tool does without it.**
 
 ### The probe was right about music; the rule ignored it
 
-"Media is stored, already compressed by its codec" overrode an analyzer that
-had measured 0.9487 on a file 7-Zip then took 5.98% off. Where a measurement
-and a category rule disagree, the measurement should win, but only for formats
-you've measured. That's why the change is Ogg-only.
+Where a measurement and a category rule disagree, the measurement should win,
+but only for formats you've measured. That's why B13a is Ogg-only, and why
+B18 (c) measures MP3 and video before touching them.
 
-### CI's runner is not the target, and a RAM-aware cap notices
+### CI's runner is not the target
 
-The first push of the merge failed two of B17's own tests on CI with
-`'2.7 GB' != '2.7 GB'`. The zpaqfranz thread cap scales with the host's RAM.
-On the runner it allowed one thread, so two figures the tests compared were
-equal. Reproduced locally by simulating a 7 GiB host (the CI log doesn't
-state the runner's RAM): the old test file fails exactly those two, and the
-fixed one passes. **Tests that depend on cores or RAM must pin the machine
-they describe**; they now pin 2 cores / 16 GiB, and a new test covers the
-small-machine side. CI runs on every branch push, so a fix goes green on its
-branch before it reaches `main`.
+Two B17 tests assumed the target's RAM and failed on CI (`'2.7 GB' !=
+'2.7 GB'`): the RAM-aware thread cap gave the smaller runner one thread.
+**Tests that depend on cores or RAM must pin the machine they describe.** CI
+runs on every branch push, so a fix goes green on its branch before `main`.
 
 ### Reviews: two lenses plus a skeptic keep paying
 
-B17's two code reviews confirmed 8 defects, and 2026-10-01's confirmed 9
-more (3 in code, 6 in user-facing text and comments), all after the suite was
-green. Among them: a RAM cell quoting the wrong codec, a thread cap that
-wasn't enforced, a calibration entry that would have overridden a
-measurement, a forced switch that disabled 7-Zip's own memory fitting, a
-note that didn't refresh, and RAM figures in mixed units. Every one was
-reproduced before it was fixed.
+17 real defects were confirmed across B17 and 2026-10-01, all after a green
+suite, and every one was reproduced before it was fixed.
 
 ### Still true
 
 - **Measure the incumbent that fills the slot**, not the familiar tool (B12).
+  For B14 that's `precomp → zpaqfranz -m58` (Insane) and `precomp → 7z`
+  (Extreme), not plain 7-Zip.
 - **Two corpora, or don't quote the first.**
-- **Never pin a single timing run, and never the first one.** Extreme's three
-  runs on the backtest spread 1.42×.
+- **Never pin a single timing run, and never the first one.**
 - **A silent no-op looks exactly like a negative result.** Exit 0 isn't
-  evidence.
-- **"Green" is a claim about what the tests look at.** Render the GUI:
-  `tools/qa_sweep.py`, both themes, and look at the PNGs. It caught the 2.7 GB
-  RAM figure for a 371 KB job.
-- **Honest numbers can move pixel budgets.** Re-baseline only with the proof
-  beside it (B17's layout guards).
+  evidence. balrogg's own exit codes are documented (0 ok, 1 refused, 4
+  internal error); still trust only `verify_restore`.
+- **Render the GUI** (`tools/qa_sweep.py`, both themes) before calling a GUI
+  change done.
 - **`~/.excmp/calibration.json` is global state**, isolated in `conftest.py`.
-  J7 entries for zpaqfranz chains are stamped with the zpaq method.
 - **The archive is not byte-reproducible.** Compare sizes, never digests.
 
 ---
 
-## 3. Next phase: I11 — progress through the D9 restore
+## 3. The agenda, in order
 
-Spec: [ROADMAP.md, I11](ROADMAP.md) (under I10).
+### 0. Name the session, then open the download tabs
 
-`ChainProgress` (`gui/progress.py`) caps the pipeline at 95% and keeps its
-peak. The D9 restore reports through the same stage ids, so the bar parks at
-95% for the whole self-test, which is 1,556 s of a 3,810 s Silesia job at
-`-m58`. **Measured already: zpaqfranz `x` prints nothing between its header
-and its summary, `-verbose` included** (capture in `C:\excmp-bench\b17\k6\`).
-There is nothing to parse. The honest design is a visible "verifying" phase
-with elapsed time, set against the estimate's own D9 share: `_VERIFY_RATE`
-has a measured Insane key (0.107 MB/s), so the expected verify time is
-computable. It's a GUI change, so TDD, then `tools/qa_sweep.py` in both themes
-and look, then the full suite.
+`/next` step 0 names the session (`set_session_title` is a deferred tool, so
+load it with ToolSearch first). Then open these in the built-in browser pane
+**for the owner**. They're signed in to krinkels.org already, and sign in to
+the others themselves. **Never type credentials or create accounts.**
 
----
-
-## 4. Waiting on the owner (they've offered)
-
-The owner said they can sign in, or create accounts, for the sites below. **The
-session never types credentials or creates accounts**; the owner signs in in
-the browser pane, then the session downloads with per-file approval (name,
-source, size) and pins the hash on arrival.
-
-| target | unblocks | how |
+| tab | what the owner downloads | for |
 |---|---|---|
-| `balrogg` v1.1, krinkels.org | **B13** | owner signs in; the gate to beat is 1.112% on the music corpus |
-| Wwise / FMOD sample banks (`.wem` / `.fsb`) | B13, B6 | owner signs in to Audiokinetic / FMOD; their own sample projects only |
-| an Oodle-compressed archive, plus `oo2core` | **B6** | only from a legitimate source the owner has, e.g. a game they own installed on this machine. Never a third-party DLL site |
+| `https://www.audiokinetic.com/en/download/` | a Wwise **sample project** (it contains `.wem` / `.bnk` banks) | B13 + B6 corpus |
+| `https://www.fmod.com/download` | FMOD's **example/sample banks** (`.fsb` / `.bank`) | B13 + B6 corpus |
+| `https://krinkels.org/resources/darc-distended-arc.602/` | nothing needed (GitHub has it); for reference | B14 |
+| `https://krinkels.org/resources/balrogg-lossless-vorbis-opus-recompressor.601/` | nothing needed (GitHub has it); for reference | B13 |
+
+The owner's downloads land in their Downloads folder: pick them up from
+there, pin each SHA-256 on arrival, and copy them into `C:\excmp-bench\`. For
+**Oodle (B6)**, use only a copy from a legitimate source the owner has, such as
+a game they own installed on this machine. Never a third-party DLL site.
+
+### 1. Fetch the two GitHub tools (one approval)
+
+Ask once, naming file, source and size, then fetch and verify the digest:
+
+| file | size | SHA-256 (GitHub's published digest) |
+|---|---:|---|
+| `github.com/iczelia/balrogg` release **1.4** (2026-09-10): `balrogg-x86_64.exe` | 247,315 B | `b3a52670bf37eaf941933bf67fbfdcd140638240fa3d20bb9e9bd6c923097db2` |
+| `github.com/DavidLee18/DArc` release **v3.0.4** (2026-08-27): `darc-3.0.4-windows-amd64.zip` | 5,032,728 B | `112d021f2ffc981bddb4a94f34f56118ae48f8d40b4e18772a27892a4747b83a` |
+
+Both are GPL-3. That's fine: the repo is private, and they're driven as
+subprocesses. If either is to become an app stage, add it to
+`excmp/toolfetch.py`'s `TOOL_MANIFEST` with `exe_dir_sha256`, like flac and
+qpdf.
+
+### 2. I11 — progress through the D9 restore
+
+Spec: [ROADMAP.md, I11](ROADMAP.md). `ChainProgress` (`gui/progress.py`) caps
+at 95% and keeps its peak, so the bar parks there for the whole self-test:
+1,556 s of a 3,810 s Silesia job at `-m58`. **Measured: zpaqfranz `x` prints
+nothing between its header and its summary**, `-verbose` included (capture in
+`C:\excmp-bench\b17\k6\`). There's nothing to parse, so the honest design is a
+visible "verifying" phase with elapsed time against the estimate's own D9
+share (`_VERIFY_RATE` has a measured Insane key, 0.107 MB/s). TDD,
+`tools/qa_sweep.py` in both themes, full suite.
+
+### 3. B13 — balrogg against the 1.112% gate
+
+Corpus: `C:\excmp-bench\b13\music`, 18 files (13 Vorbis, 5 Opus,
+169,975,314 B), plus any `.wem`/`.fsb` the owner downloads. Gate: the app
+**today** saves **1.112%** end to end (Normal), with 7-Zip per file at 1.52%.
+balrogg claims 8–12% on `.ogg` and 3–8% on `.opus`. Usage from its page:
+`balrogg e in.ogg out.blr`, `balrogg d out.blr in.ogg`, `-b` for batch,
+`-1`…`-9` effort (default `-9`). It refuses files it can't reproduce exactly
+(exit 1), so a refusal must fall back to the existing route. **If it wins and
+restores every file byte-identically**, it becomes a store-route specialist
+like FLAC (B4) and lepton (B2). Measure first, two corpora (music, plus the
+game banks if they arrive).
+
+### 4. B14 — DArc against the shipped route
+
+DArc is now a Rust rewrite of FreeArc (`darc` and `unarc`). It must beat what
+ships, on both B12 corpora (`C:\excmp-bench\b12\fresh.pcf` and
+`programs.pcf`) and Silesia: **Extreme** `precomp → 7z` and **Insane**
+`precomp → zpaqfranz -m58` (deflate `.pcf`: 42,852,397 B). Every archive is
+restored and SHA-256 compared. FreeArc's strongest methods are the thing to
+try.
+
+### 5. B18 — three unmeasured settings
+
+Spec: [ROADMAP.md, B18](ROADMAP.md).
+(a) **zstd threads**: `ZstdStage` uses `threads=-1` (all logical). Compare it
+against 2 on size, time and RAM.
+(b) **`precomp -intense`**: it cost 82,086 B on B16's corpus. Measure with and
+without on both corpora.
+(c) **MP3 and video**: does the analyzer's probe predict a real gain, as it did
+for Ogg? Find a corpus first (search read-only, e.g. the `Downloads-1` tree).
+Change routing only if measured.
+
+### 6. B6 — only with an owner-provided Oodle sample
+
+xtool + Oodle. Blocked until a legitimate sample exists (§3, step 0).
 
 ---
 
-## 5. Everything still open
+## 4. Everything else still open
 
 | item | what |
 |---|---|
-| **I11** | **recommended next**, §3 |
-| **B13** | balrogg vs the 1.112% gate, after the owner signs in (§4) |
-| **B6** | xtool + Oodle, needs a legitimate Oodle sample (§4) |
-| **B14** | DArc 3.04 (FreeArc fork; also carries B12a). It must beat the shipped route *including zpaqfranz `-m58`* |
-| — | zstd's own thread default (`threads=-1`, all logical) has never been measured against 2 |
-| — | `precomp -intense` cost 82 KB on B16's corpus; nobody has measured it on game data |
-| — | other compressed media (MP3, video): the Ogg probe rule waits until each is measured |
 | **D6b, I5, I10** | fuzz targets; Explorer menu (**ask first**, HKCU); settings search / drag-out / jump list |
 | **B15, D4b, C, H, E3–E5** | too early / elevated session / lossy phase / installer phase / release-only |
 | **I7** | ❌ won't do |
 
 ---
 
-## 6. Things not to re-litigate
+## 5. Things not to re-litigate
 
-- **Insane runs `-m58`.** The owner chose "best for compression". `-m4` is one
-  argument away, and `-m59` couldn't be told apart from `-m58` on these inputs.
-- **Default threads is one per physical core**, measured and capped. Don't
-  "helpfully" go back to tool defaults.
-- **LOLZ is not integrated.** It reopens only on game/DXT data, measured
-  against `-m58`.
-- **Ogg is piped only when its own probe says it shrinks**, and only Ogg.
+- **Insane runs `-m58`.** The owner chose "best for compression".
+- **Default threads is one per physical core**, measured and RAM-capped.
+- **Code is merged after suite + review + CI green on its branch**, and the
+  branch is deleted. The owner doesn't want to review diffs.
+- **LOLZ is not integrated.** It reopens only on game/DXT data, against `-m58`.
+- **Ogg is piped only when its own probe says it shrinks**, and only Ogg until
+  B18 (c) measures more.
 - **The repo is private and the OSI rule is retired**; the lossless guarantee
   matters more as a result. **Never weaken verification to fit a tool in.**
 - **No AI attribution in commit messages, ever.**
-- **Insane is data-dependent and always the slowest**; that's the trade.
 - **SREP stays out**: it failed its own checksum 1 run in 3.
 - **Four top-level tabs is the ceiling.**
 - **A measured ratio ranks the profiles; it does not forecast the job.**

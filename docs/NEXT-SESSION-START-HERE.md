@@ -133,13 +133,13 @@ suite, and every one was reproduced before it was fixed.
 
 `/next` step 0 names the session (`set_session_title` is a deferred tool, so
 load it with ToolSearch first). Then open these in the built-in browser pane
-**for the owner**. They're signed in to krinkels.org already, and sign in to
-the others themselves. **Never type credentials or create accounts.**
+**for the owner**. They're signed in to krinkels.org, FMOD and Audiokinetic
+already (2026-10-01), and sign in to anything else themselves. **Never type credentials or create accounts.**
 
 | tab | what the owner downloads | for |
 |---|---|---|
-| `https://www.audiokinetic.com/en/download/` | a Wwise **sample project** (it contains `.wem` / `.bnk` banks) | B13 + B6 corpus |
-| `https://www.fmod.com/download` | FMOD's **example/sample banks** (`.fsb` / `.bank`) | B13 + B6 corpus |
+| `https://www.fmod.com/download#learningresources` | **"Celeste Project"**: FMOD's official, complete audio project for the game *Celeste*. A direct download, no installer. Real game audio | B13 + B18 corpus |
+| ~~`audiokinetic.com`~~ | **skipped (2026-10-01):** it offers only the Audiokinetic Launcher, a multi-GB installer for the Wwise authoring tool. `.wem` isn't an Ogg container, so balrogg can't be expected to read it | — |
 | `https://krinkels.org/resources/darc-distended-arc.602/` | nothing needed (GitHub has it); for reference | B14 |
 | `https://krinkels.org/resources/balrogg-lossless-vorbis-opus-recompressor.601/` | nothing needed (GitHub has it); for reference | B13 |
 

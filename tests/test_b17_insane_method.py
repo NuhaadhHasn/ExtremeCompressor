@@ -436,7 +436,17 @@ def test_a_stored_file_does_not_lower_the_quoted_ram():
     assert insane_ram(alone) == insane_ram(with_video)
 
 
-def test_the_ram_cell_follows_the_thread_setting():
+@pytest.fixture
+def target_machine(monkeypatch):
+    """The target's cores and RAM, pinned. The thread cap scales with the
+    host's memory, so on a smaller CI runner (first seen 2026-10-01) zpaqfranz
+    is held to one thread and figures these tests compare collapse into one.
+    That is the cap working; the tests are about the target machine."""
+    monkeypatch.setattr(ram, "physical_cores", lambda: 2)
+    monkeypatch.setattr(ram, "total_ram_bytes", lambda default=0: 16 << 30)
+
+
+def test_the_ram_cell_follows_the_thread_setting(target_machine):
     """The stage runs `zpaqfranz_threads(setting)`; the cell must quote the
     same count, or a user who asked for 3 threads is shown a 2-thread peak."""
     from gui.suggest import profile_comparison, summarize
@@ -449,7 +459,7 @@ def test_the_ram_cell_follows_the_thread_setting():
     assert one != three
 
 
-def test_insanes_ram_is_a_range_when_precomp_might_expand_nothing():
+def test_insanes_ram_is_a_range_when_precomp_might_expand_nothing(target_machine):
     """On Silesia Precomp found nothing and zpaqfranz got one block (2.7 GB);
     the worst case is Precomp inflating ~5x into two busy blocks (4.8 GB).
     Showing only 4.8 GB overstated the anchor corpus by 78%, so the cell's
@@ -465,3 +475,18 @@ def test_insanes_ram_is_a_range_when_precomp_might_expand_nothing():
     assert lo != hi
     assert row.ram_text == hi
     assert lo in row.ram_range and hi in row.ram_range
+
+
+
+def test_on_a_small_machine_the_cell_quotes_one_thread(monkeypatch):
+    """The other half of the cap: with little RAM, -m58 runs one thread, and
+    the cell must quote the one-thread figure rather than the target's."""
+    from gui.suggest import fmt_size, profile_comparison, summarize
+    from excmp.planner import plan as make_plan
+    monkeypatch.setattr(ram, "physical_cores", lambda: 2)
+    monkeypatch.setattr(ram, "total_ram_bytes", lambda default=0: 7 << 30)
+    infos = _silesia_like()
+    rows = profile_comparison(infos, _all_tools(),
+                              summarize(infos, make_plan(infos, Profile.INSANE, _all_tools())))
+    row = next(r for r in rows if r.profile is Profile.INSANE)
+    assert row.ram_text == fmt_size(ram.zpaqfranz_compress_ram(58, 1, SILESIA_ORIG * 5))

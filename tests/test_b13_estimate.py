@@ -156,3 +156,15 @@ def test_the_comparison_table_shows_the_profiles_differ_for_an_ogg_folder():
     rows = {r.profile: r for r in compare_profiles(infos, TOOLS, WITH)}
     assert rows[Profile.FAST].time.expected < rows[Profile.INSANE].time.expected
     assert all(r.size.packed_bytes == 300_000_000 for r in rows.values())
+
+
+def test_the_second_corpus_also_sits_inside_the_range():
+    """Corpus 2 (26 game-music and speech files, 192,105,873 B, balrogg -5):
+    25 Vorbis files at 153,119,905 B and one Opus at 38,985,968 B came out at
+    171,127,274 B - 10.920% saved, with two files refused. The prior was fitted
+    on corpus 1, so this is the check that it was not fitted *to* it."""
+    infos = [_ogg("vorbis", 153_119_905), _ogg("opus", 38_985_968, ".opus")]
+    size = estimate_size(infos, _plan(infos), WITH)
+    measured_out = 171_127_274
+    assert size.low <= measured_out <= size.high
+    assert abs(size.expected - measured_out) / measured_out < 0.03

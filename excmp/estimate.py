@@ -589,9 +589,12 @@ def _overhead(infos: list[FileInfo], stored_count: int) -> int:
 # machine whose speed varied 3.5x within a session (docs/benchmarks/
 # 2026-10-06-b13). They are priors, so everything built on them is a range.
 #
-# Saved per file at -9: Vorbis 9.5% .. 25.7% (mean 15.5%, weighted 15.1%),
-# Opus 3.6% .. 4.2% (3.9%). `high` is the case where nothing is gained.
-_PACK_RATIO = {"vorbis": (0.74, 0.85, 0.95), "opus": (0.955, 0.962, 1.0)}
+# Saved, bytes-weighted: corpus 1 (13 Vorbis) 15.1% at -9, corpus 2 (25 Vorbis
+# game music and speech) 12.5% at -5, per file 8.5% .. 44.3%; Opus 3.9% and
+# 4.8%. Corpus 2 also held two files balrogg refused outright (Ogg FLAC, and
+# Vorbis behind a Skeleton track: 6.2% of that corpus's bytes), which is what
+# `high` is for: the case where little or nothing is gained.
+_PACK_RATIO = {"vorbis": (0.74, 0.865, 0.97), "opus": (0.94, 0.96, 1.0)}
 
 # Encode speed at -9, bytes/s, aggregate over each format: Vorbis 143.5 MB in
 # 1,205 s, Opus 26.4 MB in 20 s. Opus is ten times quicker.

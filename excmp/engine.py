@@ -1721,7 +1721,8 @@ def _verify_before_publish(archive: Path, ctx: StageContext) -> int:
     The restore's own stage reports are muted: they describe the restore, not
     the job. What the job hears instead (I11) is ``("verify", 0.0)`` when the
     self-test starts, the same again every ``_VERIFY_HEARTBEAT_S`` while it
-    runs, and ``("verify", 100.0)`` only once every hash matched. The 0.0 is
+    runs and the job is not paused, and ``("verify", 100.0)`` only once every
+    hash matched. The 0.0 is
     not a measurement: zpaqfranz prints nothing during a restore, so there is
     none to give. The heartbeat is what lets the GUI time the phase against
     its estimate without a timer of its own. Cancel/pause/logs pass through.
@@ -1731,7 +1732,16 @@ def _verify_before_publish(archive: Path, ctx: StageContext) -> int:
     ctx.log_cb("verify", "restoring the whole archive to check every hash "
                          "before publishing…")
     ctx.progress_cb("verify", 0.0)
-    with _heartbeat(lambda: ctx.progress_cb("verify", 0.0), _VERIFY_HEARTBEAT_S):
+
+    def beat() -> None:
+        # A paused job holds the restore at its next stage boundary. The beats
+        # stop with it: a bar and a countdown that kept moving through a pause
+        # would charge the hold against the self-test's estimate, and the
+        # taskbar would flip from "paused" back to "normal" every second.
+        if not ctx.pause.is_set():
+            ctx.progress_cb("verify", 0.0)
+
+    with _heartbeat(beat, _VERIFY_HEARTBEAT_S):
         result = verify_archive(archive, quiet)
     ctx.progress_cb("verify", 100.0)
     ctx.log_cb("verify", f"self-test passed: {result.files_restored} file(s) "

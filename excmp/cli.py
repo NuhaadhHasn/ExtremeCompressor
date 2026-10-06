@@ -48,8 +48,17 @@ def _progress_printer(args, clock=None):
         else:
             text = f"[{stage}] {pct:5.1f}%"
         print(f"\r  {text:<60}", end="", flush=True)
+        _frame.pending = True
 
     return show
+
+
+class _frame:
+    """Whether a progress frame is on screen with no newline after it, so an
+    error printed next does not get glued onto "restoring and checking
+    every hash"."""
+
+    pending = False
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
@@ -840,6 +849,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _frame.pending = False
     if (getattr(args, "keyfile", None) and args.func is cmd_compress
             and not getattr(args, "password", False)):
         # A keyfile alone is a legitimate single factor as far as `crypto` is
@@ -862,6 +872,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:  # surface a clean one-liner, not a traceback
+        if _frame.pending:
+            print(file=sys.stderr)
+            _frame.pending = False
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

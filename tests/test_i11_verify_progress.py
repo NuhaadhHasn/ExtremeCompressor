@@ -28,8 +28,9 @@ from excmp.estimate import DEFAULT_RATES, estimate_time, time_split
 from excmp.planner import Profile
 from excmp.stages.base import StageContext
 from excmp.tools import find_tools
-from gui.progress import (PIPELINE_CEILING, VERIFY_STAGE, VERIFY_TIME_CAP,
-                          VERIFYING, VERIFYING_LATE, ChainProgress)
+from gui.progress import (FINISHING, PIPELINE_CEILING, VERIFY_GAP_LIMIT_S,
+                          VERIFY_STAGE, VERIFY_TIME_CAP, VERIFYING,
+                          VERIFYING_LATE, ChainProgress, eta_is_absent)
 
 needs_7z = pytest.mark.skipif(find_tools()["7z"] is None, reason="7z not installed")
 
@@ -59,12 +60,17 @@ def test_estimate_time_expected_is_the_sum_of_the_split():
                       category=Category.TEXT, entropy_bps=4.0, sample_ratio=0.3,
                       sample_ratio_max=0.35)
              for i in range(3)]
+    # A stored file too, so the io term appears in both halves: a refactor that
+    # counted it twice, or dropped it from one, must not survive.
+    infos.append(FileInfo(path=Path("clip.mp4"), size=40_000_000,
+                          category=Category.VIDEO, entropy_bps=7.99))
     tools = find_tools()
     the_plan = make_plan(infos, Profile.NORMAL, tools)
     piped = sum(i.size for r in the_plan.routes if r.action == "pipeline"
                 for i in infos if i.path in r.files)
     stored = sum(i.size for i in infos) - piped
     assert piped, "the fixture must exercise the codec term"
+    assert stored >= 40_000_000, "the fixture must exercise the io term"
     stages = next((r.stages for r in the_plan.routes if r.action == "pipeline"), [])
     expected = estimate_time(infos, the_plan).expected
     assert expected == pytest.approx(sum(time_split(stored, piped, stages)))
@@ -148,29 +154,95 @@ def test_the_self_test_announces_itself_and_keeps_a_heartbeat(tmp_path, monkeypa
     from excmp import engine
 
     calls: list[tuple[str, float]] = []
-    ctx = StageContext(temp_dir=tmp_path,
-                       progress_cb=lambda s, p: calls.append((s, p)))
-    monkeypatch.setattr(engine, "_VERIFY_HEARTBEAT_S", 0.05)
+    three_beats = threading.Event()
 
-    def spy(quiet):
+    def on_progress(stage, pct):
+        calls.append((stage, pct))
+        if len(calls) >= 4:                 # the announcement plus three beats
+            three_beats.set()
+
+    ctx = StageContext(temp_dir=tmp_path, progress_cb=on_progress)
+    monkeypatch.setattr(engine, "_VERIFY_HEARTBEAT_S", 0.02)
+
+    def fake_verify(archive, quiet):
         # The restore's own stage reports stay muted: they describe the
         # restore, not the job, and would drag the bar back to the chain.
         quiet.progress_cb("zpaqfranz", 50.0)
+        # Event-driven, not a fixed sleep: a loaded 2-core runner can starve
+        # the heartbeat thread for longer than any sleep that is also short
+        # enough to be worth running.
+        assert three_beats.wait(30), "the heartbeat never beat"
+        return SimpleNamespace(files_restored=1, verified=1, elapsed_s=0.0)
 
-    monkeypatch.setattr(engine, "verify_archive", _fake_verify(0.5, spy=spy))
+    monkeypatch.setattr(engine, "verify_archive", fake_verify)
     engine._verify_before_publish(tmp_path / "x.excmp", ctx)
 
     assert ("zpaqfranz", 50.0) not in calls
     assert calls[0] == (VERIFY_STAGE, 0.0)
     assert calls[-1] == (VERIFY_STAGE, 100.0)
     assert all(s == VERIFY_STAGE for s, _ in calls)
-    beats = [c for c in calls[1:-1]]
+    beats = calls[1:-1]
     assert len(beats) >= 3, "no heartbeat: the GUI would have nothing to redraw on"
     assert all(p == 0.0 for _, p in beats), "a heartbeat is not a measurement"
 
     settled = len(calls)
     time.sleep(0.2)
     assert len(calls) == settled, "the heartbeat outlived the self-test"
+
+
+def test_the_heartbeat_is_finished_before_the_self_test_says_done(
+        tmp_path, monkeypatch):
+    """``("verify", 100.0)`` must be the LAST report. A beat still in flight
+    when it was sent would land after it and put a finished job back to
+    "verifying". The ``join`` in ``_heartbeat`` is what orders them."""
+    from excmp import engine
+
+    calls: list[tuple[str, float]] = []
+    in_a_beat = threading.Event()
+
+    def on_progress(stage, pct):
+        if len(calls) >= 1 and pct == 0.0:  # a beat, not the announcement
+            in_a_beat.set()
+            time.sleep(0.3)                 # slow to return, like a busy GUI hop
+        calls.append((stage, pct))
+
+    ctx = StageContext(temp_dir=tmp_path, progress_cb=on_progress)
+    monkeypatch.setattr(engine, "_VERIFY_HEARTBEAT_S", 0.01)
+
+    def fake_verify(archive, quiet):
+        assert in_a_beat.wait(30)
+        return SimpleNamespace(files_restored=1, verified=1, elapsed_s=0.0)
+
+    monkeypatch.setattr(engine, "verify_archive", fake_verify)
+    engine._verify_before_publish(tmp_path / "x.excmp", ctx)
+    time.sleep(0.6)             # long enough for a straggling beat to land
+    assert calls[-1] == (VERIFY_STAGE, 100.0), calls[-3:]
+
+
+def test_a_paused_job_emits_no_beats(tmp_path, monkeypatch):
+    """A paused job holds the restore at its next stage boundary. Beats that
+    kept coming would move the bar, charge the hold against the estimate and
+    flip the taskbar back from "paused" to "normal" every second."""
+    from excmp import engine
+
+    calls: list[tuple[str, float]] = []
+    ctx = StageContext(temp_dir=tmp_path,
+                       progress_cb=lambda s, p: calls.append((s, p)))
+    ctx.pause.set()
+    monkeypatch.setattr(engine, "_VERIFY_HEARTBEAT_S", 0.02)
+    monkeypatch.setattr(engine, "verify_archive", _fake_verify(0.4))
+    engine._verify_before_publish(tmp_path / "x.excmp", ctx)
+    assert calls == [(VERIFY_STAGE, 0.0), (VERIFY_STAGE, 100.0)]
+
+
+def test_the_shipped_heartbeat_is_one_the_gui_can_live_with():
+    """Every other test shrinks the period. Pin the real one, and the
+    relationship the worker's pause detection depends on."""
+    from excmp import engine
+
+    assert 0 < engine._VERIFY_HEARTBEAT_S <= 2.0
+    assert VERIFY_GAP_LIMIT_S >= 2 * engine._VERIFY_HEARTBEAT_S, \
+        "a single late beat would read as a pause"
 
 
 def test_a_failed_self_test_stops_the_heartbeat_and_never_says_done(
@@ -260,9 +332,17 @@ class _Clock:
         return self.now
 
 
+def _tick(worker, clock, seconds: int):
+    """One engine heartbeat per second, as the engine sends them."""
+    for _ in range(int(seconds)):
+        clock.now += 1.0
+        worker._on_progress(VERIFY_STAGE, 0.0)
+
+
 def test_the_worker_shows_a_verifying_phase_against_its_estimate(tmp_path):
     summary = _summary(0, 50_000_000, ["tar", *INSANE])
     compress_s, verify_s = time_split(0, 50_000_000, INSANE)
+    assert verify_s > 120, "the fixture needs a self-test long enough to tick"
     clock = _Clock()
     worker, progress = _worker(tmp_path, summary, clock)
     worker._t0 = 0.0
@@ -279,23 +359,48 @@ def test_the_worker_shows_a_verifying_phase_against_its_estimate(tmp_path):
     assert pct == pytest.approx(start)
     assert eta == pytest.approx(verify_s)
 
-    clock.now += verify_s / 2
-    worker._on_progress(VERIFY_STAGE, 0.0)          # heartbeat
+    half = int(verify_s / 2)
+    _tick(worker, clock, half)
     _id, stage, pct, eta = progress.calls[-1]
     assert stage == VERIFYING
     assert start < pct < PIPELINE_CEILING
-    assert eta == pytest.approx(verify_s / 2)
+    assert eta == pytest.approx(verify_s - half)
 
-    clock.now += verify_s                           # well past the estimate
-    worker._on_progress(VERIFY_STAGE, 0.0)
+    _tick(worker, clock, int(verify_s))             # well past the estimate
     _id, stage, pct, eta = progress.calls[-1]
     assert stage == VERIFYING_LATE
     assert eta is None
     assert pct < PIPELINE_CEILING
 
     worker._on_progress(VERIFY_STAGE, 100.0)
-    assert progress.calls[-1][2] == pytest.approx(PIPELINE_CEILING)
-    assert worker._verify_elapsed == pytest.approx(verify_s * 1.5)
+    _id, stage, pct, eta = progress.calls[-1]
+    assert (stage, eta) == (FINISHING, None)
+    assert pct == pytest.approx(PIPELINE_CEILING)
+    assert worker._verify_elapsed == pytest.approx(half + int(verify_s))
+
+
+def test_a_pause_in_the_self_test_is_not_charged_against_its_estimate(tmp_path):
+    summary = _summary(0, 50_000_000, ["tar", *INSANE])
+    _compress_s, verify_s = time_split(0, 50_000_000, INSANE)
+    clock = _Clock()
+    worker, progress = _worker(tmp_path, summary, clock)
+    worker._t0 = 0.0
+    for stage in ("tar", *INSANE):
+        worker._on_progress(stage, 100.0)
+
+    worker._on_progress(VERIFY_STAGE, 0.0)
+    _tick(worker, clock, 10)
+    before = progress.calls[-1]
+    clock.now += 3 * verify_s                       # held; the beats stopped
+    _tick(worker, clock, 5)                         # resumed
+    _id, stage, pct, eta = progress.calls[-1]
+    assert stage == VERIFYING, "a hold flipped the job to 'past estimate'"
+    assert eta == pytest.approx(verify_s - 15, abs=1.5)
+    assert pct > before[2]
+    # ...but calibration, which subtracts from a clock that did run through
+    # the hold, is told the whole span.
+    worker._on_progress(VERIFY_STAGE, 100.0)
+    assert worker._verify_elapsed == pytest.approx(clock.now)
 
 
 def test_calibration_learns_the_codec_rate_without_the_self_test(
@@ -309,7 +414,7 @@ def test_calibration_learns_the_codec_rate_without_the_self_test(
     clock = _Clock()
     worker, _ = _worker(tmp_path, _summary(0, 50_000_000, ["tar", *INSANE]), clock)
     worker._on_progress(VERIFY_STAGE, 0.0)
-    clock.now = 1556.0
+    _tick(worker, clock, 1556)
     worker._on_progress(VERIFY_STAGE, 100.0)
 
     result = SimpleNamespace(piped_bytes=211_938_580, final_bytes=37_542_028,
@@ -320,7 +425,7 @@ def test_calibration_learns_the_codec_rate_without_the_self_test(
     assert kwargs["elapsed_s"] == pytest.approx(3810.0 - 1556.0)
 
 
-def test_a_job_with_no_analysis_still_runs_its_self_test_honestly(tmp_path):
+def test_a_job_with_no_analysis_runs_its_self_test_without_a_countdown(tmp_path):
     clock = _Clock()
     worker, progress = _worker(tmp_path, None, clock)
     worker._t0 = 0.0
@@ -332,6 +437,61 @@ def test_a_job_with_no_analysis_still_runs_its_self_test_honestly(tmp_path):
     assert stage == VERIFYING
     assert pct == pytest.approx(PIPELINE_CEILING)
     assert eta is None
+    # It is a self-test with no estimate, not a job still "estimating".
+    assert eta_is_absent(stage, eta)
+
+
+@pytest.mark.parametrize("stage, eta, absent", [
+    (VERIFYING, 600.0, False), (VERIFYING, None, True),
+    (VERIFYING_LATE, None, True), (FINISHING, None, True),
+    ("zpaqfranz", None, False), ("zpaqfranz", 90.0, False),
+])
+def test_when_a_running_job_has_no_remaining_time_to_show(stage, eta, absent):
+    assert eta_is_absent(stage, eta) is absent
+
+
+@pytest.mark.parametrize("fmt", ["7z", "zip"])
+def test_a_plain_export_has_no_self_test_band(tmp_path, fmt):
+    """A plain .7z/.zip is checked by a different gate that reports no
+    "verify" events. Reserving a band for them parked the bar at 51-82%."""
+    from gui.models import Job
+    from gui.queue_manager import CompressWorker
+
+    job = Job(inputs=[tmp_path], out_path=tmp_path / f"o.{fmt}",
+              profile=Profile.INSANE, archive_format=fmt,
+              summary=_summary(0, 50_000_000, ["tar", *INSANE]))
+    signals = SimpleNamespace(progress=_Recorder())
+    worker = CompressWorker(job, signals, tmp_path, tools={})
+    assert worker._chain.chain == ["sevenzip"]
+    worker._on_progress("sevenzip", 100.0)
+    assert signals.progress.calls[-1][2] == pytest.approx(PIPELINE_CEILING)
+
+
+def test_the_chain_band_is_banked_when_the_self_test_starts():
+    chain = ChainProgress(["tar", *INSANE], compress_s=100.0, verify_s=100.0)
+    chain.update("tar", 100.0)
+    chain.update("precomp", 40.0)                  # the chain stopped short
+    assert chain.value < PIPELINE_CEILING / 2
+    assert chain.verify(0.0) == pytest.approx(PIPELINE_CEILING / 2)
+
+
+def test_the_bars_estimate_uses_what_this_machine_has_learned(tmp_path, monkeypatch):
+    """The comparison table quotes blended rates, so the bar's share of the
+    self-test has to as well, or the two would disagree about the same job."""
+    from excmp import calibrate
+    from gui.queue_manager import _time_split
+
+    summary = _summary(0, 50_000_000, INSANE)
+    store = tmp_path / "cal.json"
+    monkeypatch.setattr(calibrate, "DEFAULT_PATH", store)
+    shipped = _time_split(summary)
+    # A job that ran four times faster than the shipped Insane rate.
+    rate = DEFAULT_RATES.rate_for(INSANE)
+    calibrate.record(INSANE, piped_bytes=200 << 20,
+                     elapsed_s=(200 << 20) / (rate * 4), path=store)
+    learned = _time_split(summary)
+    assert learned[0] < shipped[0]
+    assert learned[1] == pytest.approx(shipped[1]), "the restore rate is not learned"
 
 
 # -- the CLI -------------------------------------------------------------------
@@ -359,3 +519,88 @@ def test_the_cli_printer_is_silent_under_json(capsys):
     show = cli._progress_printer(SimpleNamespace(json=True))
     show(VERIFY_STAGE, 0.0)
     assert capsys.readouterr().out == ""
+
+
+# -- what the strip and the queue row say ----------------------------------------
+
+def test_the_strip_says_finishing_not_verifying_after_the_gate(tmp_path, qtbot):
+    pytest.importorskip("pytestqt")
+    from gui.mainwindow import MainWindow
+    from gui.models import Job, JobKind, JobState
+
+    win = MainWindow()
+    qtbot.addWidget(win)
+    try:
+        win.queue.pause()
+        job = Job(kind=JobKind.COMPRESS, inputs=[tmp_path],
+                  out_path=tmp_path / "o.excmp", profile=Profile.NORMAL)
+        win.queue.add_job(job)
+        job.state = JobState.RUNNING
+        win.queue._on_progress(job.id, FINISHING, 95.0, None)
+        assert win._job_status_text().endswith("· finishing")
+        assert "estimating" not in win._job_status_text()
+
+        win.queue._on_progress(job.id, VERIFYING, 95.0, None)   # no estimate
+        text = win._job_status_text()
+        assert text.endswith("· verifying") and "estimating" not in text
+    finally:
+        win.queue.shutdown()
+
+
+def _cli_tree(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "t.txt").write_text("cli wiring. " * 3_000)
+    (tmp_path / "tmp").mkdir()
+    return src
+
+
+def test_a_failed_self_test_leaves_its_error_on_a_line_of_its_own(
+        tmp_path, monkeypatch, capsys):
+    """The last frame ends in a carriage return, not a newline, so the error
+    used to be appended to "restoring and checking every hash"."""
+    from excmp import cli, engine
+
+    monkeypatch.setattr(engine, "_VERIFY_HEARTBEAT_S", 0.02)
+    monkeypatch.setattr(engine, "verify_archive",
+                        _fake_verify(0.2, raises=True))
+    src = _cli_tree(tmp_path)
+    rc = cli.main(["compress", "-p", "fast", "--temp", str(tmp_path / "tmp"),
+                   "-o", str(tmp_path / "o.excmp"), str(src)])
+    cap = capsys.readouterr()
+    assert rc == 1
+    assert "restoring and checking every hash" in cap.out
+    assert cap.err.startswith("\nerror: "), repr(cap.err[:60])
+    assert not (tmp_path / "o.excmp").exists()
+
+    # A command that never drew a frame adds no blank line.
+    rc = cli.main(["compress", "-p", "fast", "--json", "--temp",
+                   str(tmp_path / "tmp"), "-o", str(tmp_path / "p.excmp"),
+                   str(tmp_path / "does-not-exist")])
+    assert rc == 1
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+@needs_7z
+def test_every_cli_verb_that_reports_progress_uses_the_shared_printer(
+        tmp_path, monkeypatch):
+    """Reverting any one call site to its old inline printer would bring the
+    frozen "0.0%" back for that verb only, and nothing else would notice."""
+    from excmp import cli
+
+    made = []
+
+    def spy(args, clock=None):
+        made.append(args.func.__name__)
+        return lambda stage, pct: None
+
+    monkeypatch.setattr(cli, "_progress_printer", spy)
+    src = _cli_tree(tmp_path)
+    tmp = str(tmp_path / "tmp")
+    assert cli.main(["compress", "-p", "fast", "--temp", tmp,
+                     "-o", str(tmp_path / "a.excmp"), str(src)]) == 0
+    assert cli.main(["compress", "--format", "zip", "--temp", tmp,
+                     "-o", str(tmp_path / "b.zip"), str(src)]) == 0
+    assert cli.main(["convert", str(tmp_path / "b.zip"), "-p", "fast",
+                     "--temp", tmp, "-o", str(tmp_path / "c.excmp")]) == 0
+    assert made == ["cmd_compress", "cmd_compress", "cmd_convert"]

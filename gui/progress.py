@@ -54,9 +54,24 @@ VERIFY_STAGE = "verify"
 #: What the job shows while it runs, and once it has outlasted its estimate.
 VERIFYING = "verifying"
 VERIFYING_LATE = "verifying, past estimate"
+#: The self-test passed; what is left is publishing, encrypting, recovery
+#: records and splitting, none of which reports.
+FINISHING = "finishing"
+#: A self-test report later than this after the previous one means the beats
+#: stopped (a paused job holds the restore), so that gap is not self-test
+#: time. The engine beats every second; test_i11 pins the relationship.
+VERIFY_GAP_LIMIT_S = 3.0
 #: How far elapsed time alone may carry the bar through the self-test's band.
 #: The rest is closed only by the engine saying the restore matched.
 VERIFY_TIME_CAP = 0.9
+
+
+def eta_is_absent(stage: str, eta: object) -> bool:
+    """True when a running job has *no* remaining-time figure to show and the
+    reason is not "still estimating": past its self-test estimate, finishing,
+    or in a self-test nobody estimated (a job with no analysis)."""
+    return (stage in (VERIFYING_LATE, FINISHING)
+            or (stage == VERIFYING and eta is None))
 
 
 def expected_chain(stages: list[str]) -> list[str]:

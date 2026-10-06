@@ -161,11 +161,21 @@ def test_a_cancelled_extract_does_not_leave_a_half_restore(tmp_path):
     assert not left, f"extract temp not cleaned: {[p.name for p in left][:5]}"
 
 
-def test_the_archive_is_not_published_until_it_verifies(tmp_path):
+@pytest.mark.parametrize("profile", [Profile.FAST, Profile.NORMAL])
+def test_the_archive_is_not_published_until_it_verifies(tmp_path, profile):
     """The D9 guarantee, stated as a crash-consistency property: at no point
     does a readable-looking `.excmp` exist at the final path before the whole
     chain has been replayed and hashed. Cancelling during the verify phase is
-    the moment that would expose a publish-then-check ordering."""
+    the moment that would expose a publish-then-check ordering.
+
+    The cancel used to hang off ``len(stages_seen) > 6``, which a job this
+    small never reaches, so nothing was ever cancelled during verification.
+    The self-test announces itself (I11), so the trigger is now the event
+    itself and the test asserts that it fired."""
+    from excmp.tools import find_tools
+
+    if profile is Profile.NORMAL and find_tools()["7z"] is None:
+        pytest.skip("7z not installed")
     src, snapshot = _corpus(tmp_path)
     out = tmp_path / "result.excmp"
 
@@ -173,18 +183,22 @@ def test_the_archive_is_not_published_until_it_verifies(tmp_path):
 
     def on_progress(stage: str, pct: float) -> None:
         stages_seen.append(stage)
-        # Let the compression finish, then pull the rug during verification.
-        if len(stages_seen) > 6:
-            ctx.cancel.set()
+        if stage == "verify":
+            ctx.cancel.set()                    # pull the rug during verification
         assert not out.exists(), (
             f"the archive appeared at the final path during stage {stage!r} — "
             "publication must come after verification, not before")
 
     ctx = StageContext(temp_dir=tmp_path / "t", threads=2, progress_cb=on_progress)
     try:
-        compress([src], out, Profile.FAST, ctx)
+        compress([src], out, profile, ctx)
     except (StageError, KeyboardInterrupt, RuntimeError):
         assert not out.exists()
+    else:
+        # In-process Zstandard has no child to kill, so a cancel may arrive
+        # too late to stop it. Then the archive is the verified one.
+        assert profile is Profile.FAST, "a cancelled 7-Zip self-test published"
+    assert "verify" in stages_seen, "the test never reached the self-test"
     _assert_input_pristine(snapshot)
 
 

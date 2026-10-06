@@ -32,8 +32,9 @@ from excmp.stages.base import StageContext
 from excmp.tools import ToolInfo, find_tools
 
 from .models import Job, JobKind, JobState
-from .progress import (VERIFY_STAGE, VERIFYING, VERIFYING_LATE, ChainProgress,
-                       EtaEstimator, expected_chain)
+from .progress import (FINISHING, VERIFY_GAP_LIMIT_S, VERIFY_STAGE, VERIFYING,
+                       VERIFYING_LATE, ChainProgress, EtaEstimator,
+                       expected_chain)
 from .suggest import AnalysisSummary, strongest_profile, summarize
 
 # Don't flood the event loop: 7-Zip's -bsp1 emits a line per percent and
@@ -225,8 +226,14 @@ class _EngineWorker(QRunnable):
         self._t0 = 0.0
         self._last_emit = 0.0
         self._last_pct = -1.0
-        # I11: when the D9 self-test began, and how long it took once done.
+        # I11: when the D9 self-test began, the seconds it has actually run
+        # (beat to beat, so a pause is not counted) and, once done, how long it
+        # occupied the job's clock, pauses included. The first is what the bar
+        # and countdown use; the second is what calibration must subtract from
+        # a job time that also contains the pause.
         self._verify_t0: float | None = None
+        self._verify_last = 0.0
+        self._verify_run = 0.0
         self._verify_elapsed = 0.0
 
     # -- callbacks, running on the worker thread ---------------------------
@@ -255,12 +262,20 @@ class _EngineWorker(QRunnable):
         """
         if self._verify_t0 is None:
             self._verify_t0 = now
-        elapsed = now - self._verify_t0
+        elif now - self._verify_last <= VERIFY_GAP_LIMIT_S:
+            # A longer gap means the beats stopped: the job was paused and the
+            # restore held. Those seconds are not the self-test's, and
+            # counting them would flip a resumed job to "past estimate".
+            self._verify_run += now - self._verify_last
+        self._verify_last = now
+        elapsed = self._verify_run
         if pct >= 100.0:
-            self._verify_elapsed = elapsed
+            self._verify_elapsed = now - self._verify_t0
             overall = self._chain.verify_done()
             eta: float | None = None
-            label = VERIFYING
+            # The gate passed. What follows (publish, encrypt, recovery
+            # records, split) reports nothing, and "verifying" would be a lie.
+            label = FINISHING
         else:
             overall = self._chain.verify(elapsed)
             eta = self._chain.verify_remaining(elapsed)
@@ -305,6 +320,11 @@ class CompressWorker(_EngineWorker):
         self.recovery = job.recovery
         self.split = job.split
         self.archive_format = job.archive_format
+        if self.archive_format != "excmp":
+            # A plain .7z/.zip is one 7-Zip stage, checked by a different gate
+            # that reports no "verify" events. Keeping the profile's chain and
+            # its self-test share would leave the bar parked at 51-82%.
+            self._chain = ChainProgress(expected_chain(["sevenzip"]))
 
     def run(self) -> None:
         from excmp import engine  # deferred: importing the engine is not free

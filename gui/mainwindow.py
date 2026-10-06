@@ -31,6 +31,7 @@ from excmp.tools import find_tools
 
 from .compare_run import ComparisonRun
 from .format import fmt_eta, fmt_size
+from .progress import FINISHING, VERIFYING, VERIFYING_LATE
 from .models import Job, JobKind, JobState
 from .queue_manager import AnalysisSignals, AnalysisWorker, QueueManager
 from .suggest import (AnalysisSummary, profile_comparison, recommend_profile,
@@ -796,13 +797,18 @@ class MainWindow(QMainWindow):
         if not self._infos:
             return
         profile = profile or self.presets.current_profile()
-        the_plan = make_plan(self._infos, profile, self.tools)
-        reference = make_plan(self._infos, strongest_profile(self.tools), self.tools)
-        self._summary = summarize(self._infos, the_plan, self.tools, reference)
+        self._summary = self._summary_for(profile)
         self.analysis_card.set_summary(self._summary)
         self._refresh_estimates()
         self._refresh_pending_view()
         self._refresh_actions()
+
+    def _summary_for(self, profile: Profile) -> AnalysisSummary:
+        """The analysis as ``profile`` would route it. Pure: no file is read
+        and nothing is repainted."""
+        the_plan = make_plan(self._infos, profile, self.tools)
+        reference = make_plan(self._infos, strongest_profile(self.tools), self.tools)
+        return summarize(self._infos, the_plan, self.tools, reference)
 
     def _refresh_estimates(self) -> list:
         """Recompute the comparison table. Costs four ``planner.plan()`` calls
@@ -1041,8 +1047,17 @@ class MainWindow(QMainWindow):
                 actions=[(self.tr("Open Advanced"), self._focus_params)])
             return
         self.results.hide_panel()
+        # The job's bar and self-test estimate read its summary's chain, so it
+        # has to describe the profile that will actually run. The one on screen
+        # was built for whatever was selected when the folder was dropped, and
+        # a remembered choice offered afterwards (select() does not emit)
+        # leaves the two different.
+        profile = self.presets.current_profile()
+        summary = self._summary
+        if summary is not None and self._infos:
+            summary = self._summary_for(profile)
         self.queue.add_compress(inputs, self._output_path_for(inputs),
-                                self.presets.current_profile(), self._summary,
+                                profile, summary,
                                 sidecar=self.settings_tab.sidecar_toggle.isChecked(),
                                 options=options, extras=extras)
         # The password belongs to the job that just started, not to the next
@@ -1418,6 +1433,17 @@ class MainWindow(QMainWindow):
         when a job completes while the user is elsewhere.
         """
         active = self._active_job()
+        if active is not None and active.stage == VERIFYING_LATE:
+            return self.tr("%s · verifying, past estimate") % active.display_name
+        if active is not None and active.stage == FINISHING:
+            return self.tr("%s · finishing") % active.display_name
+        if active is not None and active.stage == VERIFYING:
+            # No estimate (a job with no analysis) is still a self-test; it
+            # must not read as "estimating…", which promises a number.
+            return (self.tr("%s · verifying") % active.display_name
+                    if active.eta_s is None else
+                    self.tr("%s · verifying · %s left") % (active.display_name,
+                                                           fmt_eta(active.eta_s)))
         if active is not None:
             return (self.tr("%s · estimating…") % active.display_name
                     if active.eta_s is None else

@@ -8,7 +8,7 @@ was sliced mid-word, or that the chooser was advertising "100% or better" - an
 archive of zero bytes or smaller. Every one of those shipped past a green
 suite during UI wave 2 and was caught by looking at a PNG.
 
-So: 16 surfaces x 2 themes, including the ones no test and no README
+So: 18 surfaces x 2 themes, including the ones no test and no README
 screenshot ever renders - the banner, the Extract tab, the expanded pending
 list, a failed-job results panel, everything-disclosed-at-once. Cheap to run,
 and the only thing that has ever caught this class of defect here.
@@ -214,6 +214,15 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     win.queue_table.update_state(job)
     shot(win, out, f"{theme}-09-activity-running")
 
+    # I11: the D9 self-test, on its estimate and then past it.
+    from gui.progress import VERIFYING, VERIFYING_LATE
+    job.percent, job.eta_s, job.stage = 71.0, 1260.0, VERIFYING
+    win._on_job_progress(job.id, VERIFYING, 71.0, 1260.0)
+    shot(win, out, f"{theme}-09b-activity-verifying")
+    job.percent, job.eta_s, job.stage = 92.0, None, VERIFYING_LATE
+    win._on_job_progress(job.id, VERIFYING_LATE, 92.0, None)
+    shot(win, out, f"{theme}-09c-activity-verifying-late")
+
     job.state = JobState.DONE
     job.final_bytes, job.elapsed_s = 700_000_000, 166.0
     job.summary = win._summary
@@ -249,7 +258,7 @@ def sweep(theme: str, files: list[Path], out: Path) -> None:
     shot(win, out, f"{theme}-12-activity-failed")
 
     win.queue.shutdown()
-    print(f"  {theme}: 16 surfaces")
+    print(f"  {theme}: 18 surfaces")
 
 
 def main() -> int:

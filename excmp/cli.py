@@ -22,6 +22,45 @@ def _fmt_size(n: int) -> str:
     return f"{n} B"
 
 
+def _progress_printer(args, clock=None):
+    """One ``progress_cb`` for every CLI verb, so they can't drift apart.
+
+    I11: the D9 self-test reports ``("verify", 0.0)`` once a second because
+    there is nothing to measure (zpaqfranz prints nothing during a restore).
+    Printing that as "0.0%" for half an hour reads as a hang, so the
+    self-test shows its elapsed time instead. Frames are padded to one width
+    because each overwrites the last with a carriage return.
+    """
+    import time
+
+    clock = clock or time.monotonic
+    started: list[float] = []
+
+    def show(stage: str, pct: float) -> None:
+        if args.json:
+            return
+        if stage == "verify" and pct < 100.0:
+            if not started:
+                started.append(clock())
+            secs = int(clock() - started[0])
+            text = (f"[verify] restoring and checking every hash, "
+                    f"{secs // 60}m {secs % 60:02d}s")
+        else:
+            text = f"[{stage}] {pct:5.1f}%"
+        print(f"\r  {text:<60}", end="", flush=True)
+        _frame.pending = True
+
+    return show
+
+
+class _frame:
+    """Whether a progress frame is on screen with no newline after it, so an
+    error printed next does not get glued onto "restoring and checking
+    every hash"."""
+
+    pending = False
+
+
 def cmd_analyze(args: argparse.Namespace) -> int:
     tools = find_tools()
     infos: list = []
@@ -127,11 +166,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
         # --split for every plain archive.
         return _compress_standard(args, engine, ctx)
 
-    def show(stage: str, pct: float) -> None:
-        if not args.json:
-            print(f"\r  [{stage}] {pct:5.1f}%", end="", flush=True)
-
-    ctx.progress_cb = show
+    ctx.progress_cb = _progress_printer(args)
     out = Path(args.output)
     from .ram import parse_extra_args
     options = engine.StageOptions(
@@ -188,11 +223,7 @@ def cmd_compress(args: argparse.Namespace) -> int:
 
 def _compress_standard(args, engine, ctx: StageContext) -> int:
     """G4: a plain .7z/.zip. Reports what it can and cannot promise."""
-    def show(stage: str, pct: float) -> None:
-        if not args.json:
-            print(f"\r  [{stage}] {pct:5.1f}%", end="", flush=True)
-
-    ctx.progress_cb = show
+    ctx.progress_cb = _progress_printer(args)
     # The password is passed so the engine can REFUSE the combination. Not
     # passing it is how `--format zip --password` used to write a plain,
     # unencrypted archive and exit 0 without even prompting.
@@ -435,11 +466,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
     ctx = StageContext(temp_dir=Path(args.temp))
 
-    def show(stage: str, pct: float) -> None:
-        if not args.json:
-            print("\r  [%s] %5.1f%%" % (stage, pct), end="", flush=True)
-
-    ctx.progress_cb = show
+    ctx.progress_cb = _progress_printer(args)
     result = convert_archive(Path(args.archive), Path(args.output),
                              Profile(args.profile), ctx,
                              password=_ask_password(args))
@@ -822,6 +849,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _frame.pending = False
     if (getattr(args, "keyfile", None) and args.func is cmd_compress
             and not getattr(args, "password", False)):
         # A keyfile alone is a legitimate single factor as far as `crypto` is
@@ -844,6 +872,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:  # surface a clean one-liner, not a traceback
+        if _frame.pending:
+            print(file=sys.stderr)
+            _frame.pending = False
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

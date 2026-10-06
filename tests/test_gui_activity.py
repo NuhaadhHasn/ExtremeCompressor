@@ -365,3 +365,58 @@ def test_the_banner_is_reusable_and_carries_meaning_in_words(window, qtbot):
 
     window.banner.hide_banner()
     assert not window.banner.isVisibleTo(window)
+
+
+# -- I11: the self-test is a phase you can see ---------------------------------
+
+def _running(window, stage, eta):
+    job = _queued_job(window, "Silesia")
+    job.state = JobState.RUNNING
+    window.queue._on_progress(job.id, stage, 70.0, eta)
+    return job
+
+
+def test_the_strip_names_the_self_test_and_its_estimate(window):
+    from gui.progress import VERIFYING
+
+    _running(window, VERIFYING, 600.0)
+    assert window._job_status_text() == "Silesia · verifying · ~10 min left"
+
+
+def test_past_its_estimate_the_self_test_says_so_instead_of_estimating(window):
+    from gui.progress import VERIFYING_LATE
+
+    job = _running(window, VERIFYING_LATE, None)
+    text = window._job_status_text()
+    assert text == "Silesia · verifying, past estimate"
+    assert "estimating" not in text
+    row = window.queue_table._rows[job.id]
+    from gui.widgets.queue_table import COL_ETA, COL_STATE
+    assert row.item.text(COL_ETA) == "—"
+    assert row.item.text(COL_STATE).endswith("verifying, past estimate")
+
+
+def test_a_job_carries_the_analysis_of_the_profile_it_will_run(window, qtbot, tmp_path):
+    """The bar and its self-test estimate read the job's summary chain. The
+    summary on screen is built for whatever was selected when the folder was
+    dropped; choosing another profile afterwards without a manual click (a
+    remembered choice does that) left the two different, and the bar sized
+    the self-test for a chain that never ran."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("data " * 4_000, encoding="utf-8")
+    window.queue.pause()
+    with qtbot.waitSignal(window.analysisFinished, timeout=60_000):
+        window.add_paths([src])
+
+    chosen = Profile.FAST if window.presets.current_profile() is not Profile.FAST \
+        else Profile.NORMAL
+    window.compare_table.select(chosen)        # emit=False, as a remembered pick
+    expected = window._summary_for(chosen).chain    # before the flow resets
+    assert window._summary.chain != expected, \
+        "the fixture needs two profiles with different chains"
+    window.start_compression()
+
+    job = window.queue.jobs[0]
+    assert job.profile is chosen
+    assert job.summary.chain == expected

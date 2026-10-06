@@ -136,6 +136,16 @@ def store_reason(info: FileInfo) -> str | None:
         return ("uncompressed PCM audio: stored as-is because the FLAC tool "
                 "is not installed - fetching it would shrink this ~43% with "
                 "no loss")
+    if info.path.suffix.lower() in _OGG_AUDIO:
+        # B13: with balrogg installed an Ogg file is not piped at all. It
+        # stays on the store route and is packed there, like a WAV with FLAC:
+        # 13.358% smaller on 18 real music files, byte-identical, where piping
+        # them through 7-Zip saved 1.112% (B13a). Checked before the probe
+        # rule below, which only applies when the specialist is absent.
+        from . import oggpack
+        if oggpack.available():
+            return ("Ogg audio: packed with balrogg, which restores it byte "
+                    "for byte (measured ~13% smaller on music)")
     if (info.path.suffix.lower() in _OGG_AUDIO
             and info.sample_ratio_max < 1.0):
         # B13, measured on 18 real music files: the Ogg files the probe

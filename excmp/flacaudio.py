@@ -106,7 +106,7 @@ def _run(exe: Path, args: list[str]) -> bool:
     return done.returncode == 0
 
 
-def pack(raw: bytes) -> bytes | None:
+def pack(raw: bytes, ctx: object = None, effort: int | None = None) -> bytes | None:
     """FLAC-encode a WAV, verify the round-trip, and return the bytes.
 
     ``None`` means "store this raw", which is always a correct answer: no
@@ -155,7 +155,7 @@ def pack(raw: bytes) -> bytes | None:
         rmtree_force(work)
 
 
-def unpack(packed: bytes) -> bytes:
+def unpack(packed: bytes, limit: int | None = None) -> bytes:
     """Restore a WAV from :func:`pack`'s output.
 
     Raises :class:`RuntimeError` on failure. Unlike `pack` there is no

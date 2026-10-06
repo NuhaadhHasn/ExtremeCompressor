@@ -1082,7 +1082,8 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             renamed = payload_path.with_name(payload_name)
             payload_path.rename(renamed)
             payload_path = renamed
-        write_container(tmp_out, manifest, payload_path, stored_map)
+        write_container(tmp_out, manifest, payload_path, stored_map,
+                        ctx=ctx, profile=profile)
 
         # --- verify then atomically publish ---------------------------------
         _verify_before_publish(tmp_out, ctx)

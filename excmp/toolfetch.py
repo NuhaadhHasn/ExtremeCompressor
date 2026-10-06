@@ -126,6 +126,11 @@ class ToolSpec:
     #: the check cheap enough to run before every spawn: measured 0.66 s for
     #: qpdf's 12-file bin directory against 1.66 s for all 87 MB.
     exe_dir_sha256: tuple[tuple[str, str], ...] = ()
+    #: The download **is** the executable (balrogg ships as one bare
+    #: ``.exe``), not a zip to unpack. It is hashed against ``sha256`` before
+    #: it is placed, placed only at ``exe_relpath``, and from then on guarded
+    #: by ``exe_dir_sha256`` exactly like an unpacked tool.
+    raw: bool = False
 
     def version_tuple(self) -> tuple[int, ...]:
         return _version_tuple(self.version)
@@ -249,6 +254,36 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
             ("libFLAC.dll", "f93499172875fc2c0df80b57086f32e3f39e835283952ee2a59a3d4ffb097644"),
             ("metaflac.exe", "4f1653fbfc88a2328f92eb9f856dcf0feb3b303b216d1b573a6d57b21a6e296f"),
         ),
+    ),
+    # B13: lossless Ogg Vorbis / Opus recompression. Measured on 18 real music
+    # files (170 MB): 13.358% smaller, 18/18 restored byte-identically, against
+    # 1.112% for the best route the app had. docs/benchmarks/2026-10-06-b13.
+    #
+    # The release is one bare executable, hence `raw=True`. GPL-3.0, driven as
+    # a subprocess and never linked; the repo is private with no distribution
+    # (CLAUDE.md, licensing), and if that ever changes this needs revisiting
+    # first, like flac above.
+    #
+    # The digest is GitHub's own per-asset digest for release 1.4, confirmed
+    # against the bytes downloaded on this machine on 2026-10-01 and again on
+    # 2026-10-06. Note the binary's own banner says "balrogg 1.3"; the hash is
+    # what identifies it, and the floor below is on this pin's version.
+    "balrogg": ToolSpec(
+        name="balrogg",
+        version="1.4",
+        url=("https://github.com/iczelia/balrogg/releases/download/1.4/"
+             "balrogg-x86_64.exe"),
+        sha256="b3a52670bf37eaf941933bf67fbfdcd140638240fa3d20bb9e9bd6c923097db2",
+        size=247315,
+        exe_relpath="balrogg-x86_64.exe",
+        license="GPL-3.0",
+        min_version="1.4",
+        source="github.com/iczelia/balrogg release 1.4 (2026-09-10), asset digest",
+        exe_dir_sha256=(
+            ("balrogg-x86_64.exe",
+             "b3a52670bf37eaf941933bf67fbfdcd140638240fa3d20bb9e9bd6c923097db2"),
+        ),
+        raw=True,
     ),
 }
 
@@ -614,8 +649,17 @@ def fetch_tool(spec: ToolSpec, *, allow_insecure: bool = False,
         _download_to(spec, archive, allow_insecure)
         unpacked = staging / "tree"
         unpacked.mkdir()
-        _unpack(archive, unpacked, spec)
-        archive.unlink(missing_ok=True)
+        if spec.raw:
+            # `_download_to` has already checked size and SHA-256 on the bytes
+            # that arrived. `_exe_in` decides where they go, through
+            # `resolve_within`, so a pin can no more write outside its own
+            # directory than a zip entry can.
+            target = _exe_in(unpacked, spec)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(archive, target)
+        else:
+            _unpack(archive, unpacked, spec)
+            archive.unlink(missing_ok=True)
 
         # Deliberately no marker file written. The first version recorded the
         # expected digest beside the binary, which made it self-certifying:

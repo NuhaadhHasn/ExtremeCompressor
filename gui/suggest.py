@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
-from excmp.estimate import DEFAULT_RATES, Rates, compare_profiles
+from excmp.estimate import DEFAULT_RATES, Rates, compare_profiles, pack_cost
 from excmp.planner import Plan, Profile, precomp_inflation, store_reason
 from excmp.planner import plan as make_plan
 from excmp.sample import MeasuredRun, Sample
@@ -64,6 +64,12 @@ class AnalysisSummary:
     # Bytes that stay stored even under the strongest chain this machine can
     # run. See summarize() for why this is tracked separately.
     floor_store_bytes: int = 0
+    #: B13: Ogg audio balrogg will pack, and what packing it costs. They sit
+    #: inside ``store_bytes`` (the files take the store route) but they are
+    #: slow, so the bar and the time estimate have to know.
+    pack_bytes: int = 0
+    pack_seconds: float = 0.0
+    pack_verify_seconds: float = 0.0
 
     @property
     def store_fraction(self) -> float:
@@ -148,6 +154,7 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
                 floor.update(route.files)
         floor_store_bytes = sum(i.size for i in infos if i.path in floor)
 
+    cost = pack_cost(infos, the_plan)
     return AnalysisSummary(
         total_bytes=total,
         file_count=len(infos),
@@ -160,6 +167,9 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         chain=expected_chain(list(pipeline_stages)),
         tools={name: info is not None for name, info in (tools or {}).items()},
         floor_store_bytes=floor_store_bytes,
+        pack_bytes=cost.bytes,
+        pack_seconds=cost.seconds,
+        pack_verify_seconds=cost.verify_seconds,
     )
 
 

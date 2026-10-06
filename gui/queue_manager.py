@@ -32,7 +32,8 @@ from excmp.stages.base import StageContext
 from excmp.tools import ToolInfo, find_tools
 
 from .models import Job, JobKind, JobState
-from .progress import (FINISHING, VERIFY_GAP_LIMIT_S, VERIFY_STAGE, VERIFYING,
+from .progress import (FINISHING, PACK_STAGE, PACKING, VERIFY_GAP_LIMIT_S,
+                       VERIFY_STAGE, VERIFYING,
                        VERIFYING_LATE, ChainProgress, EtaEstimator,
                        expected_chain)
 from .suggest import AnalysisSummary, strongest_profile, summarize
@@ -195,11 +196,13 @@ def _time_split(summary: AnalysisSummary | None) -> tuple[float | None, float | 
     if summary is None:
         return None, None
     from excmp.calibrate import blended_rates
-    from excmp.estimate import time_split
+    from excmp.estimate import PackCost, time_split
 
     try:
+        pack = PackCost(bytes=summary.pack_bytes, seconds=summary.pack_seconds,
+                        verify_seconds=summary.pack_verify_seconds)
         return time_split(summary.store_bytes, summary.pipeline_bytes,
-                          summary.chain, blended_rates())
+                          summary.chain, blended_rates(), pack=pack)
     except Exception:                                   # noqa: BLE001
         # An estimate is a nicety for the bar; a job never fails for want
         # of one.
@@ -219,8 +222,10 @@ class _EngineWorker(QRunnable):
         self.ctx.log_cb = self._on_log
         chain = job.summary.chain if job.summary else []
         compress_s, verify_s = _time_split(job.summary)
-        self._chain = ChainProgress(chain or expected_chain(["sevenzip"]),
-                                    compress_s=compress_s, verify_s=verify_s)
+        self._chain = ChainProgress(
+            chain or expected_chain(["sevenzip"]), compress_s=compress_s,
+            verify_s=verify_s,
+            pack_s=job.summary.pack_seconds if job.summary else None)
         self._eta = EtaEstimator()
         self._clock = time.monotonic
         self._t0 = 0.0
@@ -243,6 +248,8 @@ class _EngineWorker(QRunnable):
             self._on_verify(pct, now)
             return
         overall = self._chain.update(stage, pct)
+        if stage == PACK_STAGE:
+            stage = PACKING
         if (overall - self._last_pct < _MIN_PCT_DELTA
                 and now - self._last_emit < _MIN_INTERVAL_S
                 and overall < 100.0):

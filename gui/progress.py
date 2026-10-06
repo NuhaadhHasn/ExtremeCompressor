@@ -57,6 +57,11 @@ VERIFYING_LATE = "verifying, past estimate"
 #: The self-test passed; what is left is publishing, encrypting, recovery
 #: records and splitting, none of which reports.
 FINISHING = "finishing"
+#: The Ogg specialist's phase (B13): the engine reports it as ``("pack", pct)``
+#: after the chain and before the self-test. It is a real stage with a real
+#: percentage (bytes packed over bytes to pack), unlike the self-test.
+PACKING = "packing audio"
+PACK_STAGE = "pack"
 #: A self-test report later than this after the previous one means the beats
 #: stopped (a paused job holds the restore), so that gap is not self-test
 #: time. The engine beats every second; test_i11 pins the relationship.
@@ -94,7 +99,8 @@ class ChainProgress:
 
     def __init__(self, chain: list[str], ceiling: float = PIPELINE_CEILING,
                  compress_s: float | None = None,
-                 verify_s: float | None = None) -> None:
+                 verify_s: float | None = None,
+                 pack_s: float | None = None) -> None:
         self.chain: list[str] = list(chain) or ["zstd"]
         self.ceiling = ceiling
         self._weights = [STAGE_WEIGHTS.get(s, DEFAULT_WEIGHT) for s in self.chain]
@@ -103,12 +109,23 @@ class ChainProgress:
         # Without both halves of an estimate the self-test has no share to
         # move through, and the bar keeps its pre-I11 behaviour: the chain
         # fills to the ceiling and the self-test waits there.
+        #
+        # Three bands when the job also packs Ogg audio (B13): the chain's, the
+        # packing's, the self-test's, each sized by its estimated seconds.
+        self.pack_s: float | None = None
         if compress_s and verify_s and compress_s > 0 and verify_s > 0:
             self.verify_s: float | None = float(verify_s)
-            self._chain_top = ceiling * compress_s / (compress_s + verify_s)
+            total = compress_s + verify_s
+            self._verify_start = ceiling * compress_s / total
+            if pack_s and 0 < pack_s < compress_s:
+                self.pack_s = float(pack_s)
+                self._chain_top = ceiling * (compress_s - pack_s) / total
+            else:
+                self._chain_top = self._verify_start
         else:
             self.verify_s = None
             self._chain_top = ceiling
+            self._verify_start = ceiling
 
     @property
     def stage_count(self) -> int:
@@ -119,6 +136,15 @@ class ChainProgress:
         if stage_id == VERIFY_STAGE:
             # Not a stage of the chain: appending it would rescale every
             # weight. The self-test is timed through `verify()` instead.
+            return self._peak
+        if stage_id == PACK_STAGE and self.pack_s is not None:
+            # Also not a stage of the chain, and unlike the self-test it has a
+            # real percentage: bytes packed over bytes to pack. Its band is
+            # sized by the estimate, and the chain's band is banked first.
+            self._peak = max(self._peak, self._chain_top)
+            frac = max(0.0, min(100.0, pct)) / 100.0
+            self._peak = max(self._peak, self._chain_top
+                             + (self._verify_start - self._chain_top) * frac)
             return self._peak
         if stage_id not in self.chain:
             # The plan and reality disagreed (a stage was added, or a profile
@@ -146,11 +172,11 @@ class ChainProgress:
         Reaching the self-test means every stage of the chain finished, so
         the chain's band is banked whatever its last report said.
         """
-        self._peak = max(self._peak, self._chain_top)
+        self._peak = max(self._peak, self._verify_start)
         if self.verify_s is not None:
             fraction = min(max(0.0, elapsed_s) / self.verify_s, VERIFY_TIME_CAP)
-            band = self.ceiling - self._chain_top
-            self._peak = max(self._peak, self._chain_top + band * fraction)
+            band = self.ceiling - self._verify_start
+            self._peak = max(self._peak, self._verify_start + band * fraction)
         return self._peak
 
     def verify_done(self) -> float:

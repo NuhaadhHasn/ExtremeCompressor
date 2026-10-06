@@ -206,7 +206,7 @@ _UNCOMPRESSED_AUDIO = {".wav", ".aiff", ".aif", ".w64", ".rf64"}
 #: has been measured (B13, 2026-10-01). An Ogg file whose own probe says it
 #: shrinks is piped; every other media file keeps "stored as-is" until its
 #: format is measured too. tests/test_b13_ogg_probe.py has the table.
-_OGG_AUDIO = {".ogg", ".oga", ".opus"}
+from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers)
 
 #: How far Precomp inflates its output mid-pipeline, per data type. The
 #: generic figure is 5x (research/10 C-3), but **PNG measured ~50x** — 15 PNGs

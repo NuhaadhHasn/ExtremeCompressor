@@ -54,6 +54,10 @@ from .tempclean import rmtree_force
 #: refuses them (exit 1) and :func:`pack` returns ``None`` for the file.
 OGG_MAGIC = b"OggS"
 
+#: The extensions of Ogg audio containers (Vorbis, Opus). The planner routes
+#: them and the estimator predicts them from this one set.
+SUFFIXES = frozenset({".ogg", ".oga", ".opus"})
+
 #: Below this the per-entry cost of a subprocess outweighs anything saved.
 MIN_SIZE = 1024
 

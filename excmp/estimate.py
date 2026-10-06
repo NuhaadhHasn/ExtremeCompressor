@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
+from . import oggpack
 from .analyzer import FileInfo
 from .planner import Plan, Profile, plan as make_plan, store_reason
 from .tools import ToolInfo
@@ -334,6 +335,12 @@ class Rates:
     codec_factor: Mapping[str, float] = _CODEC_SLOPE
     rate_spread: float = _RATE_SPREAD
     verify: Mapping[str, float] = _VERIFY_RATE
+    #: B13: will Ogg audio be packed by balrogg? ``None`` asks this machine.
+    #: Explicit in tests, so an estimate does not depend on what is installed.
+    ogg_pack: bool | None = None
+
+    def ogg_packed(self) -> bool:
+        return oggpack.available() if self.ogg_pack is None else self.ogg_pack
 
     @staticmethod
     def chain_key(stages: Sequence[str]) -> str:
@@ -386,6 +393,9 @@ class SizeEstimate:
     # True for Precomp chains: ``expected`` assumes Precomp finds nothing, so the
     # real archive may be far smaller. Say "at most", never "about".
     upper_bound: bool = False
+    #: Original bytes of Ogg audio that balrogg will pack (B13). They sit inside
+    #: ``stored_bytes`` and are *predicted*, not exact like the rest of it.
+    packed_bytes: int = 0
 
     @property
     def total_bytes(self) -> int:
@@ -573,6 +583,80 @@ def _overhead(infos: list[FileInfo], stored_count: int) -> int:
             + _ZIP_ENTRY_BYTES * (stored_count + 2))  # + manifest and payload
 
 
+# -- B13: Ogg audio packed by balrogg ---------------------------------------
+#
+# Priors from 18 real music files (169,975,314 B, Wikimedia Commons) on one
+# machine whose speed varied 3.5x within a session (docs/benchmarks/
+# 2026-10-06-b13). They are priors, so everything built on them is a range.
+#
+# Saved per file at -9: Vorbis 9.5% .. 25.7% (mean 15.5%, weighted 15.1%),
+# Opus 3.6% .. 4.2% (3.9%). `high` is the case where nothing is gained.
+_PACK_RATIO = {"vorbis": (0.74, 0.85, 0.95), "opus": (0.955, 0.962, 1.0)}
+
+# Encode speed at -9, bytes/s, aggregate over each format: Vorbis 143.5 MB in
+# 1,205 s, Opus 26.4 MB in 20 s. Opus is ten times quicker.
+_PACK_ENCODE_RATE = {"vorbis": 0.119e6, "opus": 1.337e6}
+
+# Time at each effort as a fraction of -9's (three real files, one batch):
+# -1 0.042, -2 0.074, -3 0.087, -4 0.113, -5 0.27, -6 0.49, -7 0.55, -8 0.75.
+_PACK_EFFORT_TIME = {1: 0.042, 2: 0.074, 3: 0.087, 4: 0.113, 5: 0.27,
+                     6: 0.49, 7: 0.55, 8: 0.75, 9: 1.0}
+
+# Decode speed, both formats (143.5 MB in 94 s; 26.4 MB in 18 s).
+_PACK_DECODE_RATE = 1.5e6
+
+# The same Vorbis files took 85 s and then 290 s at -9 an hour apart, so the
+# range has to be at least that wide.
+_PACK_SPREAD = 3.5
+
+
+@dataclass(frozen=True)
+class PackCost:
+    """What packing the Ogg files on the store route will cost."""
+
+    bytes: int = 0
+    #: Compress side: every file is encoded, then decoded once to prove it.
+    seconds: float = 0.0
+    #: D9's restore decodes every packed entry again before publishing.
+    verify_seconds: float = 0.0
+    vorbis_bytes: int = 0
+    opus_bytes: int = 0
+
+
+def _ogg_kind(info: FileInfo) -> str:
+    return "opus" if info.path.suffix.lower() == ".opus" else "vorbis"
+
+
+def _packable(stored: list[FileInfo], rates: Rates) -> list[FileInfo]:
+    if not rates.ogg_packed():
+        return []
+    return [i for i in stored if i.path.suffix.lower() in oggpack.SUFFIXES]
+
+
+def pack_cost(infos: list[FileInfo], the_plan: Plan,
+              rates: Rates = DEFAULT_RATES) -> PackCost:
+    """Seconds and bytes for the Ogg files balrogg will pack under this plan.
+
+    The effort follows the profile (``oggpack.effort_for``), so the four rows
+    of the comparison table differ for an Ogg folder, as they do in life.
+    """
+    stored, _ = _split(infos, the_plan)
+    files = _packable(stored, rates)
+    if not files:
+        return PackCost()
+    effort_time = _PACK_EFFORT_TIME.get(oggpack.effort_for(the_plan.profile), 0.27)
+    encode = decode = 0.0
+    by_kind = {"vorbis": 0, "opus": 0}
+    for info in files:
+        kind = _ogg_kind(info)
+        by_kind[kind] += info.size
+        encode += info.size * effort_time / _PACK_ENCODE_RATE[kind]
+        decode += info.size / _PACK_DECODE_RATE
+    return PackCost(bytes=sum(by_kind.values()), seconds=encode + decode,
+                    verify_seconds=decode, vorbis_bytes=by_kind["vorbis"],
+                    opus_bytes=by_kind["opus"])
+
+
 def estimate_size(infos: list[FileInfo], the_plan: Plan,
                   rates: Rates = DEFAULT_RATES) -> SizeEstimate:
     """Predict the archive's size as a range.
@@ -630,7 +714,17 @@ def estimate_size(infos: list[FileInfo], the_plan: Plan,
     # conservative - it is broken, and it renders as a nonsense number.
     low = max(0.0, low)
 
-    base = stored_bytes + overhead
+    # B13: stored Ogg audio is packed, so it is predicted rather than copied at
+    # exactly 1.0. Its bytes come out of the exact base and go in as a range.
+    packed = _packable(stored, rates)
+    packed_bytes = sum(i.size for i in packed)
+    for info in packed:
+        p_low, p_expected, p_high = _PACK_RATIO[_ogg_kind(info)]
+        low += info.size * p_low
+        expected += info.size * p_expected
+        high += info.size * p_high
+
+    base = stored_bytes - packed_bytes + overhead
     return SizeEstimate(
         low=int(base + low),
         expected=int(base + expected),
@@ -639,6 +733,7 @@ def estimate_size(infos: list[FileInfo], the_plan: Plan,
         piped_bytes=piped_bytes,
         overhead_bytes=overhead,
         upper_bound=has_precomp and bool(piped),
+        packed_bytes=packed_bytes,
     )
 
 
@@ -657,22 +752,27 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
 
     stages = _stages_of(the_plan)
     io_seconds = stored_bytes / rates.io_rate if rates.io_rate else 0.0
+    cost = pack_cost(infos, the_plan, rates)
     compress_seconds, verify_seconds = time_split(stored_bytes, piped_bytes,
-                                                  stages, rates)
-    codec_seconds = compress_seconds - io_seconds
+                                                  stages, rates, pack=cost)
+    codec_seconds = compress_seconds - io_seconds - cost.seconds
     spread = max(1.0, rates.spread_for(stages))
 
     base = io_seconds + verify_seconds
     return TimeEstimate(
-        low=base + codec_seconds / spread,
-        expected=base + codec_seconds,
-        high=base + codec_seconds * spread,
+        low=base + codec_seconds / spread + cost.seconds / _PACK_SPREAD,
+        expected=base + codec_seconds + cost.seconds,
+        high=base + codec_seconds * spread + cost.seconds * _PACK_SPREAD,
     )
 
 
 def time_split(stored_bytes: int, piped_bytes: int, stages: Sequence[str],
-               rates: Rates = DEFAULT_RATES) -> tuple[float, float]:
+               rates: Rates = DEFAULT_RATES,
+               pack: PackCost | None = None) -> tuple[float, float]:
     """(compress, verify) expected seconds for one job.
+
+    ``pack`` (B13) adds the Ogg specialist's encode-and-prove time to the
+    compress side and its decode time to the restore side.
 
     I11: the progress bar gives the D9 self-test its own share of the job, so
     the two halves of :func:`estimate_time` are exposed rather than summed.
@@ -689,6 +789,9 @@ def time_split(stored_bytes: int, piped_bytes: int, stages: Sequence[str],
     # at Insane's measured ~0.1 MB/s a 2 GB stored video beside 20 MB of text
     # was estimated at over four hours.
     verify_seconds = io_seconds + (piped_bytes / verify_rate if verify_rate else 0.0)
+    if pack is not None:
+        return (io_seconds + codec_seconds + pack.seconds,
+                verify_seconds + pack.verify_seconds)
     return io_seconds + codec_seconds, verify_seconds
 
 

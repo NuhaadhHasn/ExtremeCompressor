@@ -192,18 +192,27 @@ def gain_note(summary: AnalysisSummary) -> str:
     """The honest one-liner about what lossless compression can achieve."""
     if not summary.file_count:
         return ""
-    frac = summary.store_fraction
+    # B13: Ogg audio sits on the store route but is repacked, so it is neither
+    # "stored bit-exact" nor "can't shrink". It counts with what can shrink,
+    # and the note says what happens to it.
+    packed = summary.pack_bytes
+    shrinkable = summary.pipeline_bytes + packed
+    fixed = summary.store_bytes - packed
+    frac = fixed / summary.total_bytes if summary.total_bytes else 0.0
+    suffix = (f" Ogg audio ({fmt_size(packed)}) is repacked losslessly, "
+              "typically 4–15% smaller." if packed else "")
     if frac >= 0.99:
         return ("Every byte here is already compressed — lossless gain is ~0%. "
                 "The archive will be about the same size as the input.")
     if frac >= MOSTLY_INCOMPRESSIBLE:
         return (f"{fmt_percent(frac)} of this is already compressed and will be stored "
-                f"bit-exact; only {fmt_size(summary.pipeline_bytes)} can actually shrink.")
+                f"bit-exact; only {fmt_size(shrinkable)} can actually shrink." + suffix)
     if frac >= 0.2:
-        return (f"{fmt_size(summary.pipeline_bytes)} can shrink; the other "
-                f"{fmt_size(summary.store_bytes)} is already compressed and gets "
-                "stored losslessly.")
-    return f"Nearly all of this ({fmt_size(summary.pipeline_bytes)}) is worth compressing."
+        return (f"{fmt_size(shrinkable)} can shrink; the other "
+                f"{fmt_size(fixed)} is already compressed and gets "
+                "stored losslessly." + suffix)
+    return (f"Nearly all of this ({fmt_size(shrinkable)}) is worth compressing."
+            + suffix)
 
 
 def shrink_mode_hint(summary: AnalysisSummary) -> str | None:

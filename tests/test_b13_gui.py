@@ -187,3 +187,30 @@ def test_the_strip_says_packing_with_the_time_left(tmp_path, qtbot):
         assert "packing" in text and "left" in text and "estimating" not in text
     finally:
         win.queue.shutdown()
+
+
+# -- the analysis card ------------------------------------------------------------------
+
+def test_the_gain_note_does_not_call_packed_audio_stored_bit_exact(monkeypatch):
+    """Found by rendering the page: an Ogg folder read "99% of this is already
+    compressed and will be stored bit-exact; only 8.6 KB can actually shrink"
+    beside a table promising 15% saved. The audio is packed, not stored."""
+    from excmp import oggpack
+    from gui.suggest import gain_note, summarize
+
+    monkeypatch.setattr(oggpack, "available", lambda: True)
+    infos = [_ogg(300_000_000), _ogg(2_000_000, "notes.ogg")]
+    summary = summarize(infos, plan(infos, Profile.NORMAL, TOOLS), TOOLS)
+    note = gain_note(summary)
+    assert "stored bit-exact" not in note and "~0%" not in note
+    assert "repacked" in note and "Ogg" in note
+
+
+def test_the_gain_note_is_unchanged_without_balrogg(monkeypatch):
+    from excmp import oggpack
+    from gui.suggest import gain_note, summarize
+
+    monkeypatch.setattr(oggpack, "_balrogg_exe", lambda: None)
+    infos = [_ogg(300_000_000)]
+    summary = summarize(infos, plan(infos, Profile.NORMAL, TOOLS), TOOLS)
+    assert "repacked" not in gain_note(summary)

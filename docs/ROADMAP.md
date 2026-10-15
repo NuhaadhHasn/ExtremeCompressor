@@ -329,7 +329,18 @@ OSI rule comes back before anything ships.
       (`planner.py:184`, B4's precedent) — not `_DEFLATE_MEDIA`, which would
       throw the file into a `precomp` that has been measured to find nothing
       in it.
-- [ ] B14. **DArc (Distended Arc) 3.04** - a *maintained* FreeArc fork
+- [x] B14. ❌ **MEASURED AND NOT INTEGRATED 2026-10-15** — DArc loses to
+      Insane on every corpus (**+1.37% to +27.80%**), and beats Extreme only
+      on deflate-rich data (−1.00%, with a ppmd chain that takes as long to
+      restore as to compress). It loses to Extreme on installers (+1.08%)
+      and Silesia (+1.31%). All 8 rows were restored by `unarc` and SHA-256
+      compared. Its ceiling is ppmd (capped at 1 GB) for text and LZMA for
+      binary; `-mcm` and `-max` (ppmonstr) are refused, "cannot write yet".
+      Nothing pinned, no stage written, and **B12a (plain FreeArc) closes
+      with it**. Reopens only if a release writes `cm` or `pmm`. Record:
+      [benchmarks/2026-10-15-b14](benchmarks/2026-10-15-b14-darc.md).
+
+      **DArc (Distended Arc) 3.04** - a *maintained* FreeArc fork
       (krinkels.org, 2026-09-07, `Mickey1s`). **2026-10-01: it's on GitHub**,
       `github.com/DavidLee18/DArc`, GPL-3.0, now a Rust rewrite (`darc` and
       `unarc`). Release **v3.0.4** (2026-08-27) ships
@@ -404,9 +415,9 @@ OSI rule comes back before anything ships.
       the deflate corpus by 14.7% and on the installer `.pcf` by
       18,297 B (0.04%). On that single-block `.pcf`, `-m58`'s archive is
       exactly `-m5`'s size, 45,915,367 B.
-      **B12a (FreeArc) is not closed by this.** It was never measured, and it
-      now lives under **B14**, whose DArc 3.04 is the maintained FreeArc fork
-      and the thing to measure if FreeArc is revisited.
+      **B12a (FreeArc) was not closed by this.** It moved under **B14**,
+      whose DArc 3.04 is the maintained FreeArc fork, and **B14 closed it on
+      2026-10-15**: measured, not integrated.
 
       ### ✅ 2026-09-20 — measured against the real route. It wins, twice, and the second win is the interesting one
 
@@ -511,10 +522,10 @@ OSI rule comes back before anything ships.
       gets the untrusted-stage treatment: pinned hash, no trust in its exit
       code, post-restore SHA-256 decides whether the archive publishes.
 
-      **B12a — FreeArc, the candidate that is actually testable.** *(Still
-      unmeasured. Carried by **B14** since 2026-09-23: DArc 3.04 is the
-      maintained fork, and it has to beat the shipped route, which
-      includes zpaqfranz.)* `Arc.exe`
+      **B12a — FreeArc, the candidate that is actually testable.** *(❌
+      **Closed by B14 on 2026-10-15**: DArc 3.0.4, the maintained FreeArc,
+      lost to Insane on all three corpora and to Extreme on two of three.
+      [Record](benchmarks/2026-10-15-b14-darc.md).)* `Arc.exe`
       (3,647,488 B, sha256 `a2bbdde6…e905`) plus `facompress.dll` /
       `facompress_mt.dll` are in `ExtremeCompressor-refs/Repack-Tools/APEX/`.
       Rules, unchanged from the original item: pinned binary, no trust in its

@@ -43,7 +43,7 @@
 | item | what | record |
 |---|---|---|
 | **B14** ❌ | DArc 3.0.4 (maintained FreeArc, Rust) **measured, not integrated**: +1.37% to +27.80% against Insane on all three corpora, beats Extreme only on deflate data (−1.00%). B12a closes with it | [2026-10-15-b14](benchmarks/2026-10-15-b14-darc.md) |
-| **B18** ✅ | (a) zstd keeps `-1` (identical bytes; timings too noisy), now honours an explicit thread count, capped. (b) **Precomp without `-intense`**: −0.78%/−0.85% on installers, −0.16%/−0.08% on deflate (Extreme/Insane). (c) **MP3/MP4 probe rule**. (c′) **every MP3 to Precomp on Extreme/Insane** (packMP3): 18.02%/15.87%/18.97% end to end | [2026-10-15-b18](benchmarks/2026-10-15-b18-settings.md) |
+| **B18** ✅ | (a) zstd keeps `-1` (identical bytes; timings too noisy), now honours an explicit thread count, capped. (b) **`-intense` kept on**: off saved 0.08–0.85% but lost whole raw-zlib streams (−16.8% synthetic); the local suite caught it. (c) **MP3/MP4 probe rule**. (c′) **every MP3 to Precomp on Extreme/Insane** (packMP3): 18.02%/15.87%/18.97% end to end | [2026-10-15-b18](benchmarks/2026-10-15-b18-settings.md) |
 | B13 follow-up | the toolfetch discovery test finally runs (it always skipped); checks balrogg, flac, qpdf | branch `b13-followups` |
 
 ---
@@ -135,8 +135,10 @@ and `..\ExtremeCompressor-main` (created for this docs commit).
 
 ### 4. B6 — only with an owner-provided Oodle sample
 
-Unchanged. It also reopens **`-intense`**, which was turned off in B18 but
-was added for game paks.
+Unchanged. It also settles **`-intense`**: B18 measured it costing
+0.08–0.85% on installers and deflate archives, and kept it on because
+without it raw zlib streams (game paks) aren't found at all. Measure both on
+real game data; a per-data-type switch may be the answer.
 
 ---
 
@@ -156,8 +158,9 @@ was added for game paks.
 
 ## 5. Things not to re-litigate
 
-- **Precomp runs without `-intense`** (B18, measured on both corpora, both
-  codecs). B6's game data is the only thing that reopens it.
+- **Precomp keeps `-intense`** (B18): off is 0.08–0.85% smaller on
+  installers and deflate archives but finds nothing in raw zlib streams.
+  B6's game data is the only thing that reopens it.
 - **Every MP3 goes to Precomp on Extreme/Insane**; on Fast/Normal the probe
   decides, as for MP4 and Ogg. MOV/MKV/WebM/M4A stay stored until measured.
 - **zstd keeps `threads=-1`** by default; an explicit count is honoured and
@@ -179,14 +182,12 @@ was added for game paks.
 
 ---
 
-## ⚠️ Suite result, 2026-10-16 02:43 (b18-settings, e9e9e93): DO NOT MERGE YET
+## Suite history, 2026-10-16
 
-**1 failed, 1,548 passed, 2 skipped, 1 xfailed** (29 min 50 s, corpus guard
-clean). The failure: `tests/test_extreme_chain.py::test_extreme_manifest_records_chain`
-expects the chain `[tar, precomp, sevenzip]` and got `[tar, sevenzip]`.
-Likely cause, unverified: with `-intense` off, Precomp finds no stream in
-that test's input, skips itself ("no gain"), and the manifest records the
-chain without it. Decide whether the test pinned `-intense` behaviour or a
-real regression (does a job with real deflate data still record precomp?),
-fix, rerun the suite, then merge. CI passed because Precomp is not on the
-runner.
+- 02:43, `e9e9e93`: **1 failed**, 1,548 passed, 2 skipped, 1 xfailed (corpus
+  guard clean). `test_extreme_manifest_records_chain` expects Precomp in the
+  chain for raw zlib data; with `-intense` off Precomp found nothing there.
+  A real regression, not a stale test: fixed in `3821a99` by keeping
+  `-intense` on (record §3).
+- 03:40, `3821a99`: rerun started. If the branch is still unmerged, rerun
+  `suite.py` on it and merge if everything passes (§3.1).

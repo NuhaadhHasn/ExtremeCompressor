@@ -466,9 +466,20 @@ def _stages_of(the_plan: Plan) -> list[str]:
     return []
 
 
+#: MP3 on a chain with Precomp, which recodes it with its built-in packMP3
+#: (B18, 2026-10-16). `precomp -cn` then 7-Zip, file by file, on 21 real MP3s
+#: from two corpora, every one restored: 0.741 to 0.900 of the original,
+#: 0.835 byte-weighted (in-sample). The probe can't see this gain, so it isn't
+#: consulted. `high` is 1.0: a file packMP3 declines goes on to the final
+#: codec as it is, and the disk preflight books `high`.
+_MP3_PRECOMP_RATIO = (0.74, 0.835, 1.0)
+
+
 def _piped_ratios(info: FileInfo, factor: float,
                   has_precomp: bool) -> tuple[float, float, float]:
     """(low, expected, high) ratio for one file the chain will process."""
+    if has_precomp and info.path.suffix.lower() == ".mp3":
+        return _MP3_PRECOMP_RATIO
     if store_reason(info) is not None:
         # Piped only because the profile has Precomp - see _ZLIB_* above.
         if info.zlib_stream:

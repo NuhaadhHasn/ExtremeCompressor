@@ -112,6 +112,28 @@ def test_without_precomp_an_incompressible_mp3_stays_stored():
     assert [r.action for r in plan([info], Profile.EXTREME, NO_PRECOMP).routes] == ["store"]
 
 
+@pytest.mark.parametrize("profile", [Profile.EXTREME, Profile.INSANE])
+@pytest.mark.parametrize("probe", [0.95, 1.0])
+def test_an_mp3_under_precomp_is_predicted_at_packmp3s_ratio(profile, probe):
+    """Precomp's chain took every one of 21 real MP3s to 0.741-0.900 of its
+    size (byte-weighted 0.835). The estimate used to read an unflagged MP3 as
+    no gain (its probe is 1.0), so the profile table showed Extreme no better
+    than Normal on an MP3 folder, where it measured 16-19% smaller."""
+    from excmp.estimate import estimate_size
+    info = _media("song.mp3", Category.AUDIO, probe, entropy=7.99)
+    est = estimate_size([info], plan([info], profile, TOOLS))
+    payload = est.expected - est.overhead_bytes
+    assert 0.80 * info.size < payload < 0.87 * info.size, payload / info.size
+    assert est.high - est.overhead_bytes == info.size   # declined: stored size
+
+
+def test_without_precomp_an_mp3_is_predicted_from_its_probe():
+    from excmp.estimate import estimate_size
+    info = _media("song.mp3", Category.AUDIO, 0.95, entropy=7.99)
+    est = estimate_size([info], plan([info], Profile.NORMAL, TOOLS))
+    assert est.expected - est.overhead_bytes > 0.90 * info.size
+
+
 def test_mp4_does_not_ride_along():
     """Precomp found nothing in MP4: Extreme 4.681% against Normal 4.682% on
     the phone-video corpus (51 MP4 + 6 MOV, the MOVs stored either way). An

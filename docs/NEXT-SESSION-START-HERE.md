@@ -1,27 +1,27 @@
-# 🚦 START HERE — handoff (written 2026-10-15)
+# 🚦 START HERE — handoff (written 2026-10-16)
 
-> **Everything is merged into `main` and pushed; CI is green on `main`. No
-> branch exists besides `main`.**
+> **Two code branches are pushed, reviewed and CI-green, and wait only for the
+> local full suite**: `b18-settings` (6 commits) and `b13-followups` (1 commit,
+> worktree `..\ExtremeCompressor-b13fu`). The suite was started on
+> `b18-settings` at 02:20 on 2026-10-16, as the owner asked, at the very end
+> of the session. **If both branches still exist on GitHub, the merges did not
+> happen: do §3.1 and §3.2 first.** B14 is on `main` (docs only).
 >
-> **Next session is an owner agenda, carried over from 2026-10-01**, in this
-> order (§3 has each spec):
+> **Next session is an owner agenda**, in this order (§3 has each spec):
+> 0. **Name the session** (`/rename`; the title tool isn't in this client).
+> 1. **Merge `b18-settings`** after the local suite passes.
+> 2. **Merge `b13-followups`** the same way.
+> 3. **Quiet-machine re-measures** (B13's Ogg restore rate, packMP3's rates),
+>    only when the owner says the machine is quiet.
+> 4. **B6**, only with an owner-provided Oodle sample.
 >
-> 0. **Name the session.** No download tabs are needed: DArc is already
->    fetched and verified (§3.1).
-> 1. **B14**: DArc against the shipped route.
-> 2. **B18**: the small unmeasured settings.
-> 3. **B13 follow-ups**, small: the restore-rate re-measure on a quiet
->    machine (§3.3).
-> 4. **B6**, only if the owner has provided an Oodle sample by then.
->
-> Each code item gets its own branch, merged after suite + review + CI green
-> (CLAUDE.md, Commits).
->
-> **The owner runs another development session on this machine (2026-10-15).**
-> Keep CPU use low: no workflows or parallel subagents unless asked, one
-> benchmark process at a time, started at **below-normal priority** (see
-> §2, "Running beside another session"), and the full suite only when
-> nothing else of ours is running.
+> **The owner runs other sessions and Docker Desktop on this machine, and
+> Docker and WSL must stay running** (owner, 2026-10-16). `vmmem` alone holds
+> ~6.5 GB; 2–4 GB is usually free. Claude Code reaps background shells when
+> memory runs critically low (it killed a benchmark and the full suite on
+> 2026-10-15/16). So: one heavy process at a time, below-normal priority
+> (checked with `Get-Process`), rows logged as they land, and **the full
+> suite last**, when the owner says memory allows.
 >
 > **Target machine:** Dell Inspiron 15-3567, i5-7200U (2 cores / 4 threads),
 > 15.9 GB. Run `Get-CimInstance Win32_Processor` before quoting a speed.
@@ -30,140 +30,113 @@
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-- **The runtime is not a stable number** (20 min 28 s to 30 min 38 s on this
-  machine on one day). Measure it; don't quote it.
-- **Use `C:\excmp-bench\b17\suite.py`**: it holds the machine awake and wraps
-  the corpus guard around the run.
+- **Use `C:\excmp-bench\b17\suite.py`** (corpus guard around the suite), run
+  from the repo root, below-normal from creation:
+  `cmd /c 'start "" /b /belownormal /wait .venv\Scripts\python.exe C:\excmp-bench\b17\suite.py > out.txt 2>&1'`.
 - **Clear `%TEMP%\pytest-of-<you>` first, and freeze the code before
-  starting.** Editing `excmp/`, `gui/`, `tools/` or `tests/` mid-run
-  invalidates the run. Editing `docs/` does not.
+  starting.** Editing `docs/` mid-run is fine; nothing else is.
 
 ---
 
-## 0. State of the repo
-
-| | |
-|---|---|
-| `main` | I11 and B13 merged and pushed |
-| branches | only `main`, locally and on GitHub |
-| tests | **1,504 passed, 2 skipped, 1 xfailed** locally (2026-10-15, 19 min 42 s at below-normal priority, corpus guard clean) |
-| CI | green on the B13 branch's final commit before the merge (9 min 29 s; balrogg is not on the runner, so its real-tool tests skip there) |
-| pinned tools | `tools/bin/balrogg/1.4/` (new, fetched through `toolfetch`), flac, qpdf, zpaqfranz |
-| AI attribution | none, anywhere. Audited before each commit |
-
----
-
-## 1. What shipped (2026-10-01 → 10-15)
+## 1. What shipped (2026-10-15 → 10-16)
 
 | item | what | record |
 |---|---|---|
-| **I11** ✅ | The D9 self-test is a visible, timed phase: an announced start, a 1 s heartbeat (silent while paused), its estimated share of the bar, "verifying" / "verifying, past estimate" / "finishing". Also fixed J7 learning the self-test as codec time (Insane estimates carried it twice) | ROADMAP I11 |
-| **B13** ✅ | balrogg repacks Ogg audio on the store route: **music 1.112% → 13.181% end to end** (18/18 packed and restored), game music + speech 0.297% → 10.785% | [2026-10-06-b13](benchmarks/2026-10-06-b13-balrogg.md) |
+| **B14** ❌ | DArc 3.0.4 (maintained FreeArc, Rust) **measured, not integrated**: +1.37% to +27.80% against Insane on all three corpora, beats Extreme only on deflate data (−1.00%). B12a closes with it | [2026-10-15-b14](benchmarks/2026-10-15-b14-darc.md) |
+| **B18** ✅ | (a) zstd keeps `-1` (identical bytes; timings too noisy), now honours an explicit thread count, capped. (b) **Precomp without `-intense`**: −0.78%/−0.85% on installers, −0.16%/−0.08% on deflate (Extreme/Insane). (c) **MP3/MP4 probe rule**. (c′) **every MP3 to Precomp on Extreme/Insane** (packMP3): 18.02%/15.87%/18.97% end to end | [2026-10-15-b18](benchmarks/2026-10-15-b18-settings.md) |
+| B13 follow-up | the toolfetch discovery test finally runs (it always skipped); checks balrogg, flac, qpdf | branch `b13-followups` |
 
 ---
 
 ## 2. Findings worth not rediscovering
 
-### A store-route codec's safe failure is a silent one
+### Precomp recodes MP3, and the probe can't see it
 
-B13's first end-to-end run saved **0.2%** instead of 13%. `pack()` stores
-a file raw whenever its round-trip check fails, which is the correct,
-lossless answer. A bug that made the check fail therefore looked exactly
-like "this file doesn't shrink". The cause was a size watch that killed
-balrogg's honest decodes, because balrogg grows its output 1 MiB ahead of
-the data. **Always measure a specialist through `engine.compress` and read
-the ledger's `codec` counts**, not just the tool on its own. The suite
-missed it because the fixtures decode before the first poll.
+Precomp v0.4.7 lists `3 = MP3` among its stream types: packMP3, built in.
+Every one of 21 real MP3s lost 10.0–25.9% through `precomp -cn → 7z`,
+including the ones the zstd probe called incompressible. It costs
+cross-file matches (two near-identical MP3s become unrelated streams), and
+its time estimate is still optimistic (§3.3). **Before calling any media
+"already compressed", ask what Precomp's `-t` list says it can open** —
+`J = JPG` is on it too, unmeasured against lepton.
 
-### Running beside another session
+### Filter a corpus by the exact suffix the rule ships for
 
-Start benchmarks at below-normal priority so the owner's work isn't
-starved. From PowerShell:
-`$p = Start-Process cmd.exe -ArgumentList '/c','<script>.cmd' -WindowStyle Hidden -PassThru; $p.PriorityClass='BelowNormal'`
-(children inherit it). Put the commands in a `.cmd` file: a `cmd /c` line
-with nested quotes failed silently on 2026-10-15. Timings taken this way
-are contended and **must not be pinned**.
+B18's "57 MP4s" were 51 MP4 + 6 MOV, because the probe search matched
+`.mov` too. The reviewer caught it; the MP4-only figures moved from
+8.99%/1.12% to 9.20%/1.61%.
 
-### Two numbers in the estimator are priors from contended runs
+### On a Precomp chain, `expected` is a ceiling
 
-`estimate._PACK_DECODE_RATE` (1.5 MB/s) and the pack encode rates. In the
-app, decoding 147 MB of packed Ogg took 349 s in D9 and 506 s in extract
-(~0.3–0.4 MB/s), against ~1.5 MB/s per file from the CLI. That's
-unexplained, and partly the low priority. **The time estimate for an Ogg
-job's restore is optimistic by up to ~3× until a quiet run settles it**
-(§3.3).
+The GUI shows it as "≤ X". An average there (0.835 for MP3) put "≤ 64.0 MB"
+over a 64.4 MB archive. Any per-type ratio on a Precomp chain must use the
+worst case measured, not the mean (`_MP3_PRECOMP_RATIO` uses 0.90).
 
-### The review keeps paying, and so does checking what it couldn't
+### Two measurement traps
 
-B13: 37 findings. 27 were skeptic-checked (21 confirmed, 17 distinct;
-6 refuted). 10 lost their skeptic to an API outage, and **5 of those 10
-reproduced when re-checked by hand**. Never treat an unchecked finding as
-refuted.
+- **The venv's `python.exe` is a launcher.** `Popen(...)._handle` on a Python
+  child reads the launcher's memory (4 MB for a 171 MiB job). Measure a
+  Python child from inside it. Native tools are fine.
+- **Untyped ctypes `SetPriorityClass(GetCurrentProcess(), …)` silently
+  fails** (`ERROR_INVALID_HANDLE`). Use `creationflags=` or
+  `start /belownormal`, and check with `Get-Process`.
+
+### Write test files with the Edit tool
+
+A Python-in-heredoc rewrite turned `\x00` into real NUL bytes and `\b` into
+a backspace, and a mangled path made the real-file tests skip silently (5
+skipped, which is how it was noticed). Watch the skip count.
 
 ### Still true
 
-- **Measure the incumbent that fills the slot.** For B14 that's
-  `precomp → zpaqfranz -m58` (Insane) and `precomp → 7z` (Extreme).
-- **Two corpora, or don't quote the first.** B13's corpus 2 priors were
-  refit on corpus 2, so that test is in-sample. Its docstring says so.
-- **Never pin a single timing run, and never a contended one.**
-- **A silent no-op looks exactly like a negative result.** Exit 0 isn't
-  evidence; `verify_restore` is.
-- **Render the GUI** (`tools/qa_sweep.py`, both themes) before calling a
-  GUI change done. It found the Ogg card saying "stored bit-exact" beside a
-  table promising 15%.
-- **`~/.excmp/calibration.json` is global state**, isolated in `conftest.py`.
-- **The archive is not byte-reproducible.** Compare sizes, never digests.
-- **CI's runner is not the target**: tests that depend on cores or RAM pin
-  the machine they describe.
+- **Measure the incumbent that fills the slot**, **two corpora**, **never
+  pin a contended timing**, **a silent no-op looks like a negative result**,
+  **render the GUI** (the shrink-hint change was rendered in both themes
+  with Details open: `C:\excmp-bench\b18\render_hint.py`), **the archive is
+  not byte-reproducible**, **CI's runner is not the target**.
 
 ---
 
 ## 3. The agenda, in order
 
-### 1. B14 — DArc against the shipped route
+### 1. Merge `b18-settings`
 
-**Already fetched and verified (2026-10-01):**
-`C:\excmp-bench\b14\bin\darc-3.0.4-windows-amd64.zip`, 5,032,728 B,
-SHA-256 `112d021f2ffc981bddb4a94f34f56118ae48f8d40b4e18772a27892a4747b83a`
-(GitHub's published digest, matched). Unpacked beside it: `darc.exe`
-(`33538f89…6b58`) and `unarc.exe` (`3fce9909…a70a`). GPL-3.0, a Rust
-rewrite of FreeArc. Its README documents `-m0`…`-m9`, `-m1x`…`-m9x`, `-mx`
-and `-max` (which calls external precomp/ecm/ppmonstr), `-mt`, `-md`, `-s`,
-`-lc`/`-ld`, and `--print-config` for the method table.
+Reviewed by two lenses and a skeptic (every finding reproduced or measured,
+then fixed), the GUI change rendered in both themes, CI green on `e9e9e93`.
+What's left is the local gate: `suite.py` (corpus guard around the suite,
+below-normal, see the top). Every test must pass. Expected count: 1,504
+passed on `main` before, plus about 50 new B18 tests (some skip without the
+bench samples in `C:\excmp-bench\b18\samples`). If it passes: `git merge
+--no-ff b18-settings` on `main`, push, delete the branch locally and on
+GitHub. Then update CLAUDE.md: the test count, and the threads paragraph
+(zstd's `-1` **has** now been measured against 2: identical bytes, +184 MiB,
+timings too noisy; an explicit count is honoured, capped at `-1`).
 
-DArc must beat what ships, on both B12 corpora
-(`C:\excmp-bench\b12\fresh.pcf` and `programs.pcf`) and Silesia, at
-**Extreme** `precomp → 7z` and **Insane** `precomp → zpaqfranz -m58`
-(deflate `.pcf`: 42,852,397 B). Every archive is restored with `unarc` and
-SHA-256 compared. Try FreeArc's strongest methods. Pin the zip in
-`TOOL_MANIFEST` only if it wins.
+### 2. Merge `b13-followups`
 
-### 2. B18 — three unmeasured settings
+One test-only commit: `test_an_e1_installed_tool_is_found_by_normal_discovery`
+now restores the real install root for itself. It was mutation-checked here
+(fails with discovery broken, passes against `tools\bin`), and CI is green.
+Same gate and merge. Then `git worktree remove ..\ExtremeCompressor-b13fu`
+and `..\ExtremeCompressor-main` (created for this docs commit).
 
-Spec: [ROADMAP.md, B18](ROADMAP.md). (a) zstd `threads=-1` against 2.
-(b) `precomp -intense`, with and without, on both corpora. (c) MP3 and
-video: does the analyzer's probe predict a real gain? Search read-only for a
-corpus first. Change routing only if measured.
+### 3. Quiet-machine re-measures (only with the owner's say-so that it's quiet)
 
-### 3. B13 follow-ups (small)
-
-- **Re-measure the restore rate on a quiet machine**: run
-  `C:\excmp-bench\b13\b13_app.py C:\excmp-bench\b13\music <out> quiet normal`
-  at normal priority with nothing else running. Compare D9 and extract
-  seconds with `_PACK_DECODE_RATE`. Re-pin only from a median of three.
-- **`tests/test_toolfetch.py::test_an_e1_installed_tool_is_found_by_normal_discovery`
-  has always skipped.** The module's autouse fixture points the install root
-  at an empty temp dir. Pre-existing, but it's the only check that
-  `find_tools` sees a pinned raw tool.
-- The owner's *Celeste* FMOD download never arrived. If it does: `.bank`/`.fsb`
-  aren't Ogg containers, so balrogg can't read them without an unwrap step.
-  Measure before building one.
+- **B13's Ogg restore rate**: `C:\excmp-bench\b13\b13_app.py C:\excmp-bench\b13\music <out> quiet normal`,
+  normal priority, nothing else heavy running. Compare D9 and extract
+  seconds with `_PACK_DECODE_RATE` (1.5 MB/s); re-pin only from a median of
+  three.
+- **packMP3's rates** (new, B18): Extreme on the music MP3s was predicted
+  13–82 s and took 180 s; the self-test assumes 6.5 MB/s restore for the
+  Precomp chain while packMP3 restored at 0.07–1.46 MB/s per file
+  (contended). `C:\excmp-bench\b18\mp3_perfile.py` and `b18_app.py
+  <corpus> <out> <label> extreme` measure it. The estimator needs an MP3
+  term in the time model the way `pack_cost` has one for Ogg.
 
 ### 4. B6 — only with an owner-provided Oodle sample
 
-xtool + Oodle. Blocked until a legitimate sample exists (a game the owner
-owns, installed here). Never a third-party DLL site.
+Unchanged. It also reopens **`-intense`**, which was turned off in B18 but
+was added for game paks.
 
 ---
 
@@ -171,7 +144,10 @@ owns, installed here). Never a third-party DLL site.
 
 | item | what |
 |---|---|
-| **I11 leftovers** | zpaqfranz reports 100% at stage start, so Insane's compress bar freezes for the whole stage (pre-existing). A store-only job's bar jumps from 0 to its verify start (pre-existing). Calibration files learned before I11 self-correct in ~9 jobs |
+| **Media not yet measured** | MOV (65 files in Downloads, a corpus is there), MKV, WebM, M4A: still stored. Precomp `J = JPG` vs lepton (B2) never compared |
+| **Estimator** | per-file only: near-duplicate files made one corpus come out *under* its range (MP3 misc, Normal). Any piped duplicates do this |
+| **I11 leftovers** | zpaqfranz reports 100% at stage start (Insane's bar freezes); a store-only job's bar jumps; old calibration self-corrects in ~9 jobs |
+| **B13** | the owner's *Celeste* FMOD download never arrived |
 | **D6b, I5, I10** | fuzz targets; Explorer menu (**ask first**, HKCU); settings search / drag-out / jump list |
 | **B15, D4b, C, H, E3–E5** | too early / elevated session / lossy phase / installer phase / release-only |
 | **I7** | ❌ won't do |
@@ -180,19 +156,23 @@ owns, installed here). Never a third-party DLL site.
 
 ## 5. Things not to re-litigate
 
-- **Insane runs `-m58`, and balrogg `-9` on Insane.** The owner chose "best
-  for compression". `-9` costs ~5× `-5`'s time for +0.03 points; the table
-  shows that cost, and the owner decides.
-- **balrogg effort:** Fast `-1`, Normal `-4`, Extreme `-5`, Insane `-9`.
-- **Default threads is one per physical core**, measured and RAM-capped.
+- **Precomp runs without `-intense`** (B18, measured on both corpora, both
+  codecs). B6's game data is the only thing that reopens it.
+- **Every MP3 goes to Precomp on Extreme/Insane**; on Fast/Normal the probe
+  decides, as for MP4 and Ogg. MOV/MKV/WebM/M4A stay stored until measured.
+- **zstd keeps `threads=-1`** by default; an explicit count is honoured and
+  capped at it.
+- **DArc is not integrated.** It reopens only if a release writes `cm` or
+  `pmm` (ppmonstr).
+- **Insane runs `-m58`, and balrogg `-9` on Insane.** balrogg effort: Fast
+  `-1`, Normal `-4`, Extreme `-5`, Insane `-9`.
+- **Default threads is one per physical core** for 7-Zip and zpaqfranz.
 - **Code is merged after suite + review + CI green on its branch**, and the
   branch is deleted. The owner doesn't want to review diffs.
-- **LOLZ is not integrated.** It reopens only on game/DXT data, against `-m58`.
-- **With balrogg installed, Ogg stays on the store route and is repacked**;
-  without it, B13a's probe rule (pipe when the probe says it shrinks) applies.
+- **LOLZ is not integrated. SREP stays out.**
+- **With balrogg installed, Ogg stays on the store route and is repacked.**
 - **The repo is private and the OSI rule is retired**; the lossless guarantee
   matters more as a result. **Never weaken verification to fit a tool in.**
 - **No AI attribution in commit messages, ever.**
-- **SREP stays out**: it failed its own checksum 1 run in 3.
 - **Four top-level tabs is the ceiling.**
 - **A measured ratio ranks the profiles; it does not forecast the job.**

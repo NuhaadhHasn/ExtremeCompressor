@@ -122,9 +122,27 @@ def test_an_mp3_under_precomp_is_predicted_at_packmp3s_ratio(profile, probe):
     from excmp.estimate import estimate_size
     info = _media("song.mp3", Category.AUDIO, probe, entropy=7.99)
     est = estimate_size([info], plan([info], profile, TOOLS))
+    assert est.upper_bound
     payload = est.expected - est.overhead_bytes
-    assert 0.80 * info.size < payload < 0.87 * info.size, payload / info.size
+    assert 0.85 * info.size < payload <= 0.90 * info.size, payload / info.size
     assert est.high - est.overhead_bytes == info.size   # declined: stored size
+
+
+#: End-to-end archives with every MP3 piped (b13-app-*-allmp3.jsonl), all
+#: restored: (corpus bytes, archive bytes).
+MP3_E2E = {"music, Extreme": (33_922_849, 27_809_897),
+           "music, Insane": (33_922_849, 27_487_359),
+           "misc, Extreme": (80_307_437, 67_564_664)}
+
+
+@pytest.mark.parametrize("run", sorted(MP3_E2E))
+def test_the_at_most_figure_is_a_real_ceiling_for_mp3(run):
+    """Review, B18: on a Precomp chain the GUI shows `expected` as "≤ X". An
+    average there (0.835) put "≤ 64.0 MB" over a 64.4 MB archive. `expected`
+    is the worst ratio of 21 real files, so every measured run sits under it."""
+    from excmp.estimate import _MP3_PRECOMP_RATIO
+    orig, archive = MP3_E2E[run]
+    assert archive <= orig * _MP3_PRECOMP_RATIO[1]
 
 
 def test_without_precomp_an_mp3_is_predicted_from_its_probe():
@@ -202,6 +220,43 @@ MP3 = SAMPLES / "song.mp3"                 # af50f361..., flagged, probe 0.9649
 MP4 = SAMPLES / "screen-recording.mp4"     # c436e0e2..., flagged, probe 0.7401
 needs_corpus = pytest.mark.skipif(not (MP3.is_file() and MP4.is_file()),
                                   reason="B18's media samples are not on this machine")
+
+
+def test_malformed_mp3s_do_not_fail_an_extreme_job(tmp_path):
+    """Review, B18: every MP3 now reaches Precomp on Extreme, so can one bad
+    file fail the whole job? Measured 2026-10-16 with a truncated MP3, random
+    bytes, an ID3 tag over garbage and a WAV, all named `.mp3`: the job
+    succeeded and every file restored. Before B18 they never reached Precomp.
+    (The D9 gate is what makes this safe either way: a wrong restore fails
+    the job, it never publishes.)"""
+    import math
+    import random
+    import struct
+    from excmp import engine
+    from excmp.stages.base import StageContext
+    from excmp.tools import find_tools
+    if find_tools().get("precomp") is None or find_tools().get("7z") is None:
+        pytest.skip("Precomp and 7-Zip are needed for the Extreme chain")
+    root = tmp_path / "mp3s"
+    root.mkdir()
+    (root / "garbage.mp3").write_bytes(random.Random(4).randbytes(200_000))
+    (root / "id3only.mp3").write_bytes(b"ID3\x04\x00\x00\x00\x00\x10\x00" + bytes(2048)
+                                       + random.Random(5).randbytes(100_000))
+    pcm = b"".join(struct.pack("<h", int(12000 * math.sin(i / 20))) for i in range(100_000))
+    (root / "wav.mp3").write_bytes(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt "
+                                   + struct.pack("<IHHIIHH", 16, 1, 1, 44100, 88200, 2, 16)
+                                   + b"data" + struct.pack("<I", len(pcm)) + pcm)
+    if MP3.is_file():
+        good = MP3.read_bytes()
+        (root / "truncated.mp3").write_bytes(good[: len(good) // 3 + 417])
+    want = {p.name: hashlib.sha256(p.read_bytes()).digest() for p in root.iterdir()}
+    ctx = StageContext(temp_dir=tmp_path / "tmp")
+    result = engine.compress([root], tmp_path / "m.excmp", Profile.EXTREME, ctx)
+    assert result.piped_bytes == sum(p.stat().st_size for p in root.iterdir())
+    x = engine.extract(tmp_path / "m.excmp", tmp_path / "x", ctx)
+    assert x.verified == len(want)
+    for name, digest in want.items():
+        assert hashlib.sha256((tmp_path / "x" / "mp3s" / name).read_bytes()).digest() == digest
 
 
 @needs_corpus

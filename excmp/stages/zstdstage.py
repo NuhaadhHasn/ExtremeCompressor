@@ -118,12 +118,25 @@ class ZstdStage(Stage):
         return (self.long_log if self.long_log is not None
                 else _window_log_for(total_bytes))
 
-    def _params(self, total_bytes: int = 0) -> zstandard.ZstdCompressionParameters:
+    def _params(self, total_bytes: int = 0,
+                threads: int = 0) -> zstandard.ZstdCompressionParameters:
+        """``threads`` is the Worker threads setting: 0 ("auto") keeps -1,
+        every logical processor, and a count the user chose is passed as is.
+
+        B18 measured -1 against 2 on a 212 MB Silesia tar, three alternating
+        pairs: identical bytes, 0.79-0.84x the time, 183 MiB more peak (735
+        against 552 MiB). So unlike 7-Zip, whose extra threads cost ratio and
+        doubled its RAM, zstd keeps all logical processors by default. Any
+        worker count from 1 up writes the same bytes (1, 2, 4 and -1 all gave
+        46,982,246 B on the installer tar), so honouring the setting changes
+        speed and memory, never the archive. 0 is not passed through: to zstd
+        it means no worker threads, which *does* change the bytes.
+        """
         return zstandard.ZstdCompressionParameters.from_level(
             self.level,
             window_log=self._compress_window_log(total_bytes),
             enable_ldm=True,
-            threads=-1,
+            threads=threads if threads > 0 else -1,
         )
 
     def _decompress_window_log(self) -> int:
@@ -146,7 +159,8 @@ class ZstdStage(Stage):
         done = 0
         # The window is sized from the real byte count, which is already in
         # hand for the progress denominator.
-        cctx = zstandard.ZstdCompressor(compression_params=self._params(total))
+        cctx = zstandard.ZstdCompressor(
+            compression_params=self._params(total, getattr(ctx, "threads", 0) or 0))
         with dst.open("wb") as raw:
             with cctx.stream_writer(raw, closefd=False) as zw:
                 with tarfile.open(mode="w|", fileobj=zw, format=tarfile.PAX_FORMAT) as tar:

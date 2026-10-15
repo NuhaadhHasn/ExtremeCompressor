@@ -76,13 +76,25 @@ class ComparisonRun(QObject):
 
         # Group the profiles by what they will really run. The first profile
         # of each group is the one that gets a job; the rest read its result.
-        self._groups: list[tuple[tuple[str, ...], list[Profile]]] = []
-        by_chain: dict[tuple[str, ...], list[Profile]] = {}
+        #
+        # B13: when the sample holds Ogg audio balrogg will pack, the effort
+        # is part of what runs - Fast packs at -1 and Normal at -4 even where
+        # their chains match - so it is part of the key. Otherwise two
+        # profiles that pack differently would share one measured number.
+        from excmp import oggpack
+        packs_ogg = (oggpack.available() and any(
+            f.path.suffix.lower() in oggpack.SUFFIXES for f in self.sample.files))
+
+        def key_of(profile: Profile) -> tuple:
+            chain = tuple(resolved_chain(profile, self.tools))
+            return chain + (("balrogg", oggpack.effort_for(profile)),)                 if packs_ogg else chain
+
+        self._groups: list[tuple[tuple, list[Profile]]] = []
+        by_chain: dict[tuple, list[Profile]] = {}
         for profile in profiles:
-            key = tuple(resolved_chain(profile, self.tools))
-            by_chain.setdefault(key, []).append(profile)
+            by_chain.setdefault(key_of(profile), []).append(profile)
         for profile in profiles:
-            key = tuple(resolved_chain(profile, self.tools))
+            key = key_of(profile)
             entry = (key, by_chain[key])
             if entry not in self._groups:
                 self._groups.append(entry)

@@ -1436,9 +1436,9 @@ class MainWindow(QMainWindow):
         if active is not None and active.stage == VERIFYING_LATE:
             return self.tr("%s · verifying, past estimate") % active.display_name
         if active is not None and active.stage == PACKING:
-            return (self.tr("%s · packing audio") % active.display_name
+            return (self.tr("%s · repacking media") % active.display_name
                     if active.eta_s is None else
-                    self.tr("%s · packing audio · %s left") % (
+                    self.tr("%s · repacking media · %s left") % (
                         active.display_name, fmt_eta(active.eta_s)))
         if active is not None and active.stage == FINISHING:
             return self.tr("%s · finishing") % active.display_name

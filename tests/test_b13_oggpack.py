@@ -10,6 +10,8 @@ the gate. The byte comparison is.
 from __future__ import annotations
 
 import os
+import tempfile  # noqa: F401
+from types import SimpleNamespace
 import sys
 import threading
 import time
@@ -263,3 +265,135 @@ def test_an_encode_whose_round_trip_grows_past_the_original_is_declined(fake_too
 
     monkeypatch.setattr(oggpack, "_argv", argv)
     assert oggpack.pack(b"OggS" + b"\x01" * 5000) is None
+
+
+# -- review fixes: what the real tool does that the first fakes did not ---------------
+
+# balrogg writes its output through a file mapping: it grows the file in 1 MiB
+# steps AHEAD of the data and truncates to the exact size only at exit. A watch
+# on the exact size therefore kills correct decodes (found by the review; the
+# first end-to-end run of the app packed 1 file of 18 because of it).
+_PREEXTEND = ("import sys, time\n"
+              "n = int(sys.argv[3])\n"
+              "f = open(sys.argv[2], 'wb')\n"
+              "f.truncate(((n >> 20) + 1) << 20)\n"
+              "f.flush(); time.sleep(1.0)\n"
+              "f.seek(0); f.write(b'z' * n); f.truncate(n); f.close()\n")
+
+
+def _preextending(exact: int):
+    def argv(exe, effort, mode, src, dst):
+        return [sys.executable, "-c", _PREEXTEND, str(src), str(dst), str(exact)]
+    return argv
+
+
+def test_a_decode_that_pre_sizes_its_output_is_not_killed(fake_tool, monkeypatch):
+    exact = 3_000_000
+    monkeypatch.setattr(oggpack, "_argv", _preextending(exact))
+    assert oggpack.unpack(b"packed", limit=exact) == b"z" * exact
+
+
+def test_pack_survives_a_decoder_that_pre_sizes_its_output(fake_tool, monkeypatch):
+    raw = b"OggS" + b"z" * (3_000_000 - 4)
+
+    def argv(exe, effort, mode, src, dst):
+        if mode == "e":
+            return [sys.executable, "-c",
+                    "import sys; open(sys.argv[2], 'wb').write(b'tiny')",
+                    str(src), str(dst)]
+        return [sys.executable, "-c",
+                _PREEXTEND.replace("b'z' * n", "b'OggS' + b'z' * (n - 4)"),
+                str(src), str(dst), str(len(raw))]
+
+    monkeypatch.setattr(oggpack, "_argv", argv)
+    assert oggpack.pack(raw) == b"tiny"
+
+
+def test_a_decode_that_ends_larger_than_the_ledger_says_is_refused(fake_tool, monkeypatch):
+    """The slack lets an honest decode finish; the exact size is still checked
+    after it exits, so it cannot let a wrong-sized file through."""
+    monkeypatch.setattr(oggpack, "_argv", _preextending(1_500_000))
+    with pytest.raises(RuntimeError, match="limit|size"):
+        oggpack.unpack(b"packed", limit=1_000_000)
+
+
+def test_pack_rejects_a_round_trip_of_the_wrong_length(fake_tool, monkeypatch):
+    raw = b"OggS" + b"z" * 5000
+
+    def argv(exe, effort, mode, src, dst):
+        code = ("import sys; open(sys.argv[2], 'wb').write(b'tiny')" if mode == "e"
+                else "import sys; open(sys.argv[2], 'wb').write(b'OggS' + b'z' * 9000)")
+        return [sys.executable, "-c", code, str(src), str(dst)]
+
+    monkeypatch.setattr(oggpack, "_argv", argv)
+    assert oggpack.pack(raw) is None
+
+
+def test_scratch_files_live_in_the_job_temp_dir_not_the_system_one(fake_tool, monkeypatch, tmp_path):
+    seen: list[str] = []
+    real = tempfile_mkdtemp = oggpack.tempfile.mkdtemp
+
+    def spy(*a, **k):
+        seen.append(str(k.get("dir")))
+        return real(*a, **k)
+
+    monkeypatch.setattr(oggpack.tempfile, "mkdtemp", spy)
+    monkeypatch.setattr(oggpack, "_argv", _py("import sys; sys.exit(1)"))
+    ctx = SimpleNamespace(temp_dir=tmp_path / "job", cancel=None)
+    (tmp_path / "job").mkdir()
+    oggpack.pack(b"OggS" + b"\x01" * 5000, ctx=ctx)
+    assert seen == [str(tmp_path / "job")]
+    assert tempfile_mkdtemp is real
+
+
+def test_balrogg_s_own_environment_variables_are_not_inherited(fake_tool, monkeypatch):
+    """BLR_* variables change what the tool does (a memory cap, for one). The
+    parent's environment is not something an archive should be able to
+    influence, and a stray one must not silently decide a result."""
+    monkeypatch.setenv("BLR_MEMCAP", "1")
+    monkeypatch.setenv("BLR_JOBS", "99")
+    monkeypatch.setenv("UNRELATED", "kept")
+    seen: list[dict] = []
+    real = oggpack.subprocess.Popen
+
+    def spy(*a, **k):
+        seen.append(dict(k.get("env") or {}))
+        return real(*a, **k)
+
+    monkeypatch.setattr(oggpack.subprocess, "Popen", spy)
+    monkeypatch.setattr(oggpack, "_argv", _py("import sys; sys.exit(1)"))
+    oggpack.pack(b"OggS" + b"\x01" * 5000)
+    assert seen and all("BLR_MEMCAP" not in e and "BLR_JOBS" not in e for e in seen)
+    assert all(e.get("UNRELATED") == "kept" for e in seen)
+
+
+# -- sizes the codec cannot take are not read whole ---------------------------------------
+
+@pytest.mark.parametrize("size, ok", [(oggpack.MIN_SIZE - 1, False),
+                                      (oggpack.MIN_SIZE, True),
+                                      (oggpack.MAX_SIZE, True),
+                                      (oggpack.MAX_SIZE + 1, False)])
+def test_accepts_matches_the_size_window(size, ok):
+    assert oggpack.accepts(size) is ok
+
+
+# -- availability is not re-hashed once per file ------------------------------------------
+
+def test_planning_does_not_re_hash_the_binary_for_every_file(monkeypatch):
+    calls = []
+    monkeypatch.setattr(oggpack, "_balrogg_exe", lambda: calls.append(1) or Path("x"))
+    oggpack._forget_availability()
+    for _ in range(500):
+        assert oggpack.available() is True
+    assert len(calls) == 1, "available() re-verified the binary on every call"
+
+
+def test_the_availability_cache_expires(monkeypatch):
+    answers = iter([Path("x"), None])
+    monkeypatch.setattr(oggpack, "_balrogg_exe", lambda: next(answers))
+    clock = [0.0]
+    monkeypatch.setattr(oggpack.time, "monotonic", lambda: clock[0])
+    oggpack._forget_availability()
+    assert oggpack.available() is True
+    clock[0] += oggpack._AVAILABILITY_TTL_S + 1
+    assert oggpack.available() is False

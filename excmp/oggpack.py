@@ -40,6 +40,7 @@ in about 5 minutes, measured), against FLAC's tens of MB/s:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import threading
@@ -98,9 +99,39 @@ def _balrogg_exe() -> Path | None:
     return toolfetch.installed_path(spec)
 
 
+#: How long an availability answer is reused. ``available()`` is asked once per
+#: Ogg file while *planning* (``planner.store_reason``), and each answer re-hashes
+#: the binary; on a large tree that was one hash per file. Planning only needs
+#: "is it installed", so a short-lived answer is fine there. ``pack`` and
+#: ``unpack`` never use it: they re-verify the binary right before every spawn.
+_AVAILABILITY_TTL_S = 30.0
+_availability: tuple[float, object, bool] | None = None
+
+
+def _forget_availability() -> None:
+    global _availability
+    _availability = None
+
+
 def available() -> bool:
-    """Is balrogg present *and* still the bytes E1 pinned?"""
-    return _balrogg_exe() is not None
+    """Is balrogg present *and* still the bytes E1 pinned? (cached briefly)"""
+    global _availability
+    now = time.monotonic()
+    cached = _availability
+    # Keyed on the lookup function too, so a test that swaps it is not served
+    # the answer from before.
+    if (cached is not None and cached[1] is _balrogg_exe
+            and now - cached[0] < _AVAILABILITY_TTL_S):
+        return cached[2]
+    answer = _balrogg_exe() is not None
+    _availability = (now, _balrogg_exe, answer)
+    return answer
+
+
+def accepts(size: int) -> bool:
+    """Would :func:`pack` consider a file of this size at all? Lets the
+    container skip reading a file whole only to have it declined."""
+    return MIN_SIZE <= size <= MAX_SIZE
 
 
 def looks_like(head: bytes) -> bool:
@@ -128,6 +159,31 @@ def _encode_budget(size: int, effort: int) -> float:
     return 120.0 + (size / 1e6) * (3.0 + 3.0 * effort)
 
 
+#: balrogg writes its output through a file mapping, growing the file in 1 MiB
+#: steps ahead of the data and truncating to the exact size at exit. Measured:
+#: a 14,611 B decode showed 1,048,576 B mid-run; 10,743,371 B peaked at
+#: 11,534,336. A watch on the exact size killed honest decodes at random -
+#: the first end-to-end run of the app packed 1 Ogg file of 18 because of it.
+#: The in-flight watch therefore allows this much over the limit, and the exact
+#: size is checked again once the tool has exited.
+_PREALLOC_SLACK = 2 << 20
+
+
+def _child_env() -> dict[str, str]:
+    """The environment balrogg runs with: ours, minus its own ``BLR_*``
+    switches (a memory cap among them), which must not silently change what
+    a job produces."""
+    return {k: v for k, v in os.environ.items() if not k.upper().startswith("BLR_")}
+
+
+def _scratch(ctx: object) -> Path:
+    """A work directory in the job's temp dir (the one the disk preflight
+    budgeted for), or the system one when there is no job."""
+    base = getattr(ctx, "temp_dir", None)
+    return Path(tempfile.mkdtemp(prefix="excmp-blr-",
+                                 dir=str(base) if base is not None else None))
+
+
 def _decode_budget(size: int) -> float:
     """Decoding measured 0.7 s/MB contended; this allows ten times that."""
     return 120.0 + (size / 1e6) * 8.0
@@ -139,14 +195,15 @@ def _run(argv: list[str], budget: float, cancel: threading.Event | None,
 
     Raises :class:`StageError` ``"balrogg: cancelled"`` the way ``run_tool``
     does. ``watch`` is ``(output_path, limit)``: the process is killed and
-    ``None`` returned the moment the output file passes ``limit`` bytes, so a
-    hostile archive cannot make a decode fill the disk.
+    ``None`` returned the moment the output file passes ``limit`` bytes plus
+    :data:`_PREALLOC_SLACK`, so a hostile archive cannot make a decode fill the
+    disk. Callers check the exact size after a clean exit.
     """
     if cancel is not None and cancel.is_set():
         raise StageError("balrogg: cancelled")
     proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            creationflags=CREATE_NO_WINDOW)
+                            creationflags=CREATE_NO_WINDOW, env=_child_env())
     deadline = time.monotonic() + budget
     try:
         while True:
@@ -164,7 +221,7 @@ def _run(argv: list[str], budget: float, cancel: threading.Event | None,
                 return None
             if watch is not None:
                 try:
-                    if watch[0].stat().st_size > watch[1]:
+                    if watch[0].stat().st_size > watch[1] + _PREALLOC_SLACK:
                         proc.kill()
                         proc.wait()
                         return None
@@ -193,7 +250,7 @@ def pack(raw: bytes, ctx: object = None, effort: int | None = None,
     """
     if cancel is None and ctx is not None:
         cancel = getattr(ctx, "cancel", None)
-    if not (MIN_SIZE <= len(raw) <= MAX_SIZE) or not looks_like(raw[:4]):
+    if not accepts(len(raw)) or not looks_like(raw[:4]):
         return None
     exe = _balrogg_exe()
     if exe is None:
@@ -202,7 +259,10 @@ def pack(raw: bytes, ctx: object = None, effort: int | None = None,
         raise StageError("balrogg: cancelled")
     level = effort if effort is not None else DEFAULT_EFFORT
 
-    work = Path(tempfile.mkdtemp(prefix="excmp-blr-"))
+    try:
+        work = _scratch(ctx)
+    except OSError:
+        return None
     try:
         src = work / "in.ogg"
         src.write_bytes(raw)
@@ -222,7 +282,7 @@ def pack(raw: bytes, ctx: object = None, effort: int | None = None,
                     watch=(back, len(raw)))
         if code != 0 or not back.is_file():
             return None
-        if back.read_bytes() != raw:
+        if back.stat().st_size != len(raw) or back.read_bytes() != raw:
             return None
         return packed
     except OSError:
@@ -252,7 +312,10 @@ def unpack(packed: bytes, ctx: object = None, limit: int | None = None,
             "this archive holds Ogg audio packed with balrogg and the pinned "
             "balrogg binary is not installed - fetch it to restore these files")
 
-    work = Path(tempfile.mkdtemp(prefix="excmp-blr-"))
+    try:
+        work = _scratch(ctx)
+    except OSError as exc:
+        raise RuntimeError(f"no scratch space to decode this entry: {exc}") from exc
     try:
         src = work / "in.blr"
         src.write_bytes(packed)
@@ -267,6 +330,11 @@ def unpack(packed: bytes, ctx: object = None, limit: int | None = None,
             raise RuntimeError("balrogg could not decode this entry")
         if not out.is_file():
             raise RuntimeError("balrogg produced no output for this entry")
+        if limit is not None and out.stat().st_size > limit:
+            raise RuntimeError("balrogg decoded this entry past the size "
+                               "limit its ledger declares")
         return out.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"balrogg could not decode this entry: {exc}") from exc
     finally:
         rmtree_force(work)

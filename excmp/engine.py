@@ -1520,7 +1520,8 @@ def _extract_selected(archive: Path, names: list[str], out_dir: Path,
             # A zip-directory read. The full ledger still goes in, because it
             # is what makes the bomb defence exact; `only` limits what gets
             # written, not what gets validated.
-            extract_stored(archive, out_dir, manifest.inputs, only=set(wanted))
+            extract_stored(archive, out_dir, manifest.inputs, only=set(wanted),
+                           ctx=ctx)
         else:
             ctx.log_cb("extract", f"this archive is solid - reaching "
                                   f"{len(wanted)} file(s) means replaying the "
@@ -1828,7 +1829,7 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
                         raise StageError(f"stage '{sid}' produced {len(inner)} files, expected 1")
                     current = inner[0]
         restored += len([1 for m in manifest.inputs.values() if m.get("route") == "pipeline"])
-        stored = extract_stored(archive, out_dir, manifest.inputs)
+        stored = extract_stored(archive, out_dir, manifest.inputs, ctx=ctx)
         restored += len(stored)
         # `digests_out` is passed as a keyword, and only when a caller asked
         # for it. It is an optional addition (D5), so it must not change the

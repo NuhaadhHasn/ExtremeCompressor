@@ -144,8 +144,9 @@ def store_reason(info: FileInfo) -> str | None:
         # rule below, which only applies when the specialist is absent.
         from . import oggpack
         if oggpack.available():
-            return ("Ogg audio: packed with balrogg, which restores it byte "
-                    "for byte (measured ~13% smaller on music)")
+            return ("Ogg audio: repacked with balrogg where it can be, which "
+                    "restores it byte for byte (measured 4-15% smaller); a "
+                    "file it declines is stored as-is")
     if (info.path.suffix.lower() in _OGG_AUDIO
             and info.sample_ratio_max < 1.0):
         # B13, measured on 18 real music files: the Ogg files the probe

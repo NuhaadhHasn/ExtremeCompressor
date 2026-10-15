@@ -90,12 +90,23 @@ def test_a_chainless_ogg_job_spends_its_bar_in_the_pack_band():
     assert bar.update("pack", 100.0) == pytest.approx(PIPELINE_CEILING * 310 / 370)
 
 
-def test_pack_without_an_estimate_is_an_unplanned_stage_as_before():
-    bar = ChainProgress(["sevenzip"])
+def test_pack_without_an_estimate_banks_the_chain_and_never_rescales_it():
+    """JPEG and WAV packing report "pack" too, with no estimate behind them.
+    Appending it as an unplanned stage rescaled every weight; reported
+    halfway through a stage, that moved the bar backwards (review, B13)."""
+    bar = ChainProgress(["tar", "precomp", "sevenzip"])
     bar.update("sevenzip", 100.0)
     before = bar.value
-    assert bar.update("pack", 50.0) >= before
-    assert "pack" in bar.chain
+    assert bar.update("pack", 50.0) == pytest.approx(before)
+    assert bar.update("pack", 100.0) == pytest.approx(before)
+    assert "pack" not in bar.chain
+
+
+def test_an_early_pack_report_without_an_estimate_does_not_move_the_bar_back():
+    bar = ChainProgress(["tar", "precomp", "sevenzip"])
+    mid = bar.update("precomp", 50.0)
+    after = bar.update("pack", 0.0)
+    assert after >= mid
 
 
 # -- the worker ---------------------------------------------------------------------
@@ -178,13 +189,15 @@ def test_the_strip_says_packing_with_the_time_left(tmp_path, qtbot):
     qtbot.addWidget(win)
     try:
         win.queue.pause()
-        job = Job(kind=JobKind.COMPRESS, inputs=[tmp_path],
+        # A fixed input name: tmp_path's own name contains "packing" (pytest
+        # names it after the test), which let a substring check pass with
+        # the feature removed.
+        job = Job(kind=JobKind.COMPRESS, inputs=[tmp_path / "album"],
                   out_path=tmp_path / "o.excmp", profile=Profile.NORMAL)
         win.queue.add_job(job)
         job.state = JobState.RUNNING
         win.queue._on_progress(job.id, PACKING, 40.0, 1500.0)
-        text = win._job_status_text()
-        assert "packing" in text and "left" in text and "estimating" not in text
+        assert win._job_status_text() == "album · repacking media · ~25 min left"
     finally:
         win.queue.shutdown()
 
@@ -214,3 +227,25 @@ def test_the_gain_note_is_unchanged_without_balrogg(monkeypatch):
     infos = [_ogg(300_000_000)]
     summary = summarize(infos, plan(infos, Profile.NORMAL, TOOLS), TOOLS)
     assert "repacked" not in gain_note(summary)
+
+
+def test_calibration_leaves_the_pack_phase_out_of_the_codec_rate(tmp_path, monkeypatch):
+    """Packing Ogg audio runs at ~0.1 MB/s on bytes that are not piped.
+    Counted as codec time it taught J7 a rate several times too slow for the
+    chain (review, B13)."""
+    recorded = []
+    monkeypatch.setattr("excmp.calibrate.record",
+                        lambda *a, **kw: recorded.append((a, kw)))
+    worker, _ = _worker(tmp_path, _summary(monkeypatch))
+    clock = worker._clock
+    worker._on_progress("sevenzip", 100.0)
+    clock.now = 100.0
+    worker._on_progress("pack", 0.0)
+    clock.now = 700.0
+    worker._on_progress("pack", 100.0)
+    result = SimpleNamespace(piped_bytes=50_000_000, final_bytes=1, orig_bytes=2,
+                             elapsed_s=800.0,
+                             routes=[{"action": "pipeline", "stages": ["sevenzip"]}])
+    worker._calibrate(result)
+    (_args, kwargs), = recorded
+    assert kwargs["elapsed_s"] == pytest.approx(800.0 - 600.0)

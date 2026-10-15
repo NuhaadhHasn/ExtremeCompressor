@@ -237,6 +237,9 @@ class _EngineWorker(QRunnable):
         # and countdown use; the second is what calibration must subtract from
         # a job time that also contains the pause.
         self._verify_t0: float | None = None
+        # B13: the pack phase's span, which calibration must also leave out.
+        self._pack_t0: float | None = None
+        self._pack_end = 0.0
         self._verify_last = 0.0
         self._verify_run = 0.0
         self._verify_elapsed = 0.0
@@ -249,6 +252,9 @@ class _EngineWorker(QRunnable):
             return
         overall = self._chain.update(stage, pct)
         if stage == PACK_STAGE:
+            if self._pack_t0 is None:
+                self._pack_t0 = now
+            self._pack_end = now
             stage = PACKING
         if (overall - self._last_pct < _MIN_PCT_DELTA
                 and now - self._last_emit < _MIN_INTERVAL_S
@@ -421,7 +427,13 @@ class CompressWorker(_EngineWorker):
         # I11: the self-test is estimated separately (`_VERIFY_RATE`), so it
         # must not also be learned as part of the codec's rate. Counting it in
         # both put the whole restore into an Insane estimate twice.
-        codec_s = result.elapsed_s - self._verify_elapsed
+        #
+        # B13: the same for the pack phase. Packing Ogg audio runs at
+        # ~0.1 MB/s on bytes that are not piped, so counting it as codec time
+        # taught the estimator a rate several times too slow for the chain.
+        pack_s = (self._pack_end - self._pack_t0
+                  if self._pack_t0 is not None else 0.0)
+        codec_s = result.elapsed_s - self._verify_elapsed - pack_s
         record(stages, piped_bytes=piped, elapsed_s=codec_s,
                achieved_factor=factor)
 

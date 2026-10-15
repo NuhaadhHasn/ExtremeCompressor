@@ -594,7 +594,23 @@ def _overhead(infos: list[FileInfo], stored_count: int) -> int:
 # 4.8%. Corpus 2 also held two files balrogg refused outright (Ogg FLAC, and
 # Vorbis behind a Skeleton track: 6.2% of that corpus's bytes), which is what
 # `high` is for: the case where little or nothing is gained.
-_PACK_RATIO = {"vorbis": (0.74, 0.865, 0.97), "opus": (0.94, 0.96, 1.0)}
+#
+# `high` is exactly 1.0: `pack` never returns bytes that are not smaller, and a
+# file balrogg declines is stored as it is. The disk preflight books `high`,
+# so anything under 1.0 would let it under-reserve (review, B13).
+_PACK_RATIO = {"vorbis": (0.74, 0.865, 1.0), "opus": (0.94, 0.96, 1.0)}
+
+# The saving at each effort as a share of -9's (three real files, 19.3 MB):
+# -1 9.448%, -2 10.879%, -3 11.039%, -4 11.242%, -5 11.547% ... -9 11.586%.
+# The ratios above are -9's; a profile that packs at a lower effort saves this
+# much of the same saving.
+_PACK_EFFORT_SAVING = {1: 0.815, 2: 0.939, 3: 0.953, 4: 0.970, 5: 0.997,
+                       6: 0.9986, 7: 0.9988, 8: 0.9991, 9: 1.0}
+
+# Two process starts per file (encode, then the decode that proves it) and
+# their temp files, whatever the file's size. Small game sound effects come
+# in thousands, so this is not rounding.
+_PACK_PER_FILE_S = 0.3
 
 # Encode speed at -9, bytes/s, aggregate over each format: Vorbis 143.5 MB in
 # 1,205 s, Opus 26.4 MB in 20 s. Opus is ten times quicker.
@@ -631,9 +647,18 @@ def _ogg_kind(info: FileInfo) -> str:
 
 
 def _packable(stored: list[FileInfo], rates: Rates) -> list[FileInfo]:
+    """Stored files balrogg will be handed: Ogg, within its size window."""
     if not rates.ogg_packed():
         return []
-    return [i for i in stored if i.path.suffix.lower() in oggpack.SUFFIXES]
+    return [i for i in stored if i.path.suffix.lower() in oggpack.SUFFIXES
+            and oggpack.accepts(i.size)]
+
+
+def _pack_ratio(info: FileInfo, effort: int) -> tuple[float, float, float]:
+    """(low, expected, high) of the original size, at this effort."""
+    low, expected, high = _PACK_RATIO[_ogg_kind(info)]
+    share = _PACK_EFFORT_SAVING.get(effort, 1.0)
+    return 1.0 - (1.0 - low) * share, 1.0 - (1.0 - expected) * share, high
 
 
 def pack_cost(infos: list[FileInfo], the_plan: Plan,
@@ -653,7 +678,7 @@ def pack_cost(infos: list[FileInfo], the_plan: Plan,
     for info in files:
         kind = _ogg_kind(info)
         by_kind[kind] += info.size
-        encode += info.size * effort_time / _PACK_ENCODE_RATE[kind]
+        encode += info.size * effort_time / _PACK_ENCODE_RATE[kind] + _PACK_PER_FILE_S
         decode += info.size / _PACK_DECODE_RATE
     return PackCost(bytes=sum(by_kind.values()), seconds=encode + decode,
                     verify_seconds=decode, vorbis_bytes=by_kind["vorbis"],
@@ -722,7 +747,8 @@ def estimate_size(infos: list[FileInfo], the_plan: Plan,
     packed = _packable(stored, rates)
     packed_bytes = sum(i.size for i in packed)
     for info in packed:
-        p_low, p_expected, p_high = _PACK_RATIO[_ogg_kind(info)]
+        p_low, p_expected, p_high = _pack_ratio(
+            info, oggpack.effort_for(the_plan.profile))
         low += info.size * p_low
         expected += info.size * p_expected
         high += info.size * p_high

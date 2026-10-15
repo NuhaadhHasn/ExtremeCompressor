@@ -55,7 +55,7 @@ def test_ogg_audio_is_predicted_smaller_not_copied_at_exactly_one():
     infos = [_ogg("a", 100_000_000), _ogg("b", 50_000_000)]
     size = estimate_size(infos, _plan(infos), WITH)
     assert size.packed_bytes == 150_000_000
-    assert size.low < size.expected < size.high < size.total_bytes + 1_000_000
+    assert size.low < size.expected < size.high <= size.total_bytes + 1_000_000
     # Measured 15.1% on 13 Vorbis files; the expectation is near that, and the
     # honest range is wide because it ran from 9.5% to 25.7% file by file.
     assert 0.10 < size.saved_fraction < 0.20
@@ -89,7 +89,7 @@ def test_the_estimate_matches_what_the_measurement_found():
     26,428,582 B saved 3.893% - 13.358% together. The prior must land close,
     and the measured whole must sit inside the range."""
     infos = [_ogg("vorbis", 143_546_732), _ogg("opus", 26_428_582, ".opus")]
-    size = estimate_size(infos, _plan(infos), WITH)
+    size = estimate_size(infos, _plan(infos, Profile.INSANE), WITH)  # measured at -9
     measured_out = 147_270_639
     assert size.low <= measured_out <= size.high
     assert abs(size.expected - measured_out) / measured_out < 0.03
@@ -98,7 +98,7 @@ def test_the_estimate_matches_what_the_measurement_found():
 # -- time ----------------------------------------------------------------------
 
 def test_a_folder_of_vorbis_is_not_estimated_as_a_copy():
-    infos = [_ogg("a", 1_000_000_000)]
+    infos = [_ogg(f"a{i}", 100_000_000) for i in range(10)]   # 1 GB
     without = estimate_time(infos, _plan(infos), WITHOUT).expected
     with_pack = estimate_time(infos, _plan(infos), WITH)
     assert without < 60                      # a copy and a hash: seconds
@@ -164,7 +164,44 @@ def test_the_second_corpus_also_sits_inside_the_range():
     171,127,274 B - 10.920% saved, with two files refused. The prior was fitted
     on corpus 1, so this is the check that it was not fitted *to* it."""
     infos = [_ogg("vorbis", 153_119_905), _ogg("opus", 38_985_968, ".opus")]
-    size = estimate_size(infos, _plan(infos), WITH)
+    size = estimate_size(infos, _plan(infos, Profile.EXTREME), WITH)  # measured at -5
     measured_out = 171_127_274
     assert size.low <= measured_out <= size.high
     assert abs(size.expected - measured_out) / measured_out < 0.03
+
+
+# -- review fixes -------------------------------------------------------------------
+
+def test_a_lower_effort_is_predicted_to_save_less():
+    """Fast packs at -1, which measured 9.448% against -9's 11.586%. Every row
+    of the table used to predict -9's saving (review, B13)."""
+    infos = [_ogg("a", 100_000_000)]
+    saved = {p: estimate_size(infos, _plan(infos, p), WITH).saved_fraction
+             for p in (Profile.FAST, Profile.NORMAL, Profile.INSANE)}
+    assert saved[Profile.FAST] < saved[Profile.NORMAL] < saved[Profile.INSANE]
+    assert saved[Profile.FAST] / saved[Profile.INSANE] == pytest.approx(0.815, abs=0.01)
+
+
+def test_the_pessimistic_end_is_no_gain_at_all():
+    """pack never returns bytes that are not smaller, and a declined file is
+    stored as it is, so the worst case is the original size. The disk
+    preflight books `high`; anything under 1.0 let it under-reserve."""
+    infos = [_ogg("a", 100_000_000), _ogg("o", 50_000_000, ".opus")]
+    size = estimate_size(infos, _plan(infos), WITH)
+    assert size.high >= size.stored_bytes
+
+
+def test_files_outside_balrogg_s_size_window_are_not_predicted_to_shrink():
+    from excmp import oggpack
+
+    tiny = [_ogg("t", oggpack.MIN_SIZE - 1)]
+    size = estimate_size(tiny, _plan(tiny), WITH)
+    assert size.packed_bytes == 0
+    assert pack_cost(tiny, _plan(tiny), WITH).bytes == 0
+
+
+def test_thousands_of_small_files_cost_more_than_their_bytes_suggest():
+    many = [_ogg(f"s{i}", 20_000) for i in range(2000)]
+    one = [_ogg("big", 40_000_000)]
+    assert (pack_cost(many, _plan(many), WITH).seconds
+            > pack_cost(one, _plan(one), WITH).seconds + 500)

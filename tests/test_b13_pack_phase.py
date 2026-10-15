@@ -192,8 +192,12 @@ def test_pause_holds_the_pack_phase_between_files(tmp_path, monkeypatch):
     order: list[str] = []
     ctx_holder = {}
 
+    import time
+    stamps: list[float] = []
+
     def fake_pack(raw, ctx=None, effort=None, cancel=None):
         order.append("pack")
+        stamps.append(time.monotonic())
         if len(order) == 1:
             ctx_holder["ctx"].pause.set()
             threading.Timer(0.6, ctx_holder["ctx"].pause.clear).start()
@@ -203,11 +207,12 @@ def test_pause_holds_the_pack_phase_between_files(tmp_path, monkeypatch):
     monkeypatch.setattr(oggpack, "pack", fake_pack)
     ctx = StageContext(temp_dir=tmp_path / "t")
     ctx_holder["ctx"] = ctx
-    import time
-    started = time.monotonic()
     engine.compress([_tree(tmp_path)], tmp_path / "out.excmp", Profile.NORMAL, ctx)
     assert order == ["pack", "pack"]
-    assert time.monotonic() - started >= 0.5, "the pause was ignored"
+    # Measured between the two files, not around the whole job: the job takes
+    # longer than the pause anyway, which let the test pass with the pause
+    # loop deleted (review, B13).
+    assert stamps[1] - stamps[0] >= 0.5, "the pause was ignored"
 
 
 # -- the safety half --------------------------------------------------------------------------
@@ -258,3 +263,97 @@ def test_restoring_hands_the_ledger_size_to_the_decoder_as_its_limit(tmp_path, m
     engine.extract(archive, tmp_path / "restored", StageContext(temp_dir=tmp_path / "t2"))
     assert seen and all(limit == SMALL.stat().st_size for limit in seen), seen
     assert manifest._CODECS["balrogg"] is oggpack
+
+
+# -- review fixes --------------------------------------------------------------------------
+
+def _slow_unpack_tool(monkeypatch):
+    """Make balrogg's decoder a script that never finishes, so only a cancel
+    can end a restore."""
+    import sys
+
+    monkeypatch.setattr(oggpack, "_argv",
+                        lambda exe, effort, mode, src, dst:
+                        [sys.executable, "-c", "import time; time.sleep(120)",
+                         str(src), str(dst)])
+
+
+@needs_balrogg
+def test_cancel_reaches_the_decoder_during_a_restore(tmp_path, monkeypatch):
+    """The restore of a packed entry used to run with no cancel at all, so
+    Cancel and window-close waited out every balrogg decode in the archive."""
+    import time
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.ogg").write_bytes(SMALL.read_bytes())
+    archive, _ = _compress(src, tmp_path)
+    assert _ledger(archive)["src/a.ogg"].get("codec") == "balrogg"
+
+    _slow_unpack_tool(monkeypatch)
+    ctx = StageContext(temp_dir=tmp_path / "t2")
+    threading.Timer(0.5, ctx.cancel.set).start()
+    started = time.monotonic()
+    with pytest.raises(StageError, match="cancelled"):
+        engine.extract(archive, tmp_path / "restored", ctx)
+    assert time.monotonic() - started < 15
+
+
+def test_packed_members_are_spooled_to_disk_not_held_in_memory(tmp_path, monkeypatch):
+    """Every packed member used to be held in a dict until the zip was
+    written: on a 12 GB Ogg library that is ~10 GB of RAM on a 16 GB laptop.
+    They are spooled to the job's temp dir instead."""
+    from excmp import manifest
+
+    held: list[int] = []
+    monkeypatch.setattr(oggpack, "available", lambda: True)
+    monkeypatch.setattr(oggpack, "pack", lambda raw, **kw: b"P" * (len(raw) // 2))
+    monkeypatch.setattr(oggpack, "unpack", lambda packed, **kw: (_ for _ in ()).throw(RuntimeError("x")))
+
+    real_writestr = zipfile.ZipFile.writestr
+
+    def spy(self, name, data, *a, **k):
+        if str(getattr(name, "filename", name)).startswith(manifest.STORED_PREFIX):
+            held.append(len(data))
+        return real_writestr(self, name, data, *a, **k)
+
+    monkeypatch.setattr(zipfile.ZipFile, "writestr", spy)
+    src = _tree(tmp_path, text=False)
+    out = tmp_path / "out.excmp"
+    with pytest.raises(Exception):
+        # unpack is broken on purpose, so D9 refuses to publish; what matters
+        # is how the container was written on the way.
+        engine.compress([src], out, Profile.NORMAL, StageContext(temp_dir=tmp_path / "t"))
+    assert held == [], "packed members were written from memory"
+    left = [p for p in (tmp_path / "t").rglob("*") if p.is_file()]
+    assert left == [], f"spool files left behind: {left}"
+
+
+def test_files_outside_the_codec_size_window_are_never_read_whole(tmp_path, monkeypatch):
+    read: list[str] = []
+    real = Path.read_bytes
+
+    def spy(self):
+        read.append(self.name)
+        return real(self)
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "tiny.ogg").write_bytes(b"OggS" + b"\x00" * 100)      # < MIN_SIZE
+    monkeypatch.setattr(Path, "read_bytes", spy)
+    monkeypatch.setattr(oggpack, "available", lambda: True)
+    monkeypatch.setattr(oggpack, "pack", lambda raw, **kw: None)
+    _compress(src, tmp_path)
+    assert "tiny.ogg" not in read
+
+
+def test_a_missing_or_tampered_codec_says_how_to_recover(tmp_path, monkeypatch):
+    if not oggpack.available():
+        pytest.skip("the pinned balrogg is not installed")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.ogg").write_bytes(SMALL.read_bytes())
+    archive, _ = _compress(src, tmp_path)
+    monkeypatch.setattr(oggpack, "_balrogg_exe", lambda: None)
+    with pytest.raises(Exception, match="re-fetch|integrity"):
+        engine.extract(archive, tmp_path / "restored", StageContext(temp_dir=tmp_path / "t2"))

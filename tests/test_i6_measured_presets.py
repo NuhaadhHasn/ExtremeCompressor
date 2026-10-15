@@ -594,3 +594,25 @@ def test_measure_anyway_is_never_a_dead_button(window, qtbot, tmp_path):
     assert window.banner.isVisibleTo(window)
     window._begin_measurement()          # the bail-out path
     assert not window.banner.isVisibleTo(window)
+
+
+def test_profiles_that_pack_ogg_at_different_efforts_are_measured_apart(tmp_path, monkeypatch):
+    """B13: without Precomp, Extreme runs Normal's chain - but with Ogg audio
+    in the sample Normal packs at -4 and Extreme at -5, so one measured number
+    for both would describe neither (review, B13)."""
+    from excmp import oggpack
+
+    monkeypatch.setattr(oggpack, "available", lambda: True)
+    infos = _infos() + [FileInfo(path=Path("theme.ogg"), size=3_000_000,
+                                 category=Category.AUDIO, entropy_bps=7.97)]
+    run = ComparisonRun(_FakeQueue(), NO_PRECOMP, infos, tmp_path / "compare")
+    keys = {tuple(group) for _key, group in run._groups}
+    assert (Profile.NORMAL,) in keys and (Profile.EXTREME,) in keys
+
+
+def test_without_ogg_in_the_sample_the_grouping_is_unchanged(tmp_path, monkeypatch):
+    from excmp import oggpack
+
+    monkeypatch.setattr(oggpack, "available", lambda: True)
+    run = ComparisonRun(_FakeQueue(), NO_PRECOMP, _infos(), tmp_path / "compare")
+    assert run.job_count < 4

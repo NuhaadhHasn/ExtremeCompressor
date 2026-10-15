@@ -57,10 +57,12 @@ VERIFYING_LATE = "verifying, past estimate"
 #: The self-test passed; what is left is publishing, encrypting, recovery
 #: records and splitting, none of which reports.
 FINISHING = "finishing"
-#: The Ogg specialist's phase (B13): the engine reports it as ``("pack", pct)``
-#: after the chain and before the self-test. It is a real stage with a real
-#: percentage (bytes packed over bytes to pack), unlike the self-test.
-PACKING = "packing audio"
+#: The store-route specialists' phase (B13): the engine reports it as
+#: ``("pack", pct)`` after the chain and before the self-test, for every codec
+#: that claims a stored file (lepton for JPEG, FLAC for WAV, balrogg for Ogg).
+#: It is a real stage with a real percentage (bytes packed over bytes to pack),
+#: unlike the self-test. Only the Ogg part is slow enough to be estimated.
+PACKING = "repacking media"
 PACK_STAGE = "pack"
 #: A self-test report later than this after the previous one means the beats
 #: stopped (a paused job holds the restore), so that gap is not self-test
@@ -137,14 +139,18 @@ class ChainProgress:
             # Not a stage of the chain: appending it would rescale every
             # weight. The self-test is timed through `verify()` instead.
             return self._peak
-        if stage_id == PACK_STAGE and self.pack_s is not None:
+        if stage_id == PACK_STAGE:
             # Also not a stage of the chain, and unlike the self-test it has a
-            # real percentage: bytes packed over bytes to pack. Its band is
-            # sized by the estimate, and the chain's band is banked first.
+            # real percentage: bytes packed over bytes to pack. With an
+            # estimate it has a band of its own; without one (JPEG or WAV
+            # packing, which is quick) the chain's band is banked and the bar
+            # waits there. Appending it as an unplanned stage, as it once
+            # was, rescaled every weight and moved the bar backwards.
             self._peak = max(self._peak, self._chain_top)
-            frac = max(0.0, min(100.0, pct)) / 100.0
-            self._peak = max(self._peak, self._chain_top
-                             + (self._verify_start - self._chain_top) * frac)
+            if self.pack_s is not None:
+                frac = max(0.0, min(100.0, pct)) / 100.0
+                self._peak = max(self._peak, self._chain_top
+                                 + (self._verify_start - self._chain_top) * frac)
             return self._peak
         if stage_id not in self.chain:
             # The plan and reality disagreed (a stage was added, or a profile

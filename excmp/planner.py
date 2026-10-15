@@ -204,9 +204,11 @@ _DEFLATE_MEDIA = {".png"}
 _UNCOMPRESSED_AUDIO = {".wav", ".aiff", ".aif", ".w64", ".rf64"}
 
 #: Ogg audio containers (Vorbis, Opus), the one compressed-media family that
-#: has been measured (B13, 2026-10-01). An Ogg file whose own probe says it
-#: shrinks is piped; every other media file keeps "stored as-is" until its
-#: format is measured too. tests/test_b13_ogg_probe.py has the table.
+#: has been measured (B13). With balrogg installed an Ogg file stays on the
+#: store route and is repacked there (`oggpack`, `store_reason`); without it,
+#: one whose own probe says it shrinks is piped (B13a,
+#: tests/test_b13_ogg_probe.py). Every other media file keeps "stored as-is"
+#: until its format is measured too.
 from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers)
 
 #: How far Precomp inflates its output mid-pipeline, per data type. The

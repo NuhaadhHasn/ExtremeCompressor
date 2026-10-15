@@ -249,3 +249,62 @@ def test_calibration_leaves_the_pack_phase_out_of_the_codec_rate(tmp_path, monke
     worker._calibrate(result)
     (_args, kwargs), = recorded
     assert kwargs["elapsed_s"] == pytest.approx(800.0 - 600.0)
+
+
+# -- review findings whose skeptic checks were lost to an API outage, re-checked here ----
+
+def _ogg_summary(monkeypatch, available=True):
+    from excmp import oggpack
+    from excmp.planner import Profile as P
+    from excmp.planner import plan as make_plan
+    from gui.suggest import summarize
+
+    if available:
+        monkeypatch.setattr(oggpack, "available", lambda: True)
+    else:
+        monkeypatch.setattr(oggpack, "_balrogg_exe", lambda: None)
+    infos = [_ogg(150_000_000, "music.ogg"), _ogg(60_000_000, "speech.ogg")]
+    return summarize(infos, make_plan(infos, P.NORMAL, TOOLS), TOOLS,
+                     make_plan(infos, P.INSANE, TOOLS))
+
+
+def test_an_ogg_folder_is_not_called_already_compressed(monkeypatch):
+    """With balrogg the folder shrinks 4-15%; the card used to recommend Fast
+    because "the slow profiles would spend hours to save the same ~0%"."""
+    from gui.suggest import recommend_profile
+
+    _profile, reason = recommend_profile(_ogg_summary(monkeypatch))
+    assert "~0%" not in reason and "already compressed" not in reason
+
+
+def test_an_ogg_folder_is_not_told_only_re_encoding_helps(monkeypatch):
+    from gui.suggest import shrink_mode_hint
+
+    assert shrink_mode_hint(_ogg_summary(monkeypatch)) is None
+
+
+def test_repacked_audio_is_not_listed_as_a_file_that_did_not_shrink(monkeypatch):
+    summary = _ogg_summary(monkeypatch)
+    assert summary.store_files == []
+    assert summary.store_by_category.get(Category.AUDIO, 0) == 0
+    # ...while the route itself is unchanged: the files still take the store
+    # route, which is what the time arithmetic reads.
+    assert summary.store_bytes == 210_000_000
+
+
+def test_without_balrogg_an_ogg_folder_reads_as_before(monkeypatch):
+    from gui.suggest import shrink_mode_hint
+
+    summary = _ogg_summary(monkeypatch, available=False)
+    assert summary.store_by_category.get(Category.AUDIO, 0) > 0
+    assert shrink_mode_hint(summary) is not None
+
+
+def test_the_first_pack_report_is_never_throttled_away(tmp_path, monkeypatch):
+    """The chain's last report and "pack" 0.0 land on the same bar value a
+    moment apart, so the throttle dropped the label change: the job said
+    "sevenzip" for the whole first file, which can be minutes of Vorbis."""
+    worker, progress = _worker(tmp_path, _summary(monkeypatch))
+    worker._on_progress("sevenzip", 100.0)
+    worker._on_progress("pack", 0.0)                 # same instant, same value
+    assert progress.calls[-1][1] == PACKING

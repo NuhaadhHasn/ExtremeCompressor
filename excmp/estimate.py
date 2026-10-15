@@ -646,6 +646,14 @@ def _ogg_kind(info: FileInfo) -> str:
     return "opus" if info.path.suffix.lower() == ".opus" else "vorbis"
 
 
+def packable(infos: list[FileInfo], the_plan: Plan,
+             rates: Rates = DEFAULT_RATES) -> list[FileInfo]:
+    """The files on this plan's store route that balrogg will be handed. The
+    GUI's summary reads it so the card, the table and the bar agree."""
+    stored, _ = _split(infos, the_plan)
+    return _packable(stored, rates)
+
+
 def _packable(stored: list[FileInfo], rates: Rates) -> list[FileInfo]:
     """Stored files balrogg will be handed: Ogg, within its size window."""
     if not rates.ogg_packed():

@@ -231,6 +231,7 @@ class _EngineWorker(QRunnable):
         self._t0 = 0.0
         self._last_emit = 0.0
         self._last_pct = -1.0
+        self._last_stage = ""
         # I11: when the D9 self-test began, the seconds it has actually run
         # (beat to beat, so a pause is not counted) and, once done, how long it
         # occupied the job's clock, pauses included. The first is what the bar
@@ -256,10 +257,16 @@ class _EngineWorker(QRunnable):
                 self._pack_t0 = now
             self._pack_end = now
             stage = PACKING
-        if (overall - self._last_pct < _MIN_PCT_DELTA
+        # A change of stage is always drawn. The chain's last report and the
+        # pack phase's first land on the same bar value a moment apart, and
+        # throttling the second left the job naming the previous stage for
+        # the whole first file - minutes, for a large Vorbis file.
+        if (stage == self._last_stage
+                and overall - self._last_pct < _MIN_PCT_DELTA
                 and now - self._last_emit < _MIN_INTERVAL_S
                 and overall < 100.0):
             return
+        self._last_stage = stage
         self._last_pct = overall
         self._last_emit = now
         eta = self._eta.update(overall / 100.0, now - self._t0)

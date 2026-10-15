@@ -100,12 +100,15 @@ _MANIFEST_REASON_BYTES = 16
 #                              whole relative path of the entry holding the bytes
 #   `,"codec":"lepton"`        B2, on every packed JPEG
 #   `,"codec":"flac"`          B4, on every packed WAV (shorter)
+#   `,"codec":"balrogg"`       B13, on every packed Ogg file (the longest)
 #
 # Never both on one entry - the packing loop skips anything already carrying a
 # `same_as` - so the allowance is the larger of the two, and the path it points
 # at is bounded only by the longest name in the selection.
 _MANIFEST_SAME_AS_BYTES = 13
-_MANIFEST_CODEC_BYTES = 17
+# Derived from the registry, not typed in: it was 17 when B13 added a codec
+# whose key is 18 bytes, and a preflight that under-reads is K1's defect.
+_MANIFEST_CODEC_BYTES = max(len(f',"codec":"{name}"') for name in _CODECS)
 # K2's `dirs` entry: the two quotes around the path and the separating comma.
 _MANIFEST_DIR_BYTES = 3
 # The fixed head: schema/created/profile/payload_name, the stage records, the

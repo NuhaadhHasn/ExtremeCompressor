@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
-from excmp.estimate import DEFAULT_RATES, Rates, compare_profiles, pack_cost
+from excmp.estimate import (DEFAULT_RATES, Rates, compare_profiles, pack_cost,
+                            packable)
 from excmp.planner import Plan, Profile, precomp_inflation, store_reason
 from excmp.planner import plan as make_plan
 from excmp.sample import MeasuredRun, Sample
@@ -130,28 +131,37 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         if route.action == "store":
             stored.update(route.files)
 
+    # B13: Ogg audio balrogg repacks takes the store route but is not "stored
+    # as-is" and did not fail to shrink. It stays in `store_bytes` (the route,
+    # which the time arithmetic reads) and is left out of everything that
+    # tells the user what cannot shrink.
+    repacked = {i.path for i in packable(infos, the_plan)}
+
     store_by_category: dict[Category, int] = {}
     for info in infos:
-        if info.path in stored:
+        if info.path in stored and info.path not in repacked:
             store_by_category[info.category] = (
                 store_by_category.get(info.category, 0) + info.size)
 
     store_bytes = sum(i.size for i in infos if i.path in stored)
     store_files = [
         (i.path.name, i.size, store_reason(i) or "stored")
-        for i in sorted((i for i in infos if i.path in stored),
+        for i in sorted((i for i in infos
+                         if i.path in stored and i.path not in repacked),
                         key=lambda i: i.size, reverse=True)
     ]
     total = sum(i.size for i in infos)
     pipeline_stages = next((r.stages for r in the_plan.routes if r.action == "pipeline"), [])
 
     if reference_plan is None:
-        floor_store_bytes = store_bytes
+        floor_store_bytes = store_bytes - sum(i.size for i in infos
+                                              if i.path in repacked)
     else:
         floor: set[Path] = set()
         for route in reference_plan.routes:
             if route.action == "store":
                 floor.update(route.files)
+        floor -= {i.path for i in packable(infos, reference_plan)}
         floor_store_bytes = sum(i.size for i in infos if i.path in floor)
 
     cost = pack_cost(infos, the_plan)
@@ -217,8 +227,9 @@ def gain_note(summary: AnalysisSummary) -> str:
 
 def shrink_mode_hint(summary: AnalysisSummary) -> str | None:
     """Suggest the (not-yet-built) re-encode mode only when it would matter."""
+    # Audio balrogg repacks is already being made smaller without re-encoding.
     media = sum(summary.by_category.get(c, 0)
-                for c in (Category.VIDEO, Category.AUDIO))
+                for c in (Category.VIDEO, Category.AUDIO)) - summary.pack_bytes
     if summary.total_bytes and media / summary.total_bytes >= 0.4:
         return (f"{fmt_percent(media / summary.total_bytes)} of this is video/audio. "
                 "Only re-encoding makes that smaller — Shrink mode is coming in a "

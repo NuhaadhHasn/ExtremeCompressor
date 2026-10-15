@@ -161,8 +161,12 @@ def test_the_comparison_table_shows_the_profiles_differ_for_an_ogg_folder():
 def test_the_second_corpus_also_sits_inside_the_range():
     """Corpus 2 (26 game-music and speech files, 192,105,873 B, balrogg -5):
     25 Vorbis files at 153,119,905 B and one Opus at 38,985,968 B came out at
-    171,127,274 B - 10.920% saved, with two files refused. The prior was fitted
-    on corpus 1, so this is the check that it was not fitted *to* it."""
+    171,127,274 B - 10.920% saved, with two files refused.
+
+    **In-sample, and said so:** the priors were refit on both corpora
+    (cbd4698) after corpus 2's Opus file landed under the first prior's low
+    bound. So this pins that the refit still covers corpus 2; it is not
+    evidence the priors generalise. A third corpus is what would be."""
     infos = [_ogg("vorbis", 153_119_905), _ogg("opus", 38_985_968, ".opus")]
     size = estimate_size(infos, _plan(infos, Profile.EXTREME), WITH)  # measured at -5
     measured_out = 171_127_274
@@ -205,3 +209,25 @@ def test_thousands_of_small_files_cost_more_than_their_bytes_suggest():
     one = [_ogg("big", 40_000_000)]
     assert (pack_cost(many, _plan(many), WITH).seconds
             > pack_cost(one, _plan(one), WITH).seconds + 500)
+
+
+def test_the_table_and_the_bar_agree_about_an_ogg_job_exactly():
+    """I11's promise: the comparison table's time and the bar's two halves
+    come from one formula. A mutation that counted the pack time twice in
+    the table survived every coarse inequality here (review, B13)."""
+    infos = [_ogg(f"a{i}", 50_000_000) for i in range(4)] + [_video("v", 80_000_000)]
+    for profile in (Profile.FAST, Profile.NORMAL, Profile.INSANE):
+        the_plan = _plan(infos, profile)
+        stored = sum(i.size for i in infos)          # all of it takes the store route
+        cost = pack_cost(infos, the_plan, WITH)
+        expected = estimate_time(infos, the_plan, WITH).expected
+        assert expected == pytest.approx(sum(time_split(stored, 0, [], WITH, pack=cost)))
+
+
+def test_the_manifest_budget_covers_the_longest_codec_key():
+    """`,"codec":"balrogg"` is 18 bytes; the K1 budget allowed 17, so a big
+    Ogg library could pass the preflight and then be refused at the end."""
+    from excmp import manifest
+
+    longest = max(len(f',"codec":"{name}"') for name in manifest._CODECS)
+    assert manifest._MANIFEST_CODEC_BYTES >= longest == len(',"codec":"balrogg"')

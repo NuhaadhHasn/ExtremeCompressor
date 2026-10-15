@@ -543,16 +543,18 @@ OSI rule comes back before anything ships.
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
 - [x] B18. ✅ **DONE 2026-10-16** (branch `b18-settings`) — all three
-      measured, all three changed, plus a fourth finding. Every archive was
+      measured, two changed, one kept, plus a fourth finding. Every archive was
       restored and SHA-256 compared. Record:
       [benchmarks/2026-10-15-b18](benchmarks/2026-10-15-b18-settings.md).
       (a) zstd `-1` vs 2: identical bytes, +184 MiB, and timings too noisy
       to call, so **the default stays**. An explicit Worker threads count now
       reaches zstd (it was ignored), capped at the default.
-      (b) **Precomp runs without `-intense`**: it cost 0.78% / 0.85% on
-      installers and 0.16% / 0.08% on deflate data (Extreme / Insane), and
-      8.5× the Precomp time on the deflate zip. Kept as an option for B6's
-      game data, which is what it was added for.
+      (b) **`-intense` stays on.** Off, it saved 0.78% / 0.85% on installers
+      and 0.16% / 0.08% on deflate data (Extreme / Insane) and was 8.5×
+      faster on the deflate zip, but Precomp then finds nothing in raw zlib
+      streams (−16.8% lost on a synthetic sample). The local suite caught it;
+      CI can't, since Precomp isn't on the runner. **B6's game data decides**,
+      maybe per data type.
       (c) **The probe rule now covers MP3 and MP4.** Flagged files saved
       3.77–9.20% under 7-Zip, the rest 0.32–1.61%, on two MP3 and two MP4
       corpora. (c′) **Precomp recodes MP3 itself (packMP3)**, which the probe

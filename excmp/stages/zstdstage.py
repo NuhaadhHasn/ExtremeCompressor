@@ -100,6 +100,12 @@ def _window_log_for(total_bytes: int) -> int:
     return max(COMPRESS_WINDOW_LOG_FLOOR, min(COMPRESS_WINDOW_LOG_MAX, need))
 
 
+def _all_logical() -> int:
+    """What zstd's -1 resolves to: python-zstandard turns it into the logical
+    processor count when it builds the parameters (4 on the i5-7200U)."""
+    return zstandard.ZstdCompressionParameters.from_level(1, threads=-1).threads
+
+
 class ZstdStage(Stage):
     id = "zstd"
 
@@ -131,12 +137,16 @@ class ZstdStage(Stage):
         46,982,246 B on the installer tar), so honouring the setting changes
         speed and memory, never the archive. 0 is not passed through: to zstd
         it means no worker threads, which *does* change the bytes.
+
+        A count above the default is capped at it (review, B18): each worker
+        holds its own window-sized buffers, `ram.zstd_compress_ram` was fitted
+        at -1, and the setting exists to lower the load, not raise it.
         """
         return zstandard.ZstdCompressionParameters.from_level(
             self.level,
             window_log=self._compress_window_log(total_bytes),
             enable_ldm=True,
-            threads=threads if threads > 0 else -1,
+            threads=min(threads, _all_logical()) if threads > 0 else -1,
         )
 
     def _decompress_window_log(self) -> int:

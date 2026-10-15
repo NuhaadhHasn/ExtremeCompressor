@@ -227,9 +227,12 @@ def gain_note(summary: AnalysisSummary) -> str:
 
 def shrink_mode_hint(summary: AnalysisSummary) -> str | None:
     """Suggest the (not-yet-built) re-encode mode only when it would matter."""
-    # Audio balrogg repacks is already being made smaller without re-encoding.
-    media = sum(summary.by_category.get(c, 0)
-                for c in (Category.VIDEO, Category.AUDIO)) - summary.pack_bytes
+    # Only media that is stored as-is: `store_by_category` already leaves out
+    # the audio balrogg repacks (B13), and media the probe flags is piped and
+    # shrinks losslessly (B13a's Ogg, B18's MP3/MP4), so it is not on the
+    # store route at all.
+    media = sum(summary.store_by_category.get(c, 0)
+                for c in (Category.VIDEO, Category.AUDIO))
     if summary.total_bytes and media / summary.total_bytes >= 0.4:
         return (f"{fmt_percent(media / summary.total_bytes)} of this is video/audio. "
                 "Only re-encoding makes that smaller — Shrink mode is coming in a "

@@ -76,6 +76,26 @@ def test_unmeasured_media_keeps_the_old_rule(name, category):
     assert store_reason(_media(name, category, 0.95)) is not None
 
 
+def test_piped_media_is_not_told_only_re_encoding_helps(tmp_path):
+    """Review, B18: the shrink hint counted every video/audio byte as
+    unshrinkable. A video the probe flags is now piped and does shrink
+    losslessly (25.7% on a real screen recording), so it must not be counted.
+    The hint reads the stored media only, which is what it is about."""
+    from excmp.analyzer import analyze_tree
+    from gui.suggest import shrink_mode_hint, summarize
+    root = tmp_path / "screen"
+    root.mkdir()
+    # A screen-recording-like MP4: a container header, then highly repetitive
+    # frames. The probe reads it as compressible, so B18 pipes it.
+    (root / "rec.mp4").write_bytes(b"\x00\x00\x00\x20ftypisom" + b"frame-0001" * 60_000)
+    (root / "notes.txt").write_text("hello\n" * 100)
+    infos = analyze_tree(root)
+    the_plan = plan(infos, Profile.NORMAL, TOOLS)
+    summary = summarize(infos, the_plan, TOOLS)
+    assert summary.pipeline_bytes > 0.9 * summary.total_bytes
+    assert shrink_mode_hint(summary) is None
+
+
 # -- the real files, end to end ------------------------------------------
 
 B18 = Path(r"C:\excmp-bench\b18")

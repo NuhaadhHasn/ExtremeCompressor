@@ -36,12 +36,22 @@ def test_auto_keeps_all_logical_processors():
     assert ZstdStage()._params(10_000_000, threads=0).threads == ALL
 
 
-@pytest.mark.parametrize("n", [1, 2, 4])
+@pytest.mark.parametrize("n", [1, 2])
 def test_an_explicit_thread_count_reaches_zstd(n):
-    assert ZstdStage()._params(10_000_000, threads=n).threads == n
+    assert ZstdStage()._params(10_000_000, threads=min(n, ALL)).threads == min(n, ALL)
 
 
-@pytest.mark.parametrize("requested, expected", [(0, ALL), (1, 1), (3, 3)])
+@pytest.mark.parametrize("n", [5, 8, 16, 64])
+def test_an_explicit_count_never_exceeds_the_measured_default(n):
+    """Review, B18: the spin box allows up to 4x the logical processors, and
+    `ram.zstd_compress_ram` was fitted at -1 (every logical processor). Each
+    worker holds its own window-sized buffers, so 16 workers would blow past
+    the peak the GUI quotes. The setting exists to *lower* the load, so a
+    count above the default is capped at it rather than passed through."""
+    assert ZstdStage()._params(10_000_000, threads=n).threads == min(n, ALL)
+
+
+@pytest.mark.parametrize("requested, expected", [(0, ALL), (1, 1), (3, min(3, ALL))])
 def test_compress_passes_the_settings_thread_count(tmp_path, monkeypatch,
                                                     requested, expected):
     seen = []

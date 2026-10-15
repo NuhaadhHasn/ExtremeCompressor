@@ -1,5 +1,15 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-10-15**. **Everything is merged into `main`**: I11 (the
+> self-test is a visible, timed phase) and **B13: balrogg repacks Ogg audio
+> on the store route, 1.112% → 13.181% on music and 0.297% → 10.785% on game
+> music + speech, end to end, every file restored and SHA-256 compared**
+> ([record](benchmarks/2026-10-06-b13-balrogg.md)). Tests: **1,504 passed,
+> 2 skipped, 1 xfailed** locally; CI green on the branch before the merge.
+> **Next session is an owner agenda: B14 (DArc, already fetched), B18, the
+> B13 follow-ups, B6 if an Oodle sample exists** (handoff §3). The owner runs
+> another development session on this machine: keep CPU use low.
+>
 > Status date: **2026-10-01**. **Everything is merged into `main`**: B17
 > (Insane at zpaqfranz `-m58`), K6 (Cancel reaches a silent tool), and
 > 2026-10-01's two measured fixes. Tests: **1,359 passed, 2 skipped, 1
@@ -222,7 +232,24 @@ OSI rule comes back before anything ships.
       `-mmt`/`-mmemuse` is left in charge. The RAM cells, labels and the
       recommendation now count physical cores. Backtest re-pinned on the new
       target (Normal 91.0 s, Extreme 454.1 s, medians of three).
-- [ ] B13. **balrogg — lossless Vorbis/Opus recompression.** **2026-10-01,
+- [x] B13. ✅ **DONE 2026-10-15: balrogg packs Ogg audio on the store route.
+      Music 1.112% → 13.181% end to end** (Normal, 18/18 packed, 18/18
+      restored and independently SHA-256 compared); game music + speech
+      0.297% → 10.785% (24/26 packed, 26/26 restored). balrogg alone: 13.358% (music, `-9`), 10.920% / 10.952%
+      (music2, `-5` / `-9`); Vorbis 8.5–44.3% per file, Opus 3.6–4.8%. Two
+      files of 26 refused (Ogg FLAC, Skeleton-wrapped Vorbis) and stored as
+      they are. Pinned as a raw executable (`ToolSpec.raw`) at GitHub's
+      published SHA-256. Effort follows the profile (Fast `-1`, Normal `-4`,
+      Extreme `-5`, Insane `-9`; `-9` costs ~5× `-5`'s time for +0.03
+      points). **The first app run saved 0.2%:** a decode watch on the exact
+      size killed balrogg's honest decodes (it pre-sizes output 1 MiB ahead),
+      so `pack()` stored 17 of 18 files raw. Found by the review, not the
+      suite. 22 review findings reproduced and fixed. **Corrections:** the
+      decode rate is ~3× slower in the app than the CLI suggested (unpinned,
+      contended); `.wem`/`.fsb` are not Ogg and are not handled.
+      Record: [benchmarks/2026-10-06-b13](benchmarks/2026-10-06-b13-balrogg.md).
+      Original spec follows.
+      **balrogg — lossless Vorbis/Opus recompression.** **2026-10-01,
       no login needed after all:** the krinkels page says balrogg is GPL-3 and
       hosted at `github.com/iczelia/balrogg`. Release **1.4** (2026-09-10) ships
       `balrogg-x86_64.exe`, 247,315 B, published SHA-256
@@ -2372,7 +2399,20 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       matching, so "oa" finds "Open archive". **Still open from this item:**
       settings search fed by the same registry, drag-out extract, and the jump
       list.
-- [ ] I11. **Progress through the D9 restore** (new 2026-09-27, from B17).
+- [x] I11. ✅ **DONE 2026-10-06 (merged `3858a04`): the self-test is a
+      visible, timed phase.** The engine announces it (`("verify", 0.0)`),
+      beats once a second while it runs and the job is not paused, and says
+      `("verify", 100.0)` only once every hash matched. The bar gives it its
+      estimated share (`estimate.time_split`, blended rates) and moves through
+      it by elapsed time, capped at 90% of the band; past the estimate the job
+      reads "verifying, past estimate" rather than "estimating…", and after
+      the gate "finishing". Pause time is not charged to the estimate (the
+      worker counts beat to beat). The CLI shows elapsed time instead of a
+      frozen "0.0%". **Found on the way:** J7 calibration learned the
+      self-test as codec time while `estimate_time` added it again, so an
+      Insane estimate carried the restore twice; fixed. Review: 16 defects
+      reproduced and fixed, 3 refuted. Original spec follows.
+      **Progress through the D9 restore** (new 2026-09-27, from B17).
       `ChainProgress` tops out at 95% and keeps its peak. The pre-publish
       restore reports through the same stage ids, so the bar sits at 95% for
       the whole self-test. That was tolerable for 7-Zip. At `-m58` the

@@ -189,6 +189,19 @@ _PRECOMP_EXPANDABLE = {".zip", ".gz", ".jar", ".apk", ".docx", ".xlsx", ".pptx",
 #: has its own specialist on the stored route (B2/lepton).
 _DEFLATE_MEDIA = {".png"}
 
+#: Media a chain *with Precomp* pipes whatever its probe says, because Precomp
+#: itself recompresses it losslessly: PNG's deflate (B3, above), and MP3,
+#: which Precomp v0.4.7 recodes with its built-in packMP3 (`-t` lists
+#: "3 = MP3"). The probe cannot see packMP3's gain: it measures what zstd
+#: finds. End to end at Extreme, every file restored (B18, 2026-10-16):
+#:
+#:                  Normal (probe)   Extreme (probe)   Extreme, every MP3
+#:     MP3 music         2.98%           13.69%            18.02%
+#:     MP3 misc         11.22%            8.42%            15.87%
+#:
+#: Without Precomp (Fast, Normal) an MP3 is left to the probe rule.
+_PRECOMP_MEDIA = _DEFLATE_MEDIA | {".mp3"}
+
 #: Audio containers holding **uncompressed** PCM (B4).
 #:
 #: These are `Category.AUDIO` and therefore in `_MEDIA`, which is what made
@@ -214,13 +227,15 @@ from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers
 
 #: Compressed media whose own probe decides whether it is piped: B13a's Ogg,
 #: plus MP3 and MP4 since B18. Measured 2026-10-15 under 7-Zip, every file
-#: restored, the files the probe flagged against the ones it did not:
+#: restored, the files the probe flagged against the ones it did not (group
+#: totals; per file the groups overlap, 0.17% flagged to 5.81% not):
 #:
 #:     MP3, music (5)              4.17% saved    0.35%
 #:     MP3, misc (16)              5.24%          0.45%
-#:     phone video, MP4 (57)       8.99%          1.12%
+#:     phone video, MP4 (51)       9.20%          1.61%
 #:     downloaded video, MP4 (9)   3.77%          0.32%
 #:
+#: An MP3 on a chain with Precomp is piped regardless (`_PRECOMP_MEDIA`).
 #: Every other container (MKV, WebM, MOV, M4A...) keeps "stored as-is" until
 #: it is measured too: sharing a codec with MP4 is not the same as having
 #: been looked at. With balrogg installed an Ogg file never reaches this
@@ -270,7 +285,7 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
         # (.rar/.7z/.zst) stay stored too.
         # PNG is the one media format whose entropy is deflate rather than
         # real, so it gets the override the rest of _MEDIA is denied (B3).
-        deflate_media = info.path.suffix.lower() in _DEFLATE_MEDIA
+        deflate_media = info.path.suffix.lower() in _PRECOMP_MEDIA
         if reason is not None and has_precomp and (
                 info.category not in _MEDIA or deflate_media):
             if (deflate_media

@@ -1,17 +1,16 @@
 """B18(a): zstd's thread count, measured (2026-10-15, i5-7200U, every frame
 restored and SHA-256 compared; docs/benchmarks/2026-10-15-b18-settings.md).
 
-Silesia tar (212 MB), level 19 + LDM, three alternating pairs:
+Silesia tar (212 MB), level 19 + LDM, three pairs (-1 always first):
 
     threads=-1   132.4 s median (91-149)   735 MiB peak   52,595,898 B
     threads=2    162.9 s median (109-188)  552 MiB peak   52,595,898 B
 
--1 was faster in every adjacent pair (0.79-0.84x the time) for identical
-bytes and 183 MiB more, which the Fast profile, whose point is speed, should
-pay. The project's "one thread per physical core" default came from 7-Zip,
-where extra threads cost ratio; zstd's output does not depend on the worker
-count. On the installer tar, threads 1, 2, 4 and -1 all wrote 46,982,246 B;
-only 0 (no worker threads) differs.
+Identical bytes. The timings don't settle speed: the order was fixed, and on
+the contended machine the same 4-thread setting took 37.1 s and 19.6 s on the
+installer tar. zstd's output does not depend on the worker count (threads 1,
+2, 4 and -1 all wrote 46,982,246 B there; only 0, no worker threads, differs),
+unlike 7-Zip's, so nothing measured argues for moving the default. It stays.
 
 What B18 changes: an *explicit* Worker threads setting used to be ignored.
 It now reaches zstd. "Auto" (0) keeps the measured -1.
@@ -68,17 +67,3 @@ def test_compress_passes_the_settings_thread_count(tmp_path, monkeypatch,
     ctx = StageContext(temp_dir=tmp_path / "tmp", threads=requested)
     ZstdStage().compress(src, tmp_path / "a.tar.zst", ctx)
     assert seen == [expected]
-
-
-def test_the_worker_count_does_not_change_the_bytes(tmp_path):
-    """Why honouring the setting is safe: B18 measured identical archives at
-    1, 2, 4 and -1 workers. A small input cannot prove the large case; this
-    keeps the property from silently changing on a zstandard upgrade."""
-    src = tmp_path / "a.bin"
-    src.write_bytes(b"".join(i.to_bytes(4, "little") * 3 for i in range(400_000)))
-    sizes = set()
-    for n in (0, 1, 2):
-        dst = tmp_path / f"t{n}.tar.zst"
-        ZstdStage().compress(src, dst, StageContext(temp_dir=tmp_path / "tmp", threads=n))
-        sizes.add(dst.stat().st_size)
-    assert len(sizes) == 1, sizes

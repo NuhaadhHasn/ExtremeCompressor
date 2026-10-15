@@ -85,8 +85,12 @@ def test_a_jpeg_still_stays_stored():
     assert Path("photo.jpg") in routes["store"].files
 
 
-@pytest.mark.parametrize("name", ["clip.mp4", "song.mp3", "movie.mkv", "tune.flac"])
+@pytest.mark.parametrize("name", ["clip.mp4", "movie.mkv", "tune.flac"])
 def test_real_media_still_stays_stored(name):
+    """`_info` leaves the probe at its 1.0 default: media the probe cannot
+    shrink. (A flagged MP4 is piped by B18's probe rule, and MP3 is piped on
+    any Precomp chain, because Precomp recodes it with packMP3:
+    tests/test_b18_media_probe.py.)"""
     cat = Category.VIDEO if name.endswith(("mp4", "mkv")) else Category.AUDIO
     routes = _routes([_info(name, cat)], WITH_PRECOMP)
     assert "store" in routes, f"{name} was piped; its entropy is real"

@@ -129,14 +129,16 @@ class ZstdStage(Stage):
         """``threads`` is the Worker threads setting: 0 ("auto") keeps -1,
         every logical processor, and a count the user chose is passed as is.
 
-        B18 measured -1 against 2 on a 212 MB Silesia tar, three alternating
-        pairs: identical bytes, 0.79-0.84x the time, 183 MiB more peak (735
-        against 552 MiB). So unlike 7-Zip, whose extra threads cost ratio and
-        doubled its RAM, zstd keeps all logical processors by default. Any
-        worker count from 1 up writes the same bytes (1, 2, 4 and -1 all gave
-        46,982,246 B on the installer tar), so honouring the setting changes
-        speed and memory, never the archive. 0 is not passed through: to zstd
-        it means no worker threads, which *does* change the bytes.
+        B18 measured -1 against 2 on a 212 MB Silesia tar: identical bytes,
+        184 MiB more peak at -1 (735 against 552 MiB), and timings that can't
+        settle speed. -1 was quicker in three pairs, but always ran first, and
+        on a contended machine the same 4-thread setting took 37.1 s and
+        19.6 s on the installer tar. Unlike 7-Zip, whose extra threads cost
+        ratio, zstd's bytes don't depend on the worker count (1, 2, 4 and -1
+        all gave 46,982,246 B), so nothing measured argues for changing the
+        default, and it stays. Honouring the setting changes speed and
+        memory, never the archive. 0 is not passed through: to zstd it means
+        no worker threads, which *does* change the bytes.
 
         A count above the default is capped at it (review, B18): each worker
         holds its own window-sized buffers, `ram.zstd_compress_ram` was fitted

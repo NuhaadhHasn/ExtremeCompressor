@@ -8,8 +8,11 @@ SHA-256 compared (the .pcf through `precomp -r` too), it cost bytes:
     installers   .pcf        62,482,862 -> 59,895,108   -4.14%
                  Extreme 7z  46,048,132 -> 45,686,925   -0.78%
                  Insane -m58 45,915,379 -> 45,523,860   -0.85%
-    deflate      Extreme 7z  51,827,136 -> 51,745,074   -0.16%
+    deflate      Extreme 7z  51,827,160 -> 51,745,074   -0.16%
                  Insane -m58 42,852,397 -> 42,816,077   -0.08%
+
+(The deflate -m58 figure with -intense is B17's: the regenerated .pcf hashed
+identical to the one B17 compressed, so it was not compressed again.)
 
 It was added for raw zlib streams in game paks, and no game data has been
 measured (B6 is blocked on a sample), so the option stays and B6 reopens it.

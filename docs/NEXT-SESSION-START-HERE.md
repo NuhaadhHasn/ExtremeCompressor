@@ -176,3 +176,17 @@ was added for game paks.
 - **No AI attribution in commit messages, ever.**
 - **Four top-level tabs is the ceiling.**
 - **A measured ratio ranks the profiles; it does not forecast the job.**
+
+---
+
+## ⚠️ Suite result, 2026-10-16 02:43 (b18-settings, e9e9e93): DO NOT MERGE YET
+
+**1 failed, 1,548 passed, 2 skipped, 1 xfailed** (29 min 50 s, corpus guard
+clean). The failure: `tests/test_extreme_chain.py::test_extreme_manifest_records_chain`
+expects the chain `[tar, precomp, sevenzip]` and got `[tar, sevenzip]`.
+Likely cause, unverified: with `-intense` off, Precomp finds no stream in
+that test's input, skips itself ("no gain"), and the manifest records the
+chain without it. Decide whether the test pinned `-intense` behaviour or a
+real regression (does a job with real deflate data still record precomp?),
+fix, rerun the suite, then merge. CI passed because Precomp is not on the
+runner.

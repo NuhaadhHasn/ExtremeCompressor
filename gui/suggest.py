@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
-from excmp.estimate import DEFAULT_RATES, Rates, compare_profiles
+from excmp.estimate import (DEFAULT_RATES, Rates, compare_profiles, pack_cost,
+                            packable)
 from excmp.planner import Plan, Profile, precomp_inflation, store_reason
 from excmp.planner import plan as make_plan
 from excmp.sample import MeasuredRun, Sample
@@ -64,6 +65,12 @@ class AnalysisSummary:
     # Bytes that stay stored even under the strongest chain this machine can
     # run. See summarize() for why this is tracked separately.
     floor_store_bytes: int = 0
+    #: B13: Ogg audio balrogg will pack, and what packing it costs. They sit
+    #: inside ``store_bytes`` (the files take the store route) but they are
+    #: slow, so the bar and the time estimate have to know.
+    pack_bytes: int = 0
+    pack_seconds: float = 0.0
+    pack_verify_seconds: float = 0.0
 
     @property
     def store_fraction(self) -> float:
@@ -124,30 +131,40 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         if route.action == "store":
             stored.update(route.files)
 
+    # B13: Ogg audio balrogg repacks takes the store route but is not "stored
+    # as-is" and did not fail to shrink. It stays in `store_bytes` (the route,
+    # which the time arithmetic reads) and is left out of everything that
+    # tells the user what cannot shrink.
+    repacked = {i.path for i in packable(infos, the_plan)}
+
     store_by_category: dict[Category, int] = {}
     for info in infos:
-        if info.path in stored:
+        if info.path in stored and info.path not in repacked:
             store_by_category[info.category] = (
                 store_by_category.get(info.category, 0) + info.size)
 
     store_bytes = sum(i.size for i in infos if i.path in stored)
     store_files = [
         (i.path.name, i.size, store_reason(i) or "stored")
-        for i in sorted((i for i in infos if i.path in stored),
+        for i in sorted((i for i in infos
+                         if i.path in stored and i.path not in repacked),
                         key=lambda i: i.size, reverse=True)
     ]
     total = sum(i.size for i in infos)
     pipeline_stages = next((r.stages for r in the_plan.routes if r.action == "pipeline"), [])
 
     if reference_plan is None:
-        floor_store_bytes = store_bytes
+        floor_store_bytes = store_bytes - sum(i.size for i in infos
+                                              if i.path in repacked)
     else:
         floor: set[Path] = set()
         for route in reference_plan.routes:
             if route.action == "store":
                 floor.update(route.files)
+        floor -= {i.path for i in packable(infos, reference_plan)}
         floor_store_bytes = sum(i.size for i in infos if i.path in floor)
 
+    cost = pack_cost(infos, the_plan)
     return AnalysisSummary(
         total_bytes=total,
         file_count=len(infos),
@@ -160,6 +177,9 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         chain=expected_chain(list(pipeline_stages)),
         tools={name: info is not None for name, info in (tools or {}).items()},
         floor_store_bytes=floor_store_bytes,
+        pack_bytes=cost.bytes,
+        pack_seconds=cost.seconds,
+        pack_verify_seconds=cost.verify_seconds,
     )
 
 
@@ -182,24 +202,34 @@ def gain_note(summary: AnalysisSummary) -> str:
     """The honest one-liner about what lossless compression can achieve."""
     if not summary.file_count:
         return ""
-    frac = summary.store_fraction
+    # B13: Ogg audio sits on the store route but is repacked, so it is neither
+    # "stored bit-exact" nor "can't shrink". It counts with what can shrink,
+    # and the note says what happens to it.
+    packed = summary.pack_bytes
+    shrinkable = summary.pipeline_bytes + packed
+    fixed = summary.store_bytes - packed
+    frac = fixed / summary.total_bytes if summary.total_bytes else 0.0
+    suffix = (f" Ogg audio ({fmt_size(packed)}) is repacked losslessly, "
+              "typically 4–15% smaller." if packed else "")
     if frac >= 0.99:
         return ("Every byte here is already compressed — lossless gain is ~0%. "
                 "The archive will be about the same size as the input.")
     if frac >= MOSTLY_INCOMPRESSIBLE:
         return (f"{fmt_percent(frac)} of this is already compressed and will be stored "
-                f"bit-exact; only {fmt_size(summary.pipeline_bytes)} can actually shrink.")
+                f"bit-exact; only {fmt_size(shrinkable)} can actually shrink." + suffix)
     if frac >= 0.2:
-        return (f"{fmt_size(summary.pipeline_bytes)} can shrink; the other "
-                f"{fmt_size(summary.store_bytes)} is already compressed and gets "
-                "stored losslessly.")
-    return f"Nearly all of this ({fmt_size(summary.pipeline_bytes)}) is worth compressing."
+        return (f"{fmt_size(shrinkable)} can shrink; the other "
+                f"{fmt_size(fixed)} is already compressed and gets "
+                "stored losslessly." + suffix)
+    return (f"Nearly all of this ({fmt_size(shrinkable)}) is worth compressing."
+            + suffix)
 
 
 def shrink_mode_hint(summary: AnalysisSummary) -> str | None:
     """Suggest the (not-yet-built) re-encode mode only when it would matter."""
+    # Audio balrogg repacks is already being made smaller without re-encoding.
     media = sum(summary.by_category.get(c, 0)
-                for c in (Category.VIDEO, Category.AUDIO))
+                for c in (Category.VIDEO, Category.AUDIO)) - summary.pack_bytes
     if summary.total_bytes and media / summary.total_bytes >= 0.4:
         return (f"{fmt_percent(media / summary.total_bytes)} of this is video/audio. "
                 "Only re-encoding makes that smaller — Shrink mode is coming in a "

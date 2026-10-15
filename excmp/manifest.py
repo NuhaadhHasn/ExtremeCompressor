@@ -15,15 +15,18 @@ from __future__ import annotations
 import json
 import math
 import stat
+import tempfile
 import zipfile
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import flacaudio, jpeg
+from . import flacaudio, jpeg, oggpack
 
 from .safepath import UnsafePathError, resolve_within, safe_relpath
+from .stages.base import StageError
+from .tempclean import rmtree_force
 
 #: Stored-route specialists, in the order they are offered a file (B2, B4).
 #:
@@ -37,12 +40,17 @@ from .safepath import UnsafePathError, resolve_within, safe_relpath
 #: second codec by copying all six was how the two halves would eventually
 #: disagree about what a `codec` value means.
 #:
-#: Each module owes: `available()`, `looks_like(head)`, `pack(raw) -> bytes |
-#: None` where the bytes have **already been round-tripped and compared**, and
-#: `unpack(packed) -> bytes`.
+#: Each module owes: `available()`, `looks_like(head)`, `pack(raw, ctx=None,
+#: effort=None) -> bytes | None` where the bytes have **already been
+#: round-tripped and compared**, and `unpack(packed, limit=None) -> bytes`.
+#: ``ctx`` carries cancel and ``effort`` the profile's speed/size setting, and
+#: ``limit`` is the size the ledger declares so a hostile entry cannot expand
+#: past it. A module with nothing to do with one of those accepts and ignores
+#: it. A module may also offer ``effort_for(profile)``.
 _CODECS: dict[str, object] = {
     "lepton": jpeg,
     "flac": flacaudio,
+    "balrogg": oggpack,
 }
 
 SCHEMA_VERSION = 2
@@ -92,12 +100,15 @@ _MANIFEST_REASON_BYTES = 16
 #                              whole relative path of the entry holding the bytes
 #   `,"codec":"lepton"`        B2, on every packed JPEG
 #   `,"codec":"flac"`          B4, on every packed WAV (shorter)
+#   `,"codec":"balrogg"`       B13, on every packed Ogg file (the longest)
 #
 # Never both on one entry - the packing loop skips anything already carrying a
 # `same_as` - so the allowance is the larger of the two, and the path it points
 # at is bounded only by the longest name in the selection.
 _MANIFEST_SAME_AS_BYTES = 13
-_MANIFEST_CODEC_BYTES = 17
+# Derived from the registry, not typed in: it was 17 when B13 added a codec
+# whose key is 18 bytes, and a preflight that under-reads is K1's defect.
+_MANIFEST_CODEC_BYTES = max(len(f',"codec":"{name}"') for name in _CODECS)
 # K2's `dirs` entry: the two quotes around the path and the separating comma.
 _MANIFEST_DIR_BYTES = 3
 # The fixed head: schema/created/profile/payload_name, the stage records, the
@@ -476,7 +487,8 @@ def _copy_bounded(src, dst, limit: int, what: str) -> int:
 
 def write_container(archive_path: Path, manifest: Manifest,
                     payload_path: Path | None = None,
-                    stored_files: dict[str, Path] | None = None) -> None:
+                    stored_files: dict[str, Path] | None = None,
+                    ctx: object = None, profile: object = None) -> None:
     """Write the container. ``stored_files`` maps relpath -> source path for
     files that skip the pipeline; they land as ZIP_STORED ``stored/<relpath>``
     entries so no time is wasted recompressing them.
@@ -484,6 +496,11 @@ def write_container(archive_path: Path, manifest: Manifest,
     Every archive-supplied name is validated *before* the file is created, so
     we can never produce an archive our own reader would refuse -- a container
     that is dead on arrival is a worse outcome than a clear failure here.
+
+    ``ctx`` (a ``StageContext``) and ``profile`` are for the packing phase
+    (B13): ``ctx`` carries cancel, pause and the progress callback, and
+    ``profile`` picks how hard a slow codec works. Both are optional, so a
+    caller with neither gets exactly the old behaviour.
     """
     archive_path = Path(archive_path)
     for key in manifest.inputs:
@@ -525,8 +542,21 @@ def write_container(archive_path: Path, manifest: Manifest,
     # `codec: lepton` its bytes did not honour. Doing it here also means each
     # JPEG is compressed **once** - the engine used to pack every one merely to
     # decide, throw the bytes away, and pack it again down here.
-    packed_bytes: dict[str, bytes] = {}
+    # Packed members are spooled to disk as they are made, not held in memory
+    # until the zip is written: on a 12 GB Ogg library a dict of bytes is
+    # ~10 GB of RAM on a 16 GB laptop. The spool lives in the job's temp dir,
+    # which the disk preflight already budgets for the stored bytes.
+    packed_paths: dict[str, Path] = {}
+    spool: Path | None = None
     ready = {name: mod for name, mod in _CODECS.items() if mod.available()}
+
+    # Two passes. The first only *looks*: it reads sixteen bytes per file to
+    # find which ones a codec claims. This loop used to `read_bytes()` every
+    # stored file, claimed or not, to inspect its first sixteen bytes - on a
+    # folder of large videos that is the whole folder pulled into memory one
+    # file at a time for nothing, and with a codec that runs at 0.1 MB/s the
+    # claimed bytes have to be known up front to report progress at all.
+    claimed: list[tuple[str, Path, str, int]] = []
     for rel, src in stored_norm.items():
         meta = manifest.inputs.get(rel, {})
         if "same_as" in meta:
@@ -539,20 +569,68 @@ def write_container(archive_path: Path, manifest: Manifest,
         if not ready:
             continue
         try:
-            raw = Path(src).read_bytes()
+            with open(src, "rb") as probe:
+                head = probe.read(16)
+            size = Path(src).stat().st_size
         except OSError:
             continue
         for name, mod in ready.items():
-            if not mod.looks_like(raw[:16]):
+            if not mod.looks_like(head):
                 continue
-            try:
-                packed = mod.pack(raw)
-            except OSError:
-                packed = None
-            if packed is not None:
-                packed_bytes[rel] = packed
-                meta["codec"] = name
-            break        # the format is claimed; a second codec cannot help
+            # The format is claimed; a second codec cannot help. A size the
+            # codec would decline anyway is left unread rather than pulled
+            # into memory only to be refused.
+            accepts = getattr(mod, "accepts", None)
+            if accepts is None or accepts(size):
+                claimed.append((rel, Path(src), name, size))
+            break
+
+    total = sum(size for _, _, _, size in claimed) or 1
+    done = 0
+    if claimed:
+        _report(ctx, "pack", 0.0)
+    for rel, src, name, size in claimed:
+        mod = ready[name]
+        _hold_if_paused_or_cancelled(ctx)
+        meta = manifest.inputs.get(rel, {})
+        try:
+            raw = src.read_bytes()
+        except OSError:
+            done += size
+            continue
+        kwargs: dict[str, object] = {"ctx": ctx}
+        effort_for = getattr(mod, "effort_for", None)
+        if effort_for is not None and profile is not None:
+            kwargs["effort"] = effort_for(profile)
+        try:
+            packed = mod.pack(raw, **kwargs)
+        except OSError:
+            packed = None
+        if packed is not None:
+            if spool is None:
+                spool = Path(tempfile.mkdtemp(
+                    prefix="excmp-spool-",
+                    dir=str(getattr(ctx, "temp_dir", "") or "") or None))
+            member = spool / f"{len(packed_paths)}.bin"
+            member.write_bytes(packed)
+            packed_paths[rel] = member
+            meta["codec"] = name
+        del raw, packed
+        done += size
+        _report(ctx, "pack", 100.0 * done / total)
+
+    try:
+        _write_zip(archive_path, manifest, payload_path, stored_norm,
+                   packed_paths)
+    finally:
+        if spool is not None:
+            rmtree_force(spool)
+
+
+def _write_zip(archive_path: Path, manifest: Manifest,
+               payload_path: Path | None, stored_norm: dict[str, Path],
+               packed_paths: dict[str, Path]) -> None:
+    """The container itself, once every entry's codec is settled."""
 
     # K1: the cap used to be enforced only on the way back in, so `compress`
     # would build an archive its own reader refused and find out at the bottom
@@ -590,10 +668,36 @@ def write_container(archive_path: Path, manifest: Manifest,
             meta = manifest.inputs.get(rel, {})
             if "same_as" in meta:
                 continue
-            if rel in packed_bytes:
-                zf.writestr(STORED_PREFIX + rel, packed_bytes[rel])
+            if rel in packed_paths:
+                zf.write(packed_paths[rel], arcname=STORED_PREFIX + rel)
             else:
                 zf.write(src, arcname=STORED_PREFIX + rel)
+
+
+def _report(ctx: object, stage: str, pct: float) -> None:
+    cb = getattr(ctx, "progress_cb", None)
+    if cb is not None:
+        cb(stage, pct)
+
+
+def _hold_if_paused_or_cancelled(ctx: object) -> None:
+    """Between two files of the packing phase: honour cancel, then pause.
+
+    Pausing means "finish this file, then wait", as it does between stages;
+    cancel always wins. A cancel raises the same ``StageError`` a stage does,
+    so the engine and the GUI treat the two identically.
+    """
+    if ctx is None:
+        return
+    import time
+
+    from .stages.base import StageError
+
+    cancel, pause = getattr(ctx, "cancel", None), getattr(ctx, "pause", None)
+    while pause is not None and pause.is_set() and not (cancel and cancel.is_set()):
+        time.sleep(0.1)
+    if cancel is not None and cancel.is_set():
+        raise StageError("pack: cancelled")
 
 
 def _read_manifest(zf: zipfile.ZipFile, archive_path: Path) -> Manifest:
@@ -654,7 +758,8 @@ def read_container(archive_path: Path, extract_dir: Path) -> tuple[Manifest, Pat
 
 def extract_stored(archive_path: Path, out_dir: Path,
                    ledger: dict[str, dict],
-                   only: set[str] | None = None) -> list[Path]:
+                   only: set[str] | None = None,
+                   ctx: object = None) -> list[Path]:
     """Extract every ``stored/`` entry into ``out_dir`` (prefix removed).
 
     ``ledger`` is ``manifest.inputs`` and is **required**: it is what makes the
@@ -668,6 +773,10 @@ def extract_stored(archive_path: Path, out_dir: Path,
     a selective restore cannot be used to walk an archive that a full one
     would have refused - the bomb bound, the duplicate check and the
     undeclared-entry check all still see everything.
+
+    ``ctx`` (B13) carries cancel and pause to the entries a codec has to
+    decode. balrogg decodes at ~1.5 MB/s, so without it Cancel waited out
+    every packed Ogg file in the archive.
     """
     out_dir = Path(out_dir)
     written: list[Path] = []
@@ -722,8 +831,9 @@ def extract_stored(archive_path: Path, out_dir: Path,
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if meta.get("codec"):
+                    _hold_if_paused_or_cancelled(ctx)
                     target.write_bytes(_read_packed_member(
-                        zf, info, declared, key, str(meta["codec"])))
+                        zf, info, declared, key, str(meta["codec"]), ctx))
                 else:
                     with zf.open(info) as src, target.open("wb") as dst:
                         got = _copy_bounded(src, dst, declared,
@@ -788,9 +898,10 @@ def extract_stored(archive_path: Path, out_dir: Path,
                     # across verbatim produced "holds 20162 bytes, the ledger
                     # declares 23906" and failed the entire compress - two
                     # identical photos in one folder was all it took.
+                    _hold_if_paused_or_cancelled(ctx)
                     target.write_bytes(_read_packed_member(
                         zf, info, declared, key,
-                        str(source_meta["codec"])))
+                        str(source_meta["codec"]), ctx))
                 else:
                     with zf.open(info) as src, target.open("wb") as dst:
                         got = _copy_bounded(src, dst, declared,
@@ -808,7 +919,7 @@ def extract_stored(archive_path: Path, out_dir: Path,
 
 def _read_packed_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo,
                         declared: int, key: str,
-                        codec: str) -> bytes:
+                        codec: str, ctx: object = None) -> bytes:
     """Unpack one lepton member, bounded at both ends.
 
     Two amplification steps live here and both used to be unbounded: a plain
@@ -833,9 +944,14 @@ def _read_packed_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo,
     if not mod.available():
         raise ContainerError(
             f"stored entry {key!r} needs the {codec!r} codec to restore, and "
-            f"it is not installed")
+            f"it is not installed or failed its integrity check - re-fetch it")
+    kwargs: dict[str, object] = {"limit": declared}
+    if ctx is not None and codec == "balrogg":
+        kwargs["ctx"] = ctx
     try:
-        restored = mod.unpack(packed)
+        restored = mod.unpack(packed, **kwargs)
+    except StageError:
+        raise           # a cancel, not a bad entry
     except RuntimeError as exc:
         # lepton's own error text carries the Rust build machine's paths, which
         # is not something to show somebody about their own photo.

@@ -32,7 +32,8 @@ from excmp.stages.base import StageContext
 from excmp.tools import ToolInfo, find_tools
 
 from .models import Job, JobKind, JobState
-from .progress import (FINISHING, VERIFY_GAP_LIMIT_S, VERIFY_STAGE, VERIFYING,
+from .progress import (FINISHING, PACK_STAGE, PACKING, VERIFY_GAP_LIMIT_S,
+                       VERIFY_STAGE, VERIFYING,
                        VERIFYING_LATE, ChainProgress, EtaEstimator,
                        expected_chain)
 from .suggest import AnalysisSummary, strongest_profile, summarize
@@ -195,11 +196,13 @@ def _time_split(summary: AnalysisSummary | None) -> tuple[float | None, float | 
     if summary is None:
         return None, None
     from excmp.calibrate import blended_rates
-    from excmp.estimate import time_split
+    from excmp.estimate import PackCost, time_split
 
     try:
+        pack = PackCost(bytes=summary.pack_bytes, seconds=summary.pack_seconds,
+                        verify_seconds=summary.pack_verify_seconds)
         return time_split(summary.store_bytes, summary.pipeline_bytes,
-                          summary.chain, blended_rates())
+                          summary.chain, blended_rates(), pack=pack)
     except Exception:                                   # noqa: BLE001
         # An estimate is a nicety for the bar; a job never fails for want
         # of one.
@@ -219,19 +222,25 @@ class _EngineWorker(QRunnable):
         self.ctx.log_cb = self._on_log
         chain = job.summary.chain if job.summary else []
         compress_s, verify_s = _time_split(job.summary)
-        self._chain = ChainProgress(chain or expected_chain(["sevenzip"]),
-                                    compress_s=compress_s, verify_s=verify_s)
+        self._chain = ChainProgress(
+            chain or expected_chain(["sevenzip"]), compress_s=compress_s,
+            verify_s=verify_s,
+            pack_s=job.summary.pack_seconds if job.summary else None)
         self._eta = EtaEstimator()
         self._clock = time.monotonic
         self._t0 = 0.0
         self._last_emit = 0.0
         self._last_pct = -1.0
+        self._last_stage = ""
         # I11: when the D9 self-test began, the seconds it has actually run
         # (beat to beat, so a pause is not counted) and, once done, how long it
         # occupied the job's clock, pauses included. The first is what the bar
         # and countdown use; the second is what calibration must subtract from
         # a job time that also contains the pause.
         self._verify_t0: float | None = None
+        # B13: the pack phase's span, which calibration must also leave out.
+        self._pack_t0: float | None = None
+        self._pack_end = 0.0
         self._verify_last = 0.0
         self._verify_run = 0.0
         self._verify_elapsed = 0.0
@@ -243,10 +252,21 @@ class _EngineWorker(QRunnable):
             self._on_verify(pct, now)
             return
         overall = self._chain.update(stage, pct)
-        if (overall - self._last_pct < _MIN_PCT_DELTA
+        if stage == PACK_STAGE:
+            if self._pack_t0 is None:
+                self._pack_t0 = now
+            self._pack_end = now
+            stage = PACKING
+        # A change of stage is always drawn. The chain's last report and the
+        # pack phase's first land on the same bar value a moment apart, and
+        # throttling the second left the job naming the previous stage for
+        # the whole first file - minutes, for a large Vorbis file.
+        if (stage == self._last_stage
+                and overall - self._last_pct < _MIN_PCT_DELTA
                 and now - self._last_emit < _MIN_INTERVAL_S
                 and overall < 100.0):
             return
+        self._last_stage = stage
         self._last_pct = overall
         self._last_emit = now
         eta = self._eta.update(overall / 100.0, now - self._t0)
@@ -414,7 +434,13 @@ class CompressWorker(_EngineWorker):
         # I11: the self-test is estimated separately (`_VERIFY_RATE`), so it
         # must not also be learned as part of the codec's rate. Counting it in
         # both put the whole restore into an Insane estimate twice.
-        codec_s = result.elapsed_s - self._verify_elapsed
+        #
+        # B13: the same for the pack phase. Packing Ogg audio runs at
+        # ~0.1 MB/s on bytes that are not piped, so counting it as codec time
+        # taught the estimator a rate several times too slow for the chain.
+        pack_s = (self._pack_end - self._pack_t0
+                  if self._pack_t0 is not None else 0.0)
+        codec_s = result.elapsed_s - self._verify_elapsed - pack_s
         record(stages, piped_bytes=piped, elapsed_s=codec_s,
                achieved_factor=factor)
 

@@ -220,4 +220,5 @@ def blended_rates(base: Rates | None = None,
         if entry.factor is not None:
             factor[key] = entry.factor
     return Rates(io_rate=base.io_rate, codec=codec, codec_factor=factor,
-                 rate_spread=base.rate_spread, verify=base.verify)
+                 rate_spread=base.rate_spread, verify=base.verify,
+                 ogg_pack=base.ogg_pack)

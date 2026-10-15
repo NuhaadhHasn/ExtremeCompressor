@@ -136,6 +136,17 @@ def store_reason(info: FileInfo) -> str | None:
         return ("uncompressed PCM audio: stored as-is because the FLAC tool "
                 "is not installed - fetching it would shrink this ~43% with "
                 "no loss")
+    if info.path.suffix.lower() in _OGG_AUDIO:
+        # B13: with balrogg installed an Ogg file is not piped at all. It
+        # stays on the store route and is packed there, like a WAV with FLAC:
+        # 13.358% smaller on 18 real music files, byte-identical, where piping
+        # them through 7-Zip saved 1.112% (B13a). Checked before the probe
+        # rule below, which only applies when the specialist is absent.
+        from . import oggpack
+        if oggpack.available():
+            return ("Ogg audio: repacked with balrogg where it can be, which "
+                    "restores it byte for byte (measured 4-15% smaller); a "
+                    "file it declines is stored as-is")
     if (info.path.suffix.lower() in _OGG_AUDIO
             and info.sample_ratio_max < 1.0):
         # B13, measured on 18 real music files: the Ogg files the probe
@@ -193,10 +204,12 @@ _DEFLATE_MEDIA = {".png"}
 _UNCOMPRESSED_AUDIO = {".wav", ".aiff", ".aif", ".w64", ".rf64"}
 
 #: Ogg audio containers (Vorbis, Opus), the one compressed-media family that
-#: has been measured (B13, 2026-10-01). An Ogg file whose own probe says it
-#: shrinks is piped; every other media file keeps "stored as-is" until its
-#: format is measured too. tests/test_b13_ogg_probe.py has the table.
-_OGG_AUDIO = {".ogg", ".oga", ".opus"}
+#: has been measured (B13). With balrogg installed an Ogg file stays on the
+#: store route and is repacked there (`oggpack`, `store_reason`); without it,
+#: one whose own probe says it shrinks is piped (B13a,
+#: tests/test_b13_ogg_probe.py). Every other media file keeps "stored as-is"
+#: until its format is measured too.
+from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers)
 
 #: How far Precomp inflates its output mid-pipeline, per data type. The
 #: generic figure is 5x (research/10 C-3), but **PNG measured ~50x** — 15 PNGs

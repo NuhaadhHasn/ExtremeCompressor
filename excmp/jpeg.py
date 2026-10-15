@@ -53,7 +53,7 @@ def looks_like_jpeg(data: bytes) -> bool:
     return data[:3] == JPEG_MAGIC
 
 
-def pack(raw: bytes) -> bytes | None:
+def pack(raw: bytes, ctx: object = None, effort: int | None = None) -> bytes | None:
     """Lepton-compress ``raw``, or ``None`` if it is not worth it.
 
     ``None`` covers every uninteresting outcome — not a JPEG, too small, the
@@ -83,7 +83,7 @@ def pack(raw: bytes) -> bytes | None:
     return bytes(packed)
 
 
-def unpack(packed: bytes) -> bytes:
+def unpack(packed: bytes, limit: int | None = None) -> bytes:
     """Restore the original JPEG. Raises if the wheel is missing.
 
     Deliberately loud rather than lenient: an archive that recorded a lepton

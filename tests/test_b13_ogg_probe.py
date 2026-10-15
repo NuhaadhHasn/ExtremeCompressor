@@ -35,6 +35,17 @@ TOOLS = {n: ToolInfo(name=n, path=f"C:/{n}.exe", version="t")
          for n in ("7z", "precomp", "zpaqfranz")}
 
 
+@pytest.fixture(autouse=True)
+def _without_balrogg(monkeypatch):
+    """This file is the world *without* the specialist: the probe rule is the
+    fallback for a machine that has not fetched balrogg. With it installed an
+    Ogg file is packed on the store route instead (test_b13_pack_phase.py),
+    and what these tests describe is no longer what that machine does - so they
+    pin the machine they describe rather than depend on the one they run on."""
+    from excmp import oggpack
+    monkeypatch.setattr(oggpack, "_balrogg_exe", lambda: None)
+
+
 def _media(name, category, probe_max, entropy=7.8):
     return FileInfo(path=Path(name), size=5_000_000, category=category,
                     entropy_bps=entropy, sample_ratio=probe_max,

@@ -114,6 +114,14 @@ def _spec(base: str, filename: str, digest: str, size: int, **kw) -> ToolSpec:
     )
 
 
+#: The real install root, captured before `_isolate_install_root` replaces it
+#: for every test. One test needs it back: the one that asks whether
+#: `find_tools` sees what is really installed. Under the autouse redirect it
+#: only ever saw an empty temp dir, so it skipped on every run since it was
+#: written (found 2026-10-15). It only reads: `verify_installed` hashes.
+_REAL_INSTALL_ROOT = toolfetch._install_root
+
+
 @pytest.fixture(autouse=True)
 def _isolate_install_root(tmp_path, monkeypatch):
     """Never touch the real %LOCALAPPDATA% during tests."""
@@ -663,7 +671,7 @@ def test_every_redirect_hop_is_validated(server, tmp_path):
         httpd.server_close()
 
 
-def test_an_e1_installed_tool_is_found_by_normal_discovery():
+def test_an_e1_installed_tool_is_found_by_normal_discovery(monkeypatch):
     """`excmp/tools.py` promised to look "in the app-managed tools/bin
     directory" and only ever checked a flat `tools/bin/<name>.exe`, never
     E1's nested `<name>/<version>/<exe_relpath>`. So a hash-pinned tool was
@@ -672,9 +680,11 @@ def test_an_e1_installed_tool_is_found_by_normal_discovery():
     while the discovery layer quietly did not know the tool existed.
 
     Skipped when nothing is installed, so the suite still runs on a machine
-    that has never fetched a tool.
+    that has never fetched a tool (CI, a fresh worktree).
     """
     from excmp.tools import find_tools
+
+    monkeypatch.setattr(toolfetch, "_install_root", _REAL_INSTALL_ROOT)
 
     installed = {name for name, spec in toolfetch.TOOL_MANIFEST.items()
                  if toolfetch.installed_path(spec) is not None}

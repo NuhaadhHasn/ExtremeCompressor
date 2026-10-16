@@ -107,17 +107,19 @@ class AnalysisWorker(QRunnable):
         try:
             # Walking the tree is one cheap pass; do it first so the count is
             # known and the bar can be determinate for the expensive part.
-            files: list[Path] = []
+            # Each file keeps the root it was found under, so the analysis
+            # can record its archive name for the overhead estimate (B19d).
+            files: list[tuple[Path, Path]] = []
             for path in self.paths:
-                files.extend(iter_files(path))
+                files.extend((path, f) for f in iter_files(path))
             total = len(files)
             self.signals.progress.emit(0, total)
 
             tick = _scan_tick(total)
             infos = []
-            for index, file in enumerate(files, start=1):
+            for index, (root, file) in enumerate(files, start=1):
                 try:
-                    infos.append(analyze_file(file))
+                    infos.append(analyze_file(file, root))
                 except OSError as exc:
                     # K3: `analyze_file` opens the file, so one open Excel or
                     # Outlook document raised here, the bare `except` below
@@ -196,13 +198,16 @@ def _time_split(summary: AnalysisSummary | None) -> tuple[float | None, float | 
     if summary is None:
         return None, None
     from excmp.calibrate import blended_rates
-    from excmp.estimate import PackCost, time_split
+    from excmp.estimate import PackCost, RecodeCost, time_split
 
     try:
         pack = PackCost(bytes=summary.pack_bytes, seconds=summary.pack_seconds,
                         verify_seconds=summary.pack_verify_seconds)
+        recode = RecodeCost(compress_seconds=summary.recode_seconds,
+                            verify_seconds=summary.recode_verify_seconds)
         return time_split(summary.store_bytes, summary.pipeline_bytes,
-                          summary.chain, blended_rates(), pack=pack)
+                          summary.chain, blended_rates(), pack=pack,
+                          recode=recode)
     except Exception:                                   # noqa: BLE001
         # An estimate is a nicety for the bar; a job never fails for want
         # of one.
@@ -238,6 +243,10 @@ class _EngineWorker(QRunnable):
         # and countdown use; the second is what calibration must subtract from
         # a job time that also contains the pause.
         self._verify_t0: float | None = None
+        # B19: what Precomp's recoders were expected to add, which calibration
+        # must not learn as the chain's own speed either.
+        self._recode_s = job.summary.recode_seconds if job.summary else 0.0
+        self._recode_bytes = job.summary.recode_bytes if job.summary else 0
         # B13: the pack phase's span, which calibration must also leave out.
         self._pack_t0: float | None = None
         self._pack_end = 0.0
@@ -429,8 +438,14 @@ class CompressWorker(_EngineWorker):
                        if r.get("action") == "pipeline"), [])
         if not stages or not piped:
             return
-        factor = (result.final_bytes / result.orig_bytes
-                  if result.orig_bytes else None)
+        # B19: a job made mostly of media Precomp recodes itself (MP3, the
+        # JPEGs lepton refuses) ran at that recoder's pace, ~0.4 MB/s, which
+        # says little about the chain: one such job moved the learned Extreme
+        # rate by -23% (review). Those are timed by `recode_cost` instead.
+        # Below a quarter of the piped bytes, their modelled share of the time
+        # is taken out and the rest is learned.
+        if self._recode_bytes * 4 >= piped:
+            return
         # I11: the self-test is estimated separately (`_VERIFY_RATE`), so it
         # must not also be learned as part of the codec's rate. Counting it in
         # both put the whole restore into an Insane estimate twice.
@@ -440,9 +455,10 @@ class CompressWorker(_EngineWorker):
         # taught the estimator a rate several times too slow for the chain.
         pack_s = (self._pack_end - self._pack_t0
                   if self._pack_t0 is not None else 0.0)
-        codec_s = result.elapsed_s - self._verify_elapsed - pack_s
-        record(stages, piped_bytes=piped, elapsed_s=codec_s,
-               achieved_factor=factor)
+        codec_s = result.elapsed_s - self._verify_elapsed - pack_s - self._recode_s
+        # No `achieved_factor` (B19): a whole-job ratio is not the slope the
+        # estimator's factor became in B8 (see `calibrate.record`).
+        record(stages, piped_bytes=piped, elapsed_s=codec_s)
 
     def _add_recovery(self, archive) -> None:
         from excmp.recovery import available, create

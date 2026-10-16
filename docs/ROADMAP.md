@@ -1,5 +1,17 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-10-16, afternoon**. **B19 is built on branch
+> `b19-media`, merge pending the local full suite** (the owner paused heavy
+> work): `.mov` joins the probe rule; on Extreme/Insane, **JPEGs lepton
+> refuses (CMYK, a side over 16,386 px) go to Precomp's packJPG: a design
+> folder 3.48% → 42.83%**; the estimate finally models lepton (it priced
+> every photo folder at 0% where the app saves ~22%) and Precomp's recode
+> time; and two older estimator bugs are fixed: store-only overhead was
+> under-booked, and **calibration had been writing a ratio into B8's slope
+> since 2026-09-08** (this machine's store made Normal 33% pessimistic)
+> ([record](benchmarks/2026-10-16-b19-mov-jpeg.md)). The data limit is
+> lifted: downloads are allowed again.
+>
 > Status date: **2026-10-16**. **Everything is merged into `main`**: B14
 > (DArc 3.0.4 measured, **not integrated**:
 > [record](benchmarks/2026-10-15-b14-darc.md)), **B18** (zstd keeps `-1` and
@@ -554,6 +566,53 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
+- [~] B19. 🟡 **BUILT 2026-10-16, merge pending the full suite** (branch
+      `b19-media`) — the media B18 left unmeasured, measured, and a
+      long-standing estimator blind spot fixed. Every archive restored and
+      SHA-256 compared. Record:
+      [benchmarks/2026-10-16-b19](benchmarks/2026-10-16-b19-mov-jpeg.md).
+      (a) **MOV joins the probe rule.** Takeout MOVs: flagged files saved
+      1.01% under 7-Zip, the rest 0.046% (72 KB on 909 MB end to end); a
+      second corpus had none flagged. Small stakes, MP4's split.
+      (b) **Precomp takes the JPEGs lepton refuses.** Lepton refuses 4 colour
+      channels and any side over 16,386 px (both measured on 0.5.8, the old
+      comment said 16,384), and the store route kept those raw. Precomp's
+      packJPG took 24.5–60.6% off all 16 such files in two corpora. On a chain
+      with Precomp they are now piped, found by walking the frame header
+      (565 KB in, behind a print ICC profile). End to end at Extreme:
+      **design work 3.48% → 42.83%, other CMYK −0.01% → 44.67%**; photos and
+      web images unchanged. Piping *every* JPEG lost (web 18.80% against
+      lepton's 21.14%; 4.5× the time on photos for +0.34 points), so lepton
+      keeps the rest.
+      (c) **The estimate sees lepton.** Since B2 every stored JPEG was billed
+      as an exact copy: the range sat above the real archive by up to 28.6%,
+      and the card called the photos "already compressed". Stored JPEGs are
+      now a range (`_LEPTON_RATIO = (0.62, 0.79, 1.0)`) with lepton's time
+      (contended priors); the estimate contains every measured archive.
+      Rendering caught two more: the note's warning tone, and **a photo
+      folder suggested Extreme** where every profile makes the same archive
+      (now Fast, with the reason).
+      (d) **The container overhead was under-booked** (pre-existing): a
+      store-only estimate came out 3,173 B *under* 64 real files. Each stored
+      file's archive name is now booked twice (local + central header);
+      through the engine the estimate sits 19–76 B/file above.
+      (e) **Calibration wrote a ratio into a slope** (pre-existing since B8):
+      every GUI job blended its whole-archive ratio into the factor B8 made a
+      slope, so the feedback ran backwards. This machine's store made Normal
+      **33% pessimistic** on compressible data. The ratio is no longer learned
+      (rates still are), and jobs mostly of Precomp-recoded media teach no
+      rate.
+      **Review** (two lenses + a skeptic, every finding reproduced): ceilings
+      now use each packer's worst file (lepton 0.97, Vorbis 0.92, Opus 0.97;
+      the Windows wallpapers had come out 96 KB over "≤ X"); **Precomp's
+      packJPG/packMP3 time is modelled** (`recode_cost`, contended medians
+      0.41 / 0.35 MB/s compress), so the design folder reads ~9 min, measured
+      9.15; the Fast suggestion's sentences match the table. No integrity or
+      lossless defects.
+      Left open: **Insane on the design set** (stopped when the owner paused
+      heavy work); contended priors (lepton, packJPG, packMP3) want a quiet
+      re-measure; MKV, WebM, M4A still unmeasured; calibration should learn
+      a proper slope one day (it needs the probe readings behind each job).
 - [x] B18. ✅ **DONE 2026-10-16** (branch `b18-settings`) — all three
       measured, two changed, one kept, plus a fourth finding. Every archive was
       restored and SHA-256 compared. Record:

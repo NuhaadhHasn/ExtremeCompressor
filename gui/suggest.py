@@ -18,7 +18,7 @@ from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
 from excmp.estimate import (DEFAULT_RATES, Rates, compare_profiles, pack_cost,
-                            packable)
+                            packable, recode_cost)
 from excmp.planner import Plan, Profile, precomp_inflation, store_reason
 from excmp.planner import plan as make_plan
 from excmp.sample import MeasuredRun, Sample
@@ -67,14 +67,31 @@ class AnalysisSummary:
     floor_store_bytes: int = 0
     #: B13: Ogg audio balrogg will pack, and what packing it costs. They sit
     #: inside ``store_bytes`` (the files take the store route) but they are
-    #: slow, so the bar and the time estimate have to know.
+    #: slow, so the bar and the time estimate have to know. B19: JPEGs lepton
+    #: will pack count here too; ``pack_jpeg_bytes`` is their share.
     pack_bytes: int = 0
     pack_seconds: float = 0.0
     pack_verify_seconds: float = 0.0
+    pack_jpeg_bytes: int = 0
+    #: B19: what Precomp's own MP3/JPEG recoders add beyond the chain's rate,
+    #: so the bar's split agrees with the table (`estimate.recode_cost`).
+    recode_seconds: float = 0.0
+    recode_verify_seconds: float = 0.0
+    recode_bytes: int = 0
+    #: The same under the strongest available chain, which the
+    #: recommendation reasons about (it says whether "seconds" is true).
+    strongest_recode_seconds: float = 0.0
 
     @property
     def store_fraction(self) -> float:
         return self.store_bytes / self.total_bytes if self.total_bytes else 0.0
+
+    @property
+    def fixed_fraction(self) -> float:
+        """Share stored exactly as it is: the store route minus what a
+        specialist repacks there. What the note calls "already compressed"."""
+        fixed = self.store_bytes - self.pack_bytes
+        return fixed / self.total_bytes if self.total_bytes else 0.0
 
     @property
     def pipeline_fraction(self) -> float:
@@ -134,8 +151,16 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
     # B13: Ogg audio balrogg repacks takes the store route but is not "stored
     # as-is" and did not fail to shrink. It stays in `store_bytes` (the route,
     # which the time arithmetic reads) and is left out of everything that
-    # tells the user what cannot shrink.
-    repacked = {i.path for i in packable(infos, the_plan)}
+    # tells the user what cannot shrink. B19: so are the JPEGs lepton packs.
+    packed_infos = packable(infos, the_plan)
+    repacked = {i.path for i in packed_infos}
+    # ...but not out of the *floor*, which only the recommendation reads: the
+    # bytes no profile does better on than another. balrogg's effort rises
+    # with the profile (B13), so Ogg leaves it; lepton packs a JPEG the same
+    # way under every profile, so a photo folder must not look like a reason
+    # for Extreme. (Rendering caught it: all four rows read the same size and
+    # time, and Extreme was suggested on 3x Fast's RAM.)
+    profile_sensitive = {i.path for i in packed_infos if not i.is_jpeg}
 
     store_by_category: dict[Category, int] = {}
     for info in infos:
@@ -155,16 +180,19 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
 
     if reference_plan is None:
         floor_store_bytes = store_bytes - sum(i.size for i in infos
-                                              if i.path in repacked)
+                                              if i.path in profile_sensitive)
     else:
         floor: set[Path] = set()
         for route in reference_plan.routes:
             if route.action == "store":
                 floor.update(route.files)
-        floor -= {i.path for i in packable(infos, reference_plan)}
+        floor -= {i.path for i in packable(infos, reference_plan) if not i.is_jpeg}
         floor_store_bytes = sum(i.size for i in infos if i.path in floor)
 
     cost = pack_cost(infos, the_plan)
+    recode = recode_cost(infos, the_plan)
+    strongest = (recode if reference_plan is None
+                 else recode_cost(infos, reference_plan))
     return AnalysisSummary(
         total_bytes=total,
         file_count=len(infos),
@@ -180,6 +208,11 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         pack_bytes=cost.bytes,
         pack_seconds=cost.seconds,
         pack_verify_seconds=cost.verify_seconds,
+        pack_jpeg_bytes=cost.jpeg_bytes,
+        recode_seconds=recode.compress_seconds,
+        recode_verify_seconds=recode.verify_seconds,
+        recode_bytes=recode.bytes,
+        strongest_recode_seconds=strongest.compress_seconds,
     )
 
 
@@ -208,9 +241,15 @@ def gain_note(summary: AnalysisSummary) -> str:
     packed = summary.pack_bytes
     shrinkable = summary.pipeline_bytes + packed
     fixed = summary.store_bytes - packed
-    frac = fixed / summary.total_bytes if summary.total_bytes else 0.0
-    suffix = (f" Ogg audio ({fmt_size(packed)}) is repacked losslessly, "
-              "typically 4–15% smaller." if packed else "")
+    frac = summary.fixed_fraction
+    ogg = packed - summary.pack_jpeg_bytes
+    suffix = (f" Ogg audio ({fmt_size(ogg)}) is repacked losslessly, "
+              "typically 4–15% smaller." if ogg else "")
+    # B19: measured 21.4% (web images), 22.3% (phone photos) and 33.4% (the
+    # design files lepton took), every file restored.
+    if summary.pack_jpeg_bytes:
+        suffix += (f" JPEG photos ({fmt_size(summary.pack_jpeg_bytes)}) are "
+                   "repacked losslessly, typically 21–33% smaller.")
     if frac >= 0.99:
         return ("Every byte here is already compressed — lossless gain is ~0%. "
                 "The archive will be about the same size as the input.")
@@ -264,6 +303,29 @@ def store_explanations(summary: AnalysisSummary, limit: int = 6) -> list[tuple[s
 # Tune the three constants above (MOSTLY_INCOMPRESSIBLE, BIG_JOB_BYTES,
 # SMALL_JOB_BYTES) rather than rewriting the branches.
 
+def _mostly_settled_reason(summary: AnalysisSummary) -> str:
+    """Why Fast, when almost nothing does better under a slower profile.
+
+    B19 review: lepton packs stored JPEGs ~21-33% smaller under every profile
+    alike, so they sit in the floor, and "the same ~0%" is only true when
+    there are none. Nor is "the same archive" true when part of the input
+    (CMYK JPEGs, say) does shrink further under Precomp: name that part.
+    """
+    if not summary.pack_jpeg_bytes:
+        return ("Almost all of this is already compressed — the slow profiles would "
+                "spend hours to save the same ~0%.")
+    photos = summary.pack_jpeg_bytes / summary.total_bytes if summary.total_bytes else 0.0
+    lead = ("Mostly JPEG photos, which every profile packs the same way"
+            if photos >= 0.5 else
+            "Almost all of this is already compressed, or JPEG photos every "
+            "profile packs the same way")
+    rest = summary.floor_pipeline_fraction
+    if rest < 0.005:
+        return lead + " — Fast makes the same archive quickest."
+    return lead + (f" — a slower profile could only gain on the other "
+                   f"{fmt_percent(rest)}.")
+
+
 def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tuple[Profile, str]:
     """Pick the preset to pre-select, plus the reason shown on its card.
 
@@ -278,11 +340,15 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
     heavy_tools = summary.tools.get("precomp", False)
 
     if summary.floor_store_fraction >= MOSTLY_INCOMPRESSIBLE:
-        return Profile.FAST, (
-            "Almost all of this is already compressed — the slow profiles would "
-            "spend hours to save the same ~0%.")
+        return Profile.FAST, _mostly_settled_reason(summary)
 
     if summary.total_bytes <= SMALL_JOB_BYTES:
+        if summary.strongest_recode_seconds >= 60:
+            # B19 review: Precomp's MP3/JPEG recoders run at ~0.4 MB/s, so a
+            # 50 MB folder of print JPEGs is minutes, not seconds.
+            return Profile.EXTREME, (
+                "Small, though Precomp recodes these files slowly — minutes, not "
+                "seconds. Still the best ratio.")
         return Profile.EXTREME, (
             "Small enough that the full chain costs seconds, so take the best ratio.")
 

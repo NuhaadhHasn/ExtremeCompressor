@@ -157,6 +157,13 @@ def store_reason(info: FileInfo) -> str | None:
         # the bytes look random, and the probe is a measurement of this file
         # rather than a statistic about it.
         return None
+    if info.lepton_refuses:
+        # B19. Only seen where the file stays stored: on a chain with Precomp
+        # `plan()` pipes it to packJPG and this reason is overridden.
+        return ("JPEG that lepton can't pack (CMYK, or a side over 16,386 px): "
+                "stored as-is on this profile; where Precomp is installed, "
+                "Extreme recodes it losslessly (measured 24-61% smaller), and "
+                "Insane runs the same Precomp step")
     if info.category in _MEDIA:
         return (
             "media file: already compressed by its codec; stored losslessly so "
@@ -226,21 +233,24 @@ _UNCOMPRESSED_AUDIO = {".wav", ".aiff", ".aif", ".w64", ".rf64"}
 from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers)
 
 #: Compressed media whose own probe decides whether it is piped: B13a's Ogg,
-#: plus MP3 and MP4 since B18. Measured 2026-10-15 under 7-Zip, every file
-#: restored, the files the probe flagged against the ones it did not (group
-#: totals; per file the groups overlap, 0.17% flagged to 5.81% not):
+#: plus MP3 and MP4 since B18, and MOV since B19. Measured under 7-Zip,
+#: every file restored, the files the probe flagged against the ones it did
+#: not (group totals; per file the groups overlap, 0.17% flagged to 5.81%
+#: not):
 #:
 #:     MP3, music (5)              4.17% saved    0.35%
 #:     MP3, misc (16)              5.24%          0.45%
 #:     phone video, MP4 (51)       9.20%          1.61%
 #:     downloaded video, MP4 (9)   3.77%          0.32%
+#:     Takeout MOV (64)            1.01%          0.046%   (B19)
+#:     Downloads-1 MOV (2)         none flagged   0.015%   (B19)
 #:
 #: An MP3 on a chain with Precomp is piped regardless (`_PRECOMP_MEDIA`).
-#: Every other container (MKV, WebM, MOV, M4A...) keeps "stored as-is" until
-#: it is measured too: sharing a codec with MP4 is not the same as having
-#: been looked at. With balrogg installed an Ogg file never reaches this
-#: rule (`store_reason` packs it first).
-_PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4"}
+#: Every other container (MKV, WebM, M4A...) keeps "stored as-is" until it
+#: is measured too: sharing a codec with MP4 is not the same as having been
+#: looked at. With balrogg installed an Ogg file never reaches this rule
+#: (`store_reason` packs it first).
+_PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4", ".mov"}
 
 #: How far Precomp inflates its output mid-pipeline, per data type. The
 #: generic figure is 5x (research/10 C-3), but **PNG measured ~50x** — 15 PNGs
@@ -285,7 +295,10 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
         # (.rar/.7z/.zst) stay stored too.
         # PNG is the one media format whose entropy is deflate rather than
         # real, so it gets the override the rest of _MEDIA is denied (B3).
-        deflate_media = info.path.suffix.lower() in _PRECOMP_MEDIA
+        # A JPEG lepton will refuse joins it (B19): the store route would
+        # keep it raw, and Precomp's packJPG recodes it losslessly.
+        deflate_media = (info.path.suffix.lower() in _PRECOMP_MEDIA
+                         or info.lepton_refuses)
         if reason is not None and has_precomp and (
                 info.category not in _MEDIA or deflate_media):
             if (deflate_media

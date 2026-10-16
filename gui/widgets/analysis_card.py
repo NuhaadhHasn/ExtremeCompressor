@@ -201,8 +201,10 @@ class AnalysisCard(QFrame):
 
         self._gain.setText(gain_note(summary))
         # The tone is a *second* signal on top of the sentence, never the
-        # only one - the text says everything the colour does.
-        self._gain.setProperty("tone", "warn" if summary.store_fraction >= 0.85 else "ok")
+        # only one - the text says everything the colour does. So it reads
+        # the sentence's own figure: what is stored as-is, not the store
+        # route, which repacked Ogg and JPEGs ride too (B19 render check).
+        self._gain.setProperty("tone", "warn" if summary.fixed_fraction >= 0.85 else "ok")
         repolish(self._gain)
 
         hint = shrink_mode_hint(summary)

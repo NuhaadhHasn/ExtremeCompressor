@@ -15,8 +15,9 @@ docs/benchmarks/2026-10-15-b18-settings.md):
 
 Those are group totals; per file the groups overlap (a flagged file saved as
 little as 0.17%, an unflagged one 5.81%). So `.mp3` and `.mp4` join Ogg.
-Other containers (MKV, WebM, MOV, M4A) and JPEG were not measured and keep
-the old rule. An MP3 on a chain with Precomp is a different case (below).
+Other containers (MKV, WebM, M4A) were not measured and keep the old rule;
+MOV joined in B19 (tests/test_b19_media.py). An MP3 on a chain with Precomp
+is a different case (below).
 """
 
 from __future__ import annotations
@@ -69,13 +70,13 @@ def test_an_mp3_or_mp4_the_probe_cannot_shrink_stays_stored(name, category):
 @pytest.mark.parametrize("name, category", [
     ("movie.mkv", Category.VIDEO),
     ("movie.webm", Category.VIDEO),
-    ("movie.mov", Category.VIDEO),
     ("tune.m4a", Category.AUDIO),
     ("photo.jpg", Category.IMAGE),
 ])
 def test_unmeasured_media_keeps_the_old_rule(name, category):
     """Measured means measured: a container that shares a codec with MP4
-    (MOV, M4A) is still a different set of files nobody has looked at."""
+    (M4A) is still a different set of files nobody has looked at. (MOV was
+    measured in B19 and joined the rule: tests/test_b19_media.py.)"""
     assert store_reason(_media(name, category, 0.95)) is not None
 
 

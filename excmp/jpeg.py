@@ -31,6 +31,8 @@ call site and no way to opt out of the check.
 
 from __future__ import annotations
 
+import struct
+
 #: JPEG's start-of-image marker. Cheap gate before handing bytes to a codec.
 JPEG_MAGIC = b"\xff\xd8\xff"
 
@@ -53,6 +55,87 @@ def looks_like_jpeg(data: bytes) -> bool:
     return data[:3] == JPEG_MAGIC
 
 
+#: Lepton's largest side, measured on 0.5.8 (B19): 16,386 px is accepted and
+#: 16,387 refused, on either axis ("image dimensions larger than 16386x16386").
+LEPTON_MAX_SIDE = 16386
+
+#: Start-of-frame markers: baseline, extended, progressive, lossless, and the
+#: hierarchical and arithmetic variants. Not C4/C8/CC, which share the range.
+_SOF_MARKERS = frozenset({0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                          0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
+
+#: Markers with no length field: TEM, RST0-7, and a stray SOI. T.81 allows
+#: none of them before the frame (B.2), but a decoder may still read such a
+#: file, so they are stepped over rather than read as a segment whose
+#: "length" is the next marker's bytes (review, B19). A miss here was only
+#: ever the old route, never a lossless risk.
+_STANDALONE = frozenset({0x01, *range(0xD0, 0xD9)})
+
+#: How many markers to walk before giving up. Real files had at most 17
+#: before their frame header (a print ICC profile is split across several),
+#: but Photoshop splits extended XMP into 64 KB pieces, so the bound is
+#: generous: each step reads four bytes and seeks.
+_MAX_SEGMENTS = 4096
+
+
+def frame_header(path) -> tuple[int, int, int] | None:
+    """``(components, width, height)`` from the JPEG's frame header, or None.
+
+    Walks the marker chain, seeking over each segment, so it reads a few
+    bytes per segment however large they are. It has to: in every CMYK file
+    measured (B19) the frame sat 565 KB in, behind a print ICC profile, far
+    past the analyzer's 64 KiB head. None for anything that isn't a readable
+    JPEG up to its frame - a PNG named .jpg, a truncated file - because this
+    runs during analysis, which K3 made incapable of failing a job.
+    """
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(2) != b"\xff\xd8":
+                return None
+            for _ in range(_MAX_SEGMENTS):
+                mark = fh.read(2)
+                if len(mark) < 2 or mark[0] != 0xFF:
+                    return None
+                if mark[1] == 0xFF:          # fill byte before a marker
+                    fh.seek(-1, 1)
+                    continue
+                if mark[1] in _STANDALONE:
+                    continue
+                size = fh.read(2)
+                if len(size) < 2:
+                    return None
+                length = struct.unpack(">H", size)[0]
+                if mark[1] in _SOF_MARKERS:
+                    body = fh.read(6)        # precision, height, width, components
+                    if len(body) < 6:
+                        return None
+                    height, width = struct.unpack(">HH", body[1:5])
+                    return body[5], width, height
+                if mark[1] == 0xDA or length < 2:   # scan data before any frame
+                    return None
+                fh.seek(length - 2, 1)
+    except OSError:
+        return None
+    return None
+
+
+def lepton_refuses(path) -> bool:
+    """Will lepton refuse this JPEG, by what its frame header says?
+
+    The two refusals the header shows, both measured on lepton 0.5.8 (B19):
+    4 colour channels (CMYK/YCCK: "Unsupported4Colors") and a side over
+    `LEPTON_MAX_SIDE`. Together they were 143.9 of the 144.1 MB lepton
+    declined across four corpora. Its other refusals are scan-structure
+    quirks of small progressive files the header can't reveal; those stay
+    stored, as before. Grayscale is accepted.
+    """
+    frame = frame_header(path)
+    if frame is None:
+        return False
+    components, width, height = frame
+    return components == 4 or max(width, height) > LEPTON_MAX_SIDE
+
+
 def pack(raw: bytes, ctx: object = None, effort: int | None = None) -> bytes | None:
     """Lepton-compress ``raw``, or ``None`` if it is not worth it.
 
@@ -69,9 +152,11 @@ def pack(raw: bytes, ctx: object = None, effort: int | None = None) -> bytes | N
     try:
         packed = _lepton.compress_bytes(raw)
     except Exception:
-        # Lepton raises on CMYK/4-channel and on images wider than 16384 px,
-        # both of which are ordinary files someone might hand us. Refusing to
-        # compress is not an error condition.
+        # Lepton raises on CMYK/4-channel, on a side over 16,386 px, and on
+        # some progressive scan layouts, all of them ordinary files someone
+        # might hand us. Refusing to compress is not an error condition. (On
+        # a chain with Precomp the first two never get here: the planner
+        # pipes them to packJPG, B19.)
         return None
     if not packed or len(packed) >= len(raw):
         return None

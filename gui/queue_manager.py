@@ -439,8 +439,9 @@ class CompressWorker(_EngineWorker):
         if not stages or not piped:
             return
         # B19: a job made mostly of media Precomp recodes itself (MP3, the
-        # JPEGs lepton refuses) ran at that recoder's pace, ~0.4 MB/s, which
-        # says little about the chain: one such job moved the learned Extreme
+        # JPEGs lepton refuses) ran at that recoder's pace (~1 MB/s each way
+        # quiet, 2026-10-17; down to 0.3 MB/s contended), which says little
+        # about the chain: one such job moved the learned Extreme
         # rate by -23% (review). Those are timed by `recode_cost` instead.
         # Below a quarter of the piped bytes, their modelled share of the time
         # is taken out and the rest is learned.

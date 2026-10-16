@@ -765,16 +765,19 @@ _LEPTON_DECODE_PER_FILE_S = 0.036
 # expanding every member is Precomp's slow regime. The two AABs (121 MB) and
 # a 36.8 MB ODT ran at 0.446 and 0.439 MB/s compress, 1.68 and 3.06 MB/s
 # self-test, so the sample-based 0.46 / 1.5 stand. The 1-6 MB samples ran
-# 0.08-0.51 MB/s on the quiet night: there a job's fixed start-up cost, which
-# the model doesn't have, outweighs the rate.
+# 0.08-0.51 MB/s on the quiet night, slower than the contended afternoon, and
+# start-up doesn't explain it (a 64 KB ODT job takes ~2 s); the CPU log
+# shows nothing beside the slow runs, so on samples that small the rate is
+# noise.
 _RECODE_RATE = {"jpeg": 1.03e6, "mp3": 1.18e6, "zip": 0.46e6}
 _RECODE_VERIFY_RATE = {"jpeg": 1.02e6, "mp3": 1.49e6, "zip": 1.5e6}
 
-# How far a recoded file's time swings, chain share included. A recoder runs
-# single-threaded, and the slowest compress phase measured is 4.0x under the
-# quiet median (packMP3 at 0.30 MB/s, B18, WSL busy). That run and B19's
-# contended rows have to stay inside the range, so recoded bytes take this
-# instead of the chain's spread.
+# How much slower than the quiet median a recoded file's time can run (the
+# high side only; see estimate_time). B18's contended packMP3 run compressed
+# at 0.30 MB/s, 4.0x under the median, and has to stay inside the range, as
+# do B19's contended JPEG rows. Not every run fits: one B19 design run went
+# at 0.09 MB/s beside GUI renders and tests, and two 6 MB container runs on
+# the quiet night came out a few seconds over (record, 2026-10-17).
 _RECODE_SPREAD = 4.0
 _RECODE_BASE_RATE = 1.41e6          # _CODEC_RATE["precomp+sevenzip"]
 _RECODE_BASE_VERIFY_RATE = 6.5e6    # _VERIFY_RATE["precomp+sevenzip"]
@@ -830,10 +833,17 @@ def recoded_seconds(recode: RecodeCost, stages: Sequence[str],
     sets the pace for all of it. At the measured rates the extra alone is a
     fraction of the job (50 MB of CMYK: 13 s of about 98 s), so anything that
     asks "how long do these files take" has to read this instead.
+
+    The chain's share is capped at the generic Precomp chain's rate, which is
+    what the recoders were measured beside. Insane's zpaqfranz is slower than
+    that on every byte, and the excess is zpaqfranz's own time, not the
+    recoder's (review: 95% of an Insane "recode" was zpaqfranz).
     """
     rate, verify_rate = rates.rate_for(stages), rates.verify_rate_for(stages)
-    return ((recode.bytes / rate if rate else 0.0) + recode.compress_seconds,
-            (recode.bytes / verify_rate if verify_rate else 0.0) + recode.verify_seconds)
+    compress = recode.bytes / max(rate, _RECODE_BASE_RATE) if rate else 0.0
+    verify = (recode.bytes / max(verify_rate, _RECODE_BASE_VERIFY_RATE)
+              if verify_rate else 0.0)
+    return compress + recode.compress_seconds, verify + recode.verify_seconds
 
 
 @dataclass(frozen=True)
@@ -1047,19 +1057,18 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     codec_seconds = compress_seconds - io_seconds - cost.seconds
     spread = max(1.0, rates.spread_for(stages))
 
-    # The recoded files' whole time, compress and self-test: their recoder
-    # sets the pace, so it swings by _RECODE_SPREAD rather than the chain's
-    # spread (2026-10-17).
-    recode_compress, recode_verify = recoded_seconds(recode, stages, rates)
-    recoded = recode_compress + recode_verify
-    codec_seconds -= recode_compress
-
-    base = io_seconds + verify_seconds - recode_verify
+    base = io_seconds + verify_seconds
+    # The time the recoders pace, compress and self-test, swings by
+    # _RECODE_SPREAD on the slow side (2026-10-17). Only that side: the
+    # priors are quiet medians, and contention only slows a job down, so the
+    # low end stays the chain's (review: a symmetric spread put the design
+    # folder's low at 71.5 s, its fastest run took 279 s).
+    paced_compress, paced_verify = recoded_seconds(recode, stages, rates)
     return TimeEstimate(
-        low=(base + codec_seconds / spread + recoded / _RECODE_SPREAD
-             + cost.seconds / _PACK_SPREAD),
-        expected=base + codec_seconds + recoded + cost.seconds,
-        high=(base + codec_seconds * spread + recoded * _RECODE_SPREAD
+        low=base + codec_seconds / spread + cost.seconds / _PACK_SPREAD,
+        expected=base + codec_seconds + cost.seconds,
+        high=(base - paced_verify + (codec_seconds - paced_compress) * spread
+              + (paced_compress + paced_verify) * _RECODE_SPREAD
               + cost.seconds * _PACK_SPREAD),
     )
 

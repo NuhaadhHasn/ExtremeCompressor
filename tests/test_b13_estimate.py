@@ -1,8 +1,10 @@
 """B13: the estimate has to know that packing Ogg audio is slow.
 
 Stored files were costed as a plain copy at exactly 1.0, which was right for a
-folder of videos and harmless for FLAC and lepton, which run at tens of MB/s.
-balrogg encodes at ~0.1-0.3 MB/s at ``-9``: a 1 GB folder of Vorbis is about
+folder of videos. (It was believed harmless for FLAC and lepton too; B19
+measured lepton at ~2.3 MB/s for pack + check, contended, and gave it the
+same treatment: tests/test_b19_media.py.) balrogg encodes at ~0.1-0.3 MB/s at
+``-9``: a 1 GB folder of Vorbis is about
 an hour, and an estimate that said "a few seconds" because the files are
 "stored" would be worse than having no estimate at all. The numbers below are
 priors from 18 real music files and one machine whose speed varied 3.5x within

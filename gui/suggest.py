@@ -67,14 +67,23 @@ class AnalysisSummary:
     floor_store_bytes: int = 0
     #: B13: Ogg audio balrogg will pack, and what packing it costs. They sit
     #: inside ``store_bytes`` (the files take the store route) but they are
-    #: slow, so the bar and the time estimate have to know.
+    #: slow, so the bar and the time estimate have to know. B19: JPEGs lepton
+    #: will pack count here too; ``pack_jpeg_bytes`` is their share.
     pack_bytes: int = 0
     pack_seconds: float = 0.0
     pack_verify_seconds: float = 0.0
+    pack_jpeg_bytes: int = 0
 
     @property
     def store_fraction(self) -> float:
         return self.store_bytes / self.total_bytes if self.total_bytes else 0.0
+
+    @property
+    def fixed_fraction(self) -> float:
+        """Share stored exactly as it is: the store route minus what a
+        specialist repacks there. What the note calls "already compressed"."""
+        fixed = self.store_bytes - self.pack_bytes
+        return fixed / self.total_bytes if self.total_bytes else 0.0
 
     @property
     def pipeline_fraction(self) -> float:
@@ -134,8 +143,16 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
     # B13: Ogg audio balrogg repacks takes the store route but is not "stored
     # as-is" and did not fail to shrink. It stays in `store_bytes` (the route,
     # which the time arithmetic reads) and is left out of everything that
-    # tells the user what cannot shrink.
-    repacked = {i.path for i in packable(infos, the_plan)}
+    # tells the user what cannot shrink. B19: so are the JPEGs lepton packs.
+    packed_infos = packable(infos, the_plan)
+    repacked = {i.path for i in packed_infos}
+    # ...but not out of the *floor*, which only the recommendation reads: the
+    # bytes no profile does better on than another. balrogg's effort rises
+    # with the profile (B13), so Ogg leaves it; lepton packs a JPEG the same
+    # way under every profile, so a photo folder must not look like a reason
+    # for Extreme. (Rendering caught it: all four rows read the same size and
+    # time, and Extreme was suggested on 3x Fast's RAM.)
+    profile_sensitive = {i.path for i in packed_infos if not i.is_jpeg}
 
     store_by_category: dict[Category, int] = {}
     for info in infos:
@@ -155,13 +172,13 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
 
     if reference_plan is None:
         floor_store_bytes = store_bytes - sum(i.size for i in infos
-                                              if i.path in repacked)
+                                              if i.path in profile_sensitive)
     else:
         floor: set[Path] = set()
         for route in reference_plan.routes:
             if route.action == "store":
                 floor.update(route.files)
-        floor -= {i.path for i in packable(infos, reference_plan)}
+        floor -= {i.path for i in packable(infos, reference_plan) if not i.is_jpeg}
         floor_store_bytes = sum(i.size for i in infos if i.path in floor)
 
     cost = pack_cost(infos, the_plan)
@@ -180,6 +197,7 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         pack_bytes=cost.bytes,
         pack_seconds=cost.seconds,
         pack_verify_seconds=cost.verify_seconds,
+        pack_jpeg_bytes=cost.jpeg_bytes,
     )
 
 
@@ -208,9 +226,15 @@ def gain_note(summary: AnalysisSummary) -> str:
     packed = summary.pack_bytes
     shrinkable = summary.pipeline_bytes + packed
     fixed = summary.store_bytes - packed
-    frac = fixed / summary.total_bytes if summary.total_bytes else 0.0
-    suffix = (f" Ogg audio ({fmt_size(packed)}) is repacked losslessly, "
-              "typically 4–15% smaller." if packed else "")
+    frac = summary.fixed_fraction
+    ogg = packed - summary.pack_jpeg_bytes
+    suffix = (f" Ogg audio ({fmt_size(ogg)}) is repacked losslessly, "
+              "typically 4–15% smaller." if ogg else "")
+    # B19: measured 21.4% (web images), 22.3% (phone photos) and 33.4% (the
+    # design files lepton took), every file restored.
+    if summary.pack_jpeg_bytes:
+        suffix += (f" JPEG photos ({fmt_size(summary.pack_jpeg_bytes)}) are "
+                   "repacked losslessly, typically 21–33% smaller.")
     if frac >= 0.99:
         return ("Every byte here is already compressed — lossless gain is ~0%. "
                 "The archive will be about the same size as the input.")
@@ -278,6 +302,12 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
     heavy_tools = summary.tools.get("precomp", False)
 
     if summary.floor_store_fraction >= MOSTLY_INCOMPRESSIBLE:
+        if summary.pack_jpeg_bytes * 2 >= summary.floor_store_bytes:
+            # B19: mostly JPEGs lepton packs, ~21-33% smaller under any
+            # profile. Same archive either way; "~0%" would be false.
+            return Profile.FAST, (
+                "Mostly JPEG photos, which every profile packs the same way — "
+                "Fast makes the same archive quickest.")
         return Profile.FAST, (
             "Almost all of this is already compressed — the slow profiles would "
             "spend hours to save the same ~0%.")

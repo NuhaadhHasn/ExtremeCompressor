@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
-from . import oggpack
+from . import jpeg, oggpack
 from .analyzer import FileInfo
 from .planner import Plan, Profile, plan as make_plan, store_reason
 from .tools import ToolInfo
@@ -338,9 +338,14 @@ class Rates:
     #: B13: will Ogg audio be packed by balrogg? ``None`` asks this machine.
     #: Explicit in tests, so an estimate does not depend on what is installed.
     ogg_pack: bool | None = None
+    #: B19: will JPEGs be packed by lepton? ``None`` asks this machine, as above.
+    jpeg_pack: bool | None = None
 
     def ogg_packed(self) -> bool:
         return oggpack.available() if self.ogg_pack is None else self.ogg_pack
+
+    def jpeg_packed(self) -> bool:
+        return jpeg.available() if self.jpeg_pack is None else self.jpeg_pack
 
     @staticmethod
     def chain_key(stages: Sequence[str]) -> str:
@@ -393,8 +398,9 @@ class SizeEstimate:
     # True for Precomp chains: ``expected`` assumes Precomp finds nothing, so the
     # real archive may be far smaller. Say "at most", never "about".
     upper_bound: bool = False
-    #: Original bytes of Ogg audio that balrogg will pack (B13). They sit inside
-    #: ``stored_bytes`` and are *predicted*, not exact like the rest of it.
+    #: Original bytes a store-route specialist will pack: Ogg audio by balrogg
+    #: (B13) and JPEGs by lepton (B19). They sit inside ``stored_bytes`` and
+    #: are *predicted*, not exact like the rest of it.
     packed_bytes: int = 0
 
     @property
@@ -480,12 +486,22 @@ def _stages_of(the_plan: Plan) -> list[str]:
 #: the disk preflight books `high`.
 _MP3_PRECOMP_RATIO = (0.74, 0.90, 1.0)
 
+#: A JPEG lepton refuses (CMYK, or a side over 16,386 px), which a chain with
+#: Precomp pipes to packJPG (B19, 2026-10-16). `precomp -cn -intense` then
+#: 7-Zip, file by file, on all 16 such files found in two corpora (14 design
+#: files, 2 elsewhere), every one restored: 0.394 to 0.755 of the original.
+#: `expected` is the worst file, rounded up, for the ceiling reason above.
+#: `high` is 1.0: a file packJPG can't open passes through about as it was.
+_JPEG_PRECOMP_RATIO = (0.39, 0.76, 1.0)
+
 
 def _piped_ratios(info: FileInfo, factor: float,
                   has_precomp: bool) -> tuple[float, float, float]:
     """(low, expected, high) ratio for one file the chain will process."""
     if has_precomp and info.path.suffix.lower() == ".mp3":
         return _MP3_PRECOMP_RATIO
+    if has_precomp and info.lepton_refuses:
+        return _JPEG_PRECOMP_RATIO
     if store_reason(info) is not None:
         # Piped only because the profile has Precomp - see _ZLIB_* above.
         if info.zlib_stream:
@@ -646,9 +662,40 @@ _PACK_DECODE_RATE = 1.5e6
 _PACK_SPREAD = 3.5
 
 
+# -- B19: JPEGs packed by lepton ----------------------------------------------
+#
+# Every JPEG on the store route has been packed by lepton since B2, and until
+# B19 the estimate billed it as an exact copy. End to end at Extreme
+# (2026-10-16), every file restored, the whole range sat above the archive:
+# +28.6% on 150 phone photos, +27.1% on 299 web images, +3.6% on a design
+# folder that is mostly CMYK lepton refuses.
+#
+# Per file, lepton's output over the original on the files it took (466 of
+# them, three corpora): byte-weighted 0.777 (phone), 0.784 (web), 0.666
+# (design); file by file 0.36 to 0.97. With the files it declined counted at
+# 1.0 the web corpus is 0.786. `expected` is that worst corpus, rounded up,
+# so it stays a ceiling for the "≤ X" a Precomp chain shows (B18's lesson);
+# `low` sits under the best corpus. `high` is 1.0: lepton declines some
+# progressive layouts the header can't reveal, and those are stored as-is.
+_LEPTON_RATIO = (0.62, 0.79, 1.0)
+
+# Time. `jpeg.pack` compresses and then decompresses every file to prove it,
+# and D9 decodes it once more. Fitted to the app's own phase times on two
+# corpora (contended, below-normal priority; B2 measured 4.4 MB/s for pack +
+# check on the old i7-3540M): phone 49.1 MB / 150 files packed in 27.0 s and
+# decoded in 14.7 s, web 20.2 MB / 292 files in 20.2 s and 16.0 s. Bytes
+# plus a per-file cost fits both. These are priors from a busy machine, so
+# they take _PACK_SPREAD's range, and a quiet re-measure should replace them.
+_LEPTON_PACK_RATE = 2.3e6
+_LEPTON_PER_FILE_S = 0.04
+_LEPTON_DECODE_RATE = 5.8e6
+_LEPTON_DECODE_PER_FILE_S = 0.04
+
+
 @dataclass(frozen=True)
 class PackCost:
-    """What packing the Ogg files on the store route will cost."""
+    """What packing the store route's files will cost: Ogg audio (balrogg,
+    B13) and JPEGs (lepton, B19)."""
 
     bytes: int = 0
     #: Compress side: every file is encoded, then decoded once to prove it.
@@ -657,6 +704,7 @@ class PackCost:
     verify_seconds: float = 0.0
     vorbis_bytes: int = 0
     opus_bytes: int = 0
+    jpeg_bytes: int = 0
 
 
 def _ogg_kind(info: FileInfo) -> str:
@@ -665,10 +713,11 @@ def _ogg_kind(info: FileInfo) -> str:
 
 def packable(infos: list[FileInfo], the_plan: Plan,
              rates: Rates = DEFAULT_RATES) -> list[FileInfo]:
-    """The files on this plan's store route that balrogg will be handed. The
-    GUI's summary reads it so the card, the table and the bar agree."""
+    """The files on this plan's store route that a specialist will pack:
+    balrogg's Ogg and lepton's JPEGs. The GUI's summary reads it so the card,
+    the table and the bar agree."""
     stored, _ = _split(infos, the_plan)
-    return _packable(stored, rates)
+    return _packable(stored, rates) + _lepton_packable(stored, rates)
 
 
 def _packable(stored: list[FileInfo], rates: Rates) -> list[FileInfo]:
@@ -677,6 +726,16 @@ def _packable(stored: list[FileInfo], rates: Rates) -> list[FileInfo]:
         return []
     return [i for i in stored if i.path.suffix.lower() in oggpack.SUFFIXES
             and oggpack.accepts(i.size)]
+
+
+def _lepton_packable(stored: list[FileInfo], rates: Rates) -> list[FileInfo]:
+    """Stored files lepton will be handed and can be expected to take: a JPEG
+    by its content (as the store route claims it), big enough for `jpeg.pack`
+    to try, and not one its frame header says lepton refuses."""
+    if not rates.jpeg_packed():
+        return []
+    return [i for i in stored if i.is_jpeg and not i.lepton_refuses
+            and i.size >= jpeg.MIN_SIZE]
 
 
 def _pack_ratio(info: FileInfo, effort: int) -> tuple[float, float, float]:
@@ -688,26 +747,38 @@ def _pack_ratio(info: FileInfo, effort: int) -> tuple[float, float, float]:
 
 def pack_cost(infos: list[FileInfo], the_plan: Plan,
               rates: Rates = DEFAULT_RATES) -> PackCost:
-    """Seconds and bytes for the Ogg files balrogg will pack under this plan.
+    """Seconds and bytes for the files the store route's specialists will
+    pack under this plan: Ogg (balrogg) and JPEG (lepton).
 
-    The effort follows the profile (``oggpack.effort_for``), so the four rows
-    of the comparison table differ for an Ogg folder, as they do in life.
+    balrogg's effort follows the profile (``oggpack.effort_for``), so the four
+    rows of the comparison table differ for an Ogg folder, as they do in life.
+    Lepton has no effort setting.
     """
     stored, _ = _split(infos, the_plan)
     files = _packable(stored, rates)
-    if not files:
+    photos = _lepton_packable(stored, rates)
+    if not files and not photos:
         return PackCost()
-    effort_time = _PACK_EFFORT_TIME.get(oggpack.effort_for(the_plan.profile), 0.27)
     encode = decode = 0.0
     by_kind = {"vorbis": 0, "opus": 0}
-    for info in files:
-        kind = _ogg_kind(info)
-        by_kind[kind] += info.size
-        encode += info.size * effort_time / _PACK_ENCODE_RATE[kind] + _PACK_PER_FILE_S
-        decode += info.size / _PACK_DECODE_RATE
-    return PackCost(bytes=sum(by_kind.values()), seconds=encode + decode,
-                    verify_seconds=decode, vorbis_bytes=by_kind["vorbis"],
-                    opus_bytes=by_kind["opus"])
+    if files:
+        effort_time = _PACK_EFFORT_TIME.get(oggpack.effort_for(the_plan.profile), 0.27)
+        for info in files:
+            kind = _ogg_kind(info)
+            by_kind[kind] += info.size
+            encode += info.size * effort_time / _PACK_ENCODE_RATE[kind] + _PACK_PER_FILE_S
+            decode += info.size / _PACK_DECODE_RATE
+    # Lepton's pack time already includes the decode that proves each file
+    # (`jpeg.pack`), so it is not added twice the way balrogg's is.
+    jpeg_bytes = sum(i.size for i in photos)
+    jpeg_pack = jpeg_bytes / _LEPTON_PACK_RATE + len(photos) * _LEPTON_PER_FILE_S
+    jpeg_decode = (jpeg_bytes / _LEPTON_DECODE_RATE
+                   + len(photos) * _LEPTON_DECODE_PER_FILE_S)
+    return PackCost(bytes=sum(by_kind.values()) + jpeg_bytes,
+                    seconds=encode + decode + jpeg_pack,
+                    verify_seconds=decode + jpeg_decode,
+                    vorbis_bytes=by_kind["vorbis"], opus_bytes=by_kind["opus"],
+                    jpeg_bytes=jpeg_bytes)
 
 
 def estimate_size(infos: list[FileInfo], the_plan: Plan,
@@ -777,6 +848,14 @@ def estimate_size(infos: list[FileInfo], the_plan: Plan,
         low += info.size * p_low
         expected += info.size * p_expected
         high += info.size * p_high
+
+    # B19: and so are stored JPEGs, by lepton - the same move.
+    photos = _lepton_packable(stored, rates)
+    packed_bytes += sum(i.size for i in photos)
+    for info in photos:
+        low += info.size * _LEPTON_RATIO[0]
+        expected += info.size * _LEPTON_RATIO[1]
+        high += info.size * _LEPTON_RATIO[2]
 
     base = stored_bytes - packed_bytes + overhead
     return SizeEstimate(

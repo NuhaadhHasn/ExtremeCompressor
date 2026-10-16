@@ -61,7 +61,8 @@ FINISHING = "finishing"
 #: ``("pack", pct)`` after the chain and before the self-test, for every codec
 #: that claims a stored file (lepton for JPEG, FLAC for WAV, balrogg for Ogg).
 #: It is a real stage with a real percentage (bytes packed over bytes to pack),
-#: unlike the self-test. Only the Ogg part is slow enough to be estimated.
+#: unlike the self-test. The Ogg and JPEG parts are estimated (B13, B19:
+#: lepton packed 49 MB of photos in 27 s, contended); WAV's is not.
 PACKING = "repacking media"
 PACK_STAGE = "pack"
 #: A self-test report later than this after the previous one means the beats
@@ -142,9 +143,9 @@ class ChainProgress:
         if stage_id == PACK_STAGE:
             # Also not a stage of the chain, and unlike the self-test it has a
             # real percentage: bytes packed over bytes to pack. With an
-            # estimate it has a band of its own; without one (JPEG or WAV
-            # packing, which is quick) the chain's band is banked and the bar
-            # waits there. Appending it as an unplanned stage, as it once
+            # estimate (Ogg, and JPEG since B19) it has a band of its own;
+            # without one (WAV packing) the chain's band is banked and the
+            # bar waits there. Appending it as an unplanned stage, as it once
             # was, rescaled every weight and moved the bar backwards.
             self._peak = max(self._peak, self._chain_top)
             if self.pack_s is not None:

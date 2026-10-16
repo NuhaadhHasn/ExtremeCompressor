@@ -198,13 +198,16 @@ def _time_split(summary: AnalysisSummary | None) -> tuple[float | None, float | 
     if summary is None:
         return None, None
     from excmp.calibrate import blended_rates
-    from excmp.estimate import PackCost, time_split
+    from excmp.estimate import PackCost, RecodeCost, time_split
 
     try:
         pack = PackCost(bytes=summary.pack_bytes, seconds=summary.pack_seconds,
                         verify_seconds=summary.pack_verify_seconds)
+        recode = RecodeCost(compress_seconds=summary.recode_seconds,
+                            verify_seconds=summary.recode_verify_seconds)
         return time_split(summary.store_bytes, summary.pipeline_bytes,
-                          summary.chain, blended_rates(), pack=pack)
+                          summary.chain, blended_rates(), pack=pack,
+                          recode=recode)
     except Exception:                                   # noqa: BLE001
         # An estimate is a nicety for the bar; a job never fails for want
         # of one.

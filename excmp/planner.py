@@ -161,8 +161,9 @@ def store_reason(info: FileInfo) -> str | None:
         # B19. Only seen where the file stays stored: on a chain with Precomp
         # `plan()` pipes it to packJPG and this reason is overridden.
         return ("JPEG that lepton can't pack (CMYK, or a side over 16,386 px): "
-                "stored as-is here; Extreme and Insane recode it losslessly "
-                "with Precomp, measured 24-61% smaller")
+                "stored as-is on this profile; where Precomp is installed, "
+                "Extreme recodes it losslessly (measured 24-61% smaller), and "
+                "Insane runs the same Precomp step")
     if info.category in _MEDIA:
         return (
             "media file: already compressed by its codec; stored losslessly so "

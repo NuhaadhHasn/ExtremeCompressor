@@ -64,9 +64,15 @@ LEPTON_MAX_SIDE = 16386
 _SOF_MARKERS = frozenset({0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
                           0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
 
-#: How many segments to walk before giving up. Real files had at most 17
-#: before their frame header (a print ICC profile is split across several).
-_MAX_SEGMENTS = 256
+#: Markers with no length field: TEM, RST0-7, and a stray SOI. Read as
+#: segments, their "length" is the next marker's bytes (review, B19).
+_STANDALONE = frozenset({0x01, *range(0xD0, 0xD9)})
+
+#: How many markers to walk before giving up. Real files had at most 17
+#: before their frame header (a print ICC profile is split across several),
+#: but Photoshop splits extended XMP into 64 KB pieces, so the bound is
+#: generous: each step reads four bytes and seeks.
+_MAX_SEGMENTS = 4096
 
 
 def frame_header(path) -> tuple[int, int, int] | None:
@@ -89,6 +95,8 @@ def frame_header(path) -> tuple[int, int, int] | None:
                     return None
                 if mark[1] == 0xFF:          # fill byte before a marker
                     fh.seek(-1, 1)
+                    continue
+                if mark[1] in _STANDALONE:
                     continue
                 size = fh.read(2)
                 if len(size) < 2:

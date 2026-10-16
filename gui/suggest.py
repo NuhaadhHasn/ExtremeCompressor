@@ -18,7 +18,7 @@ from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
 from excmp.estimate import (DEFAULT_RATES, Rates, compare_profiles, pack_cost,
-                            packable)
+                            packable, recode_cost)
 from excmp.planner import Plan, Profile, precomp_inflation, store_reason
 from excmp.planner import plan as make_plan
 from excmp.sample import MeasuredRun, Sample
@@ -73,6 +73,13 @@ class AnalysisSummary:
     pack_seconds: float = 0.0
     pack_verify_seconds: float = 0.0
     pack_jpeg_bytes: int = 0
+    #: B19: what Precomp's own MP3/JPEG recoders add beyond the chain's rate,
+    #: so the bar's split agrees with the table (`estimate.recode_cost`).
+    recode_seconds: float = 0.0
+    recode_verify_seconds: float = 0.0
+    #: The same under the strongest available chain, which the
+    #: recommendation reasons about (it says whether "seconds" is true).
+    strongest_recode_seconds: float = 0.0
 
     @property
     def store_fraction(self) -> float:
@@ -182,6 +189,9 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         floor_store_bytes = sum(i.size for i in infos if i.path in floor)
 
     cost = pack_cost(infos, the_plan)
+    recode = recode_cost(infos, the_plan)
+    strongest = (recode if reference_plan is None
+                 else recode_cost(infos, reference_plan))
     return AnalysisSummary(
         total_bytes=total,
         file_count=len(infos),
@@ -198,6 +208,9 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         pack_seconds=cost.seconds,
         pack_verify_seconds=cost.verify_seconds,
         pack_jpeg_bytes=cost.jpeg_bytes,
+        recode_seconds=recode.compress_seconds,
+        recode_verify_seconds=recode.verify_seconds,
+        strongest_recode_seconds=strongest.compress_seconds,
     )
 
 
@@ -288,6 +301,29 @@ def store_explanations(summary: AnalysisSummary, limit: int = 6) -> list[tuple[s
 # Tune the three constants above (MOSTLY_INCOMPRESSIBLE, BIG_JOB_BYTES,
 # SMALL_JOB_BYTES) rather than rewriting the branches.
 
+def _mostly_settled_reason(summary: AnalysisSummary) -> str:
+    """Why Fast, when almost nothing does better under a slower profile.
+
+    B19 review: lepton packs stored JPEGs ~21-33% smaller under every profile
+    alike, so they sit in the floor, and "the same ~0%" is only true when
+    there are none. Nor is "the same archive" true when part of the input
+    (CMYK JPEGs, say) does shrink further under Precomp: name that part.
+    """
+    if not summary.pack_jpeg_bytes:
+        return ("Almost all of this is already compressed — the slow profiles would "
+                "spend hours to save the same ~0%.")
+    photos = summary.pack_jpeg_bytes / summary.total_bytes if summary.total_bytes else 0.0
+    lead = ("Mostly JPEG photos, which every profile packs the same way"
+            if photos >= 0.5 else
+            "Almost all of this is already compressed, or JPEG photos every "
+            "profile packs the same way")
+    rest = summary.floor_pipeline_fraction
+    if rest < 0.005:
+        return lead + " — Fast makes the same archive quickest."
+    return lead + (f" — a slower profile could only gain on the other "
+                   f"{fmt_percent(rest)}.")
+
+
 def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tuple[Profile, str]:
     """Pick the preset to pre-select, plus the reason shown on its card.
 
@@ -302,17 +338,15 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
     heavy_tools = summary.tools.get("precomp", False)
 
     if summary.floor_store_fraction >= MOSTLY_INCOMPRESSIBLE:
-        if summary.pack_jpeg_bytes * 2 >= summary.floor_store_bytes:
-            # B19: mostly JPEGs lepton packs, ~21-33% smaller under any
-            # profile. Same archive either way; "~0%" would be false.
-            return Profile.FAST, (
-                "Mostly JPEG photos, which every profile packs the same way — "
-                "Fast makes the same archive quickest.")
-        return Profile.FAST, (
-            "Almost all of this is already compressed — the slow profiles would "
-            "spend hours to save the same ~0%.")
+        return Profile.FAST, _mostly_settled_reason(summary)
 
     if summary.total_bytes <= SMALL_JOB_BYTES:
+        if summary.strongest_recode_seconds >= 60:
+            # B19 review: Precomp's MP3/JPEG recoders run at ~0.4 MB/s, so a
+            # 50 MB folder of print JPEGs is minutes, not seconds.
+            return Profile.EXTREME, (
+                "Small, though Precomp recodes these files slowly — minutes, not "
+                "seconds. Still the best ratio.")
         return Profile.EXTREME, (
             "Small enough that the full chain costs seconds, so take the best ratio.")
 

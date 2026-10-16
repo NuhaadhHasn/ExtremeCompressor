@@ -439,6 +439,182 @@ def test_the_estimate_brackets_the_real_archive(corpus):
     assert est.expected >= archive
 
 
+# -- review fixes --------------------------------------------------------------
+#
+# Two reviewers and a skeptic, 2026-10-16. Each test below reproduces a
+# finding before its fix.
+
+def _text(name="notes.txt", size=10_000):
+    return FileInfo(path=Path(name), size=size, category=Category.TEXT,
+                    entropy_bps=4.5, sample_ratio=0.3, sample_ratio_max=0.35)
+
+
+def test_under_a_ceiling_photos_are_priced_at_their_worst_file():
+    """(A) One piped file makes a Precomp chain's estimate an upper bound
+    ("≤ X"), and stored JPEGs counted toward it at 0.79, a corpus mean. Nine
+    Windows wallpapers plus a text file at Extreme came out 96,373 B over the
+    ceiling (reviewer). B18's rule: a ceiling uses the worst file measured,
+    0.966 of 466 -> 0.97. A row that isn't a ceiling keeps the best guess."""
+    from excmp.estimate import estimate_size
+    photos = [_photo(f"p{i}.jpg", 1_000_000) for i in range(9)]
+    infos = photos + [_text()]
+    ext = estimate_size(infos, plan(infos, Profile.EXTREME, TOOLS), _rates(True))
+    assert ext.upper_bound
+    assert ext.expected - ext.overhead_bytes >= 0.97 * 9_000_000
+    nrm = estimate_size(infos, plan(infos, Profile.NORMAL, TOOLS), _rates(True))
+    assert not nrm.upper_bound
+    assert nrm.expected - nrm.overhead_bytes < 0.80 * 9_000_000 + 10_000
+
+
+def test_under_a_ceiling_ogg_is_priced_at_its_worst_file_too():
+    """(A) The same flaw in B13's Ogg term: 0.865 expected, worst Vorbis file
+    0.915 (B13 record: 8.5-44.3% per file)."""
+    import unittest.mock as m
+    from excmp import oggpack
+    from excmp.estimate import Rates, estimate_size
+    with m.patch.object(oggpack, "available", lambda: True):
+        infos = [FileInfo(path=Path("s.ogg"), size=10_000_000, category=Category.AUDIO,
+                          entropy_bps=7.97), _text()]
+        est = estimate_size(infos, plan(infos, Profile.INSANE, TOOLS),
+                            Rates(ogg_pack=True, jpeg_pack=False))
+    assert est.upper_bound
+    assert est.expected - est.overhead_bytes >= 0.915 * 10_000_000
+
+
+WALLPAPERS = sorted(Path(r"C:\Windows\Web\4K\Wallpaper\Windows").glob("img0_*.jpg"))
+
+
+@pytest.mark.skipif(not WALLPAPERS, reason="no Windows 4K wallpapers here")
+def test_the_ceiling_holds_on_the_reviewer_s_wallpapers(tmp_path):
+    """(A) The reviewer's repro, through the engine: the wallpapers (copied)
+    and a text file at Extreme. The archive must sit under "≤ X"."""
+    import shutil
+    from excmp import engine, jpeg as jpeg_mod
+    from excmp.analyzer import analyze_tree
+    from excmp.estimate import estimate_size
+    from excmp.stages.base import StageContext
+    from excmp.tools import find_tools
+    tools = find_tools()
+    if tools.get("precomp") is None or not jpeg_mod.available():
+        pytest.skip("needs Precomp and lepton")
+    src = tmp_path / "walls"
+    src.mkdir()
+    for p in WALLPAPERS:
+        shutil.copy2(p, src / p.name)
+    (src / "notes.txt").write_text("lorem ipsum dolor sit amet\n" * 400)
+    infos = analyze_tree(src)
+    est = estimate_size(infos, plan(infos, Profile.EXTREME, tools))
+    out = tmp_path / "m.excmp"
+    engine.compress([src], out, Profile.EXTREME, StageContext(temp_dir=tmp_path / "t"))
+    assert est.upper_bound and out.stat().st_size <= est.expected
+
+
+def test_a_jpeg_named_ogg_is_packed_once():
+    """(F) A JPEG's bytes under an Ogg name were counted by both packers;
+    the engine claims it once, for lepton, by its first bytes."""
+    from excmp.estimate import Rates, estimate_size
+    info = FileInfo(path=Path("voice.ogg"), size=119_827, category=Category.IMAGE,
+                    entropy_bps=7.9, is_jpeg=True)
+    est = estimate_size([info], plan([info], Profile.NORMAL, TOOLS),
+                        Rates(ogg_pack=True, jpeg_pack=True))
+    assert est.packed_bytes == info.size
+
+
+# (B) Precomp's recoders are slow. End to end at Extreme, all restored, the
+# app's own phase times (contended): packJPG compress 0.39-0.63 MB/s, median
+# 0.41 of five runs, self-test median 0.83; packMP3 0.30-0.73, median 0.35,
+# self-test median 0.72. The model billed both at the generic chain's 1.41
+# and 6.5 MB/s.
+
+@pytest.mark.parametrize("files, measured_s", [
+    ([("c1.jpg", 12_112, True), ("c2.jpg", 8_373_937, True)], 28.2),   # other CMYK
+    ([(f"m{i}.mp3", 6_784_570, False) for i in range(5)], 179.9),      # MP3 music
+    ([(f"m{i}.mp3", 5_019_215, False) for i in range(16)], 297.9),     # MP3 misc
+], ids=["cmyk", "mp3-music", "mp3-misc"])
+def test_a_recoded_folder_s_measured_time_sits_in_the_range(files, measured_s):
+    from excmp.estimate import estimate_time
+    infos = [(_photo(n, s, refuses=True) if n.endswith(".jpg") else
+              FileInfo(path=Path(n), size=s, category=Category.AUDIO, entropy_bps=7.99))
+             for n, s, _ in files]
+    t = estimate_time(infos, plan(infos, Profile.EXTREME, TOOLS), _rates(True))
+    assert t.low <= measured_s <= t.high, (t.low, t.expected, t.high)
+
+
+def test_the_bar_s_time_includes_the_recode(tmp_path):
+    """(B) The progress bar takes its split from the summary, not the files."""
+    from gui.queue_manager import _time_split
+    infos = [_photo(f"c{i}.jpg", 10_000_000, refuses=True) for i in range(5)]
+    summary = _photo_summary(infos, Profile.EXTREME)
+    assert summary.recode_seconds > 50_000_000 / 1.41e6
+    compress_s, verify_s = _time_split(summary)
+    assert compress_s >= summary.recode_seconds
+    assert verify_s >= summary.recode_verify_seconds > 0
+
+
+def test_without_precomp_nothing_is_recoded():
+    from excmp.estimate import recode_cost
+    infos = [_photo("c.jpg", 10_000_000, refuses=True),
+             FileInfo(path=Path("m.mp3"), size=5_000_000, category=Category.AUDIO,
+                      entropy_bps=7.99, sample_ratio_max=0.95)]
+    cost = recode_cost(infos, plan(infos, Profile.NORMAL, TOOLS), _rates(True))
+    assert cost.compress_seconds == cost.verify_seconds == 0
+
+
+def test_mixed_rgb_and_cmyk_does_not_claim_the_same_archive():
+    """(C) 90 MB lepton takes + 10 MB CMYK: Extreme recodes the CMYK and
+    makes a smaller archive, so "Fast makes the same archive" was false."""
+    from gui.suggest import recommend_profile
+    infos = ([_photo(f"r{i}.jpg", 1_000_000) for i in range(90)]
+             + [_photo(f"c{i}.jpg", 1_000_000, refuses=True) for i in range(10)])
+    profile, reason = recommend_profile(_photo_summary(infos), cores=2)
+    assert profile is Profile.FAST
+    assert "same archive" not in reason and "10%" in reason
+
+
+def test_photos_beside_video_are_not_called_zero_gain():
+    """(D) 45 MB JPEG + 55 MB MKV: the reason said "the same ~0%" beside a
+    table predicting 9% for every row."""
+    from gui.suggest import recommend_profile
+    infos = [_photo(f"p{i}.jpg", 1_000_000) for i in range(45)] + [
+        FileInfo(path=Path(f"v{i}.mkv"), size=1_000_000, category=Category.VIDEO,
+                 entropy_bps=7.99) for i in range(55)]
+    profile, reason = recommend_profile(_photo_summary(infos), cores=2)
+    assert profile is Profile.FAST
+    assert "~0%" not in reason and "Mostly" not in reason and "JPEG" in reason
+
+
+def test_a_small_cmyk_folder_is_not_promised_seconds():
+    """(B) "Small enough that the full chain costs seconds" for 50 MB of CMYK,
+    which Precomp recodes at ~0.4 MB/s: minutes."""
+    from gui.suggest import recommend_profile
+    infos = [_photo(f"c{i}.jpg", 5_000_000, refuses=True) for i in range(10)]
+    profile, reason = recommend_profile(_photo_summary(infos), cores=2)
+    assert profile is Profile.EXTREME
+    assert "costs seconds" not in reason and "minutes" in reason
+
+
+def test_the_cmyk_reason_claims_only_what_was_measured():
+    """(G) Insane's final codec was never measured on these files, and the
+    sentence also shows where Precomp isn't installed."""
+    reason = store_reason(_photo(refuses=True))
+    assert "Precomp is installed" in reason and "measured" in reason
+    assert "Extreme and Insane recode" not in reason
+
+
+@pytest.mark.parametrize("prefix", [
+    b"\xff\x01",                                   # TEM, a standalone marker
+    b"\xff\xd0",                                   # RST0
+    b"".join(b"\xff\xe5\x00\x04ab" for _ in range(300)),   # 300 small segments
+], ids=["tem", "rst", "300-segments"])
+def test_the_header_walk_gets_past_standalone_markers_and_long_chains(tmp_path, prefix):
+    """(H) Both returned no frame, so such a CMYK file kept the old route."""
+    from excmp import jpeg
+    body = _jpeg_bytes(4, 2482, 3508)
+    p = tmp_path / "x.jpg"
+    p.write_bytes(body[:2] + prefix + body[2:])
+    assert jpeg.frame_header(p) == (4, 2482, 3508)
+
+
 # -- (d) the container overhead of stored files -------------------------------
 #
 # Found by checking B19's estimates against real archives: a store-only

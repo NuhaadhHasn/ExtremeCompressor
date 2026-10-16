@@ -1,24 +1,26 @@
 # 🚦 START HERE — handoff (written 2026-10-16, evening)
 
-> **`main` is unchanged since `2d8b235`** apart from docs. **B19 is built,
-> reviewed and pushed on branch `b19-media`** (worktree
-> `..\ExtremeCompressor-b19`), **waiting only for the local full suite**,
-> which the owner paused on 2026-10-16 along with all heavy CPU/RAM work.
-> CI runs on the branch push.
+> **`main` is unchanged since `2d8b235`** apart from docs. Two items are
+> built, reviewed and waiting **only for the local full suite**, which the
+> owner paused on 2026-10-16 along with all heavy CPU/RAM work:
+> - **B19** on `b19-media` (worktree `..\ExtremeCompressor-b19`): pushed,
+>   **CI green**.
+> - **B20** on `b20-zip-family`, **stacked on `b19-media`** (worktree
+>   `..\ExtremeCompressor-b20`): EPUB/ODT/AAR/NuGet/APPX that Extreme stored
+>   are now expanded by Precomp, 1.62% → 43.68% on samples.
 >
 > **Next session is an owner agenda**, in this order (§3 has each spec).
 > Items 1–3 are heavy: start each only when the owner says the machine
 > allows, and **never stop a heavy run that is already going** (owner,
 > 2026-10-16: "pause" means start nothing new).
 > 0. **Name the session** (`/rename`; the title tool isn't in this client).
-> 1. **Full suite on `b19-media`, then merge it.**
-> 2. **Insane on the design JPEGs** (branch and `main`), for the record.
-> 3. **Quiet-machine re-measures**: Ogg restore, packMP3, and now packJPG and
->    lepton (all four are contended priors in the estimator).
-> 4. **B20: zip-structured containers Extreme stores by mistake** (EPUB,
->    ODT/ODS/ODP, AAR, AAB, NuGet, APPX): measure, then route. Light to
->    build, needs a Precomp measurement first.
-> 5. **B6**, only with an owner-provided Oodle sample.
+> 1. **One full suite on the B20 tree (it contains B19), then merge B19,
+>    then B20.**
+> 2. **Insane on the design JPEGs** (branch and `main`), and B20's large
+>    containers (the 121 MB of AABs, the 36 MB ODT), for the records.
+> 3. **Quiet-machine re-measures**: Ogg restore, packMP3, packJPG, lepton and
+>    B20's container rate (all contended priors in the estimator).
+> 4. **B6**, only with an owner-provided Oodle sample.
 >
 > **The data limit is lifted** (owner, 2026-10-16): downloads are allowed
 > again. Ask once per batch, as always.
@@ -67,6 +69,19 @@ Tests: `tests/test_b19_media.py` (85), plus `test_calibrate.py`,
 suites pass (351 tests in the last targeted run); **the full suite has not
 run on the branch.** The GUI was rendered in both themes at each step
 (`C:\excmp-bench\b19\render_b19.py`, images in `render\`).
+
+### B20 (branch `b20-zip-family`, on top of B19)
+
+Record: `docs/benchmarks/2026-10-16-b20-zip-family.md` (on the branch).
+B5's structural probe knew an EPUB or ODT is a zip Precomp can expand, but
+only the estimate used it; the planner piped by a suffix list, so Extreme
+stored them as "~0%", and AAR/AAB/NuGet/APPX were never probed. Now any file
+with a zip head is probed and anything expandable is piped on a Precomp
+chain. End to end at Extreme, 18.8 MB of real samples, every file restored:
+**1.62% → 43.68%** (NuGet 58.19%, AAR 57.47%, APPX 47.76%, ODT/ODS 42.94%,
+EPUB 22.09%). Priced at its worst file (0.89, an EPUB) and timed as
+Precomp's slow regime (median 0.46 MB/s; EPUB's 31.7 s had sat far above
+the old ceiling). Tests: `tests/test_b20_zip_family.py` (41).
 
 ---
 
@@ -118,28 +133,34 @@ content; the estimate now does too (`FileInfo.is_jpeg`).
 
 ## 3. The agenda, in order
 
-### 1. Full suite on `b19-media`, then merge (heavy: owner's go first)
+### 1. One full suite on the B20 tree, then merge B19, then B20 (heavy: owner's go first)
 
-`suite_wt.py C:\Users\nuhaa\PycharmProjects\ExtremeCompressor-b19`, below
+`b20-zip-family` is `b19-media` plus B20, so one run covers both:
+`suite_wt.py C:\Users\nuhaa\PycharmProjects\ExtremeCompressor-b20`, below
 normal. Every test must pass; the corpus guard must be clean. Expected
-count: 1,549 passed on `main` plus B19's additions (`test_b19_media.py` has
-85; a few skip without the bench samples in `C:\excmp-bench\b19\samples` or
-the Windows wallpapers). **Watch for estimator tests that pinned the old
-overhead or calibration behaviour** in files the targeted runs didn't cover
-(e.g. `test_estimate_backtest.py`, which reads the real Programs corpus).
-Then: CI green on the branch (`gh run list --branch b19-media`), `git merge
---no-ff b19-media` on `main`, push, delete the branch locally and on GitHub,
-`git worktree remove ..\ExtremeCompressor-b19` (remove the `tools\bin`
-junction first with `rmdir`, not a recursive delete, which would follow it
-into the main checkout's binaries). Update CLAUDE.md's test count.
+count: 1,549 passed on `main` plus B19's and B20's additions
+(`test_b19_media.py` 85, `test_b20_zip_family.py` 41; a few skip without the
+bench samples in `C:\excmp-bench\b19\samples` or the Windows wallpapers).
+`test_estimate_backtest.py` already passed on the B20 tree with the corpus
+guard clean (8/8, 2026-10-16), but **watch for other tests that pinned the
+old overhead, calibration or routing behaviour** in files the targeted runs
+didn't cover.
+Then, for each branch in turn (`b19-media`, then `b20-zip-family`): push,
+CI green (`gh run list --branch <b>`; B19's is green on `854adcb`), `git
+merge --no-ff <b>` on `main`, push, delete the branch locally and on
+GitHub. Remove each worktree with `git worktree remove` **after** `rmdir
+..\ExtremeCompressor-b1x\tools\bin` (the junction): a recursive delete would
+follow it into the main checkout's binaries. Update CLAUDE.md's test count.
 
-### 2. Insane on the design JPEGs (heavy)
+### 2. Insane on the design JPEGs, and B20's big containers (heavy)
 
 `C:\excmp-bench\b19\run_e2e2.cmd` has the commands: `b19_app.py
 <corpus> <out> <label> insane` with `EXCMP_REPO` set to the worktree for the
 branch row, and without it for `main`. The branch's Extreme row exists
 (42.829%); the Insane run was stopped in its self-test on 2026-10-16. Add
-both rows to the B19 record.
+both rows to the B19 record. For B20, `zip_perfile.py` and `run_e2e.cmd` in
+`C:\excmp-bench\b20` on the AABs (121 MB) and the 36 MB ODT, which the
+samples left out.
 
 ### 3. Quiet-machine re-measures (only with the owner's say-so that it's quiet)
 
@@ -152,27 +173,10 @@ median of three:
   `jpg-design`, Extreme; the phase times come from the rows' `events`.
 - **lepton** (`_LEPTON_PACK_RATE` etc.): `b19_app.py` on `jpg-phone` and
   `jpg-web`, any profile.
+- **B20's containers** (`_RECODE_RATE["zip"]`): `run_e2e.cmd` in
+  `C:\excmp-bench\b20`, Extreme.
 
-### 4. B20: zip-structured containers Extreme stores (owner's agenda item, new)
-
-Found 2026-10-16. B5's structural probe (`analyzer.probe_expandable`) knows
-`.epub/.odt/.ods/.odp` are zips with deflated members, but the planner pipes
-by a suffix list (`_PRECOMP_EXPANDABLE`) that lacks them, so a real EPUB is
-**stored at Extreme with "already compressed … ~0%"**. Reproduced with a
-synthetic high-entropy EPUB/ODT/ODS/ODP. Zip-structured files under other
-names (AAR, AAB, NuGet, APPX, VSIX, WHL, WAR, CBZ, XPI) aren't even probed.
-On the owner's drives: 31 EPUB (326 MB), 102 AAR (114 MB), 2 AAB (121 MB),
-10 NuGet (42 MB), 14 ODT/ODS (37 MB), 6 APPX (26 MB)
-(`C:\excmp-bench\b20\zipfamily.tsv`).
-**Measure first** (B18's lesson: the ceiling must be the worst file):
-`precomp -cn -intense → 7z` per file on samples of EPUB and AAR at least,
-two folders each, against storing. Then: probe any file whose head is a zip
-local header, pipe `info.expandable` files on a Precomp chain *in addition
-to* the suffix list (`.gz` relies on the list), and give the new types a
-measured ratio. Keep the encrypted-zip case in mind (B5 §4: a 263 MB
-encrypted `.zip` expands to nothing).
-
-### 5. B6, only with an owner-provided Oodle sample
+### 4. B6, only with an owner-provided Oodle sample
 
 Unchanged. It also settles **`-intense`** (B18): measure both on real game
 data.
@@ -185,6 +189,8 @@ data.
 |---|---|
 | **Media not yet measured** | MKV (16 files, 2.07 GB in Downloads-1), WebM, M4A (26, 356 MB): still stored. HEIC/WebP: no lossless recompressor in the toolchain |
 | **Calibration** | learns rates only since B19; learning a proper slope needs the probe readings behind each job |
+| **B5's 0.55** | B5's PDF/Office ratio under the Precomp ceiling is a mean plus margin (0.496 → 0.55), not a worst file; under B18's rule it should be re-checked file by file on B5's corpus |
+| **Tiny jobs** | the time model has no fixed per-job cost: a 64 KB Extreme job took 1.9 s against 0.1 s estimated |
 | **Estimator** | per-file only: near-duplicate files make a corpus come out *under* its range (B18) |
 | **Precomp memory** | grows with pixels, not file size (5000² CMYK: 220 MiB). 7-Zip's 3 GB still dominates Extreme's quoted peak; a very large print sheet could change that |
 | **I11 leftovers** | zpaqfranz reports 100% at stage start (Insane's bar freezes); a store-only job's bar jumped (B19's lepton pack band may fix it: check) |
@@ -202,6 +208,9 @@ data.
   time on photos.
 - **Calibration learns rates, not the factor** (B19), until a slope can be
   fitted properly.
+- **Containers are piped by structure, not name** (B20): anything the zip
+  probe calls expandable goes to Precomp on Extreme/Insane; the suffix list
+  stays for what the probe can't see (`.gz`).
 - **Precomp keeps `-intense`** (B18); B6's game data is the only thing that
   reopens it.
 - **Every MP3 goes to Precomp on Extreme/Insane**; on Fast/Normal the probe

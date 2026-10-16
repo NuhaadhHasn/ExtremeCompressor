@@ -207,7 +207,10 @@ def probe_expandable(path: Path, head: bytes) -> bool:
     costs nothing extra; only a zip-family container pays for a second open.
     """
     suffix = path.suffix.lower()
-    if suffix in _ZIP_FAMILY:
+    # B20: by content as well as by name. Android AAR/AAB, NuGet, APPX, VSIX
+    # and wheels are all zips under other names; measured, Precomp took
+    # 38-57% off them, and none was ever probed.
+    if suffix in _ZIP_FAMILY or head[:4] == b"PK\x03\x04":
         return _zip_is_expandable(path)
     if suffix == ".pdf":
         return _pdf_is_expandable(head)

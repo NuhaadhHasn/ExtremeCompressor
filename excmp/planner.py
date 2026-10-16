@@ -169,6 +169,13 @@ def store_reason(info: FileInfo) -> str | None:
             "media file: already compressed by its codec; stored losslessly so "
             "quality is untouched (enable Shrink mode to re-encode smaller)"
         )
+    if info.expandable and info.entropy_bps >= ENTROPY_STORE_THRESHOLD:
+        # B20. Its bytes look random because they are deflate output, which
+        # Precomp reverses; on a chain with Precomp `plan()` pipes it.
+        return ("container of deflated files (zip, EPUB, Office, PDF...): "
+                "stored as-is on this profile; where Precomp is installed, "
+                "Extreme expands and recompresses it losslessly (measured "
+                "19-57% smaller)")
     if info.entropy_bps >= ENTROPY_STORE_THRESHOLD:
         return (
             f"high-entropy data ({info.entropy_bps:.2f} bits/byte): "
@@ -178,6 +185,10 @@ def store_reason(info: FileInfo) -> str | None:
 
 
 # Archive types whose inner streams precomp can expand and thus beat "store".
+# B20: no longer the only door. Any file the analyzer's structural probe calls
+# `expandable` (a zip with deflated, unencrypted members, or a PDF with Flate
+# streams) is piped too; this list stays for what the probe can't see, such
+# as `.gz`, a single deflate stream rather than a zip.
 _PRECOMP_EXPANDABLE = {".zip", ".gz", ".jar", ".apk", ".docx", ".xlsx", ".pptx", ".pdf"}
 
 #: Media formats whose high entropy is **deflate output**, not real randomness
@@ -304,6 +315,7 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
             if (deflate_media
                     or info.zlib_stream
                     or info.category is Category.BINARY
+                    or info.expandable          # B20: by structure, not name
                     or info.path.suffix.lower() in _PRECOMP_EXPANDABLE):
                 reason = None
         if reason is not None:

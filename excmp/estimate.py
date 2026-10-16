@@ -45,7 +45,7 @@ from types import MappingProxyType
 from . import jpeg, oggpack
 from .analyzer import FileInfo
 from .manifest import STORED_PREFIX
-from .planner import Plan, Profile, plan as make_plan, store_reason
+from .planner import _PRECOMP_EXPANDABLE, Plan, Profile, plan as make_plan, store_reason
 from .tools import ToolInfo
 
 # --- calibration ----------------------------------------------------------
@@ -229,6 +229,15 @@ _ZLIB_LOW, _ZLIB_EXPECTED, _ZLIB_HIGH = 0.28, 0.45, 1.0
 # where a particular file turns out to hold nothing.
 _EXPANDABLE_LOW, _EXPANDABLE_EXPECTED = 0.30, 0.55
 _OVERRIDE_LOW = 0.30
+
+# B20: expandable containers outside B5's PDF/Office types, which the planner
+# now pipes by structure rather than by name. `precomp -cn -intense` then
+# 7-Zip, file by file, 22 real files, every one restored (2026-10-16): NuGet
+# 0.36-0.60, APPX 0.49-0.71, AAR 0.47-0.70, ODT/ODS 0.60-0.67, EPUB
+# 0.67-0.89. EPUBs, mostly images, gain least. Under the Precomp ceiling
+# `expected` is the worst file (0.888, an EPUB): B5's 0.55 would have put the
+# "≤ X" under every EPUB measured. `low` is the best file.
+_ZIP_CONTAINER_RATIO = (0.36, 0.89, 1.0)
 
 # The limit of what sampling can know, found the hard way.
 #
@@ -503,6 +512,10 @@ def _piped_ratios(info: FileInfo, factor: float,
         return _MP3_PRECOMP_RATIO
     if has_precomp and info.lepton_refuses:
         return _JPEG_PRECOMP_RATIO
+    if (has_precomp and info.expandable
+            and info.path.suffix.lower() not in _PRECOMP_EXPANDABLE):
+        # B20's containers; B5's measured types keep B5's figures below.
+        return _ZIP_CONTAINER_RATIO
     if store_reason(info) is not None:
         # Piped only because the profile has Precomp - see _ZLIB_* above.
         if info.zlib_stream:

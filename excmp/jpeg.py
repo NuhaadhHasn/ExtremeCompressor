@@ -113,8 +113,8 @@ def lepton_refuses(path) -> bool:
 
     The two refusals the header shows, both measured on lepton 0.5.8 (B19):
     4 colour channels (CMYK/YCCK: "Unsupported4Colors") and a side over
-    `LEPTON_MAX_SIDE`. Together they were 135.5 of the 135.7 MB lepton
-    declined across three corpora. Its other refusals are scan-structure
+    `LEPTON_MAX_SIDE`. Together they were 143.9 of the 144.1 MB lepton
+    declined across four corpora. Its other refusals are scan-structure
     quirks of small progressive files the header can't reveal; those stay
     stored, as before. Grayscale is accepted.
     """

@@ -439,6 +439,95 @@ def test_the_estimate_brackets_the_real_archive(corpus):
     assert est.expected >= archive
 
 
+# -- (d) the container overhead of stored files -------------------------------
+#
+# Found by checking B19's estimates against real archives: a store-only
+# estimate is a zero-width range ("exact"), and 64 Takeout MOVs came out
+# 3,173 B *bigger* than it, on main as on the branch. `_overhead` booked each
+# file's basename once; the zip holds each stored member's full archive path,
+# `stored/<root>/<path>`, twice (local header and central directory). Measured
+# on a 4-deep synthetic tree of 12 files: 2,798 B under. Under-booking is the
+# one direction this estimate may not err in: the disk preflight books it.
+
+def _tree(base: Path, depth: int, n: int, size: int = 20_000) -> Path:
+    import random
+    root = base / f"Folder-depth{depth}"
+    d = root
+    for k in range(depth - 1):
+        d = d / f"some_longer_subdirectory_name_{k}"
+    d.mkdir(parents=True)
+    for i in range(n):
+        (d / f"clip_{i:03d}.mp4").write_bytes(
+            b"\x00\x00\x00\x20ftypisom" + random.Random(i).randbytes(size))
+    return root
+
+
+def test_archive_name_is_the_engine_s(tmp_path):
+    from excmp.analyzer import archive_name
+    from excmp.engine import _collect
+    root = _tree(tmp_path, 3, 2)
+    lone = tmp_path / "lone.mp4"
+    lone.write_bytes(b"\x00\x00\x00\x20ftypisom" + b"x" * 100)
+    infos, relmap, _dirs, _skipped = _collect([root, lone])
+    assert relmap  # both inputs collected
+    for info in infos:
+        root_of = lone if info.path == lone.resolve() else root.resolve()
+        assert archive_name(root_of, info.path) == relmap[info.path]
+
+
+def test_the_analyzer_records_the_archive_name_length(tmp_path):
+    from excmp.analyzer import analyze_tree
+    root = tmp_path / "Café"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "é.mp4").write_bytes(b"\x00" * 64)
+    (info,) = analyze_tree(root)
+    assert info.arc_name_bytes == len("Café/sub/é.mp4".encode("utf-8"))
+
+
+def test_the_gui_s_analysis_records_it_too(tmp_path):
+    """The GUI walks the dropped paths itself (AnalysisWorker), not through
+    analyze_tree, so the root has to survive that walk as well."""
+    from excmp.planner import Profile as P
+    from gui.queue_manager import AnalysisWorker
+    root = _tree(tmp_path, 2, 2)
+    got = {}
+
+    class _Sig:
+        def __init__(self, name):
+            self.name = name
+
+        def emit(self, *args):
+            got[self.name] = args
+
+    class _Signals:
+        ready, progress, failed, note = (_Sig("ready"), _Sig("progress"),
+                                         _Sig("failed"), _Sig("note"))
+
+    AnalysisWorker([root], P.FAST, {}, _Signals()).run()
+    infos = got["ready"][0]
+    assert {i.arc_name_bytes for i in infos} == {
+        len(f"Folder-depth2/some_longer_subdirectory_name_0/clip_00{k}.mp4") for k in (0, 1)}
+
+
+@pytest.mark.parametrize("depth, n", [(1, 3), (4, 12), (2, 64)])
+def test_a_store_only_estimate_never_under_books_the_real_archive(tmp_path, depth, n):
+    """Through the engine: random 'video' is stored, so the estimate's range
+    has zero width and has to cover the archive the job really writes."""
+    from excmp import engine
+    from excmp.analyzer import analyze_tree
+    from excmp.estimate import estimate_size
+    from excmp.stages.base import StageContext
+    root = _tree(tmp_path, depth, n)
+    infos = analyze_tree(root)
+    est = estimate_size(infos, plan(infos, Profile.FAST, TOOLS), _rates(False))
+    assert est.low == est.high  # stored only: exact
+    out = tmp_path / "m.excmp"
+    engine.compress([root], out, Profile.FAST, StageContext(temp_dir=tmp_path / "t"))
+    archive = out.stat().st_size
+    assert est.expected >= archive, est.expected - archive
+    assert est.expected - archive <= 600 + 40 * n, est.expected - archive  # and close
+
+
 SAMPLE = Path(r"C:\excmp-bench\b19\samples\cmyk-progressive.jpg")  # 52c0eb7f..., 12,112 B
 
 

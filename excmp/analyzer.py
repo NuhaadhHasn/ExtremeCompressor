@@ -144,6 +144,11 @@ class FileInfo:
     #: estimate has to ask the same question: one corpus here held 43 PNGs
     #: named `.jpg`, which a suffix test would have priced as photos.
     is_jpeg: bool = False
+    #: B19(d): UTF-8 length of the name the archive gives this file
+    #: (`archive_name`), which a stored file's zip entry carries twice.
+    #: ``0`` means unknown (no root was given), and the estimate then falls
+    #: back to the basename.
+    arc_name_bytes: int = 0
 
 
 #: Containers built out of a zip: their members are individually deflated, so
@@ -279,7 +284,19 @@ def sample_entropy(path: Path, sample: int = _SAMPLE) -> float:
     return sample_stats(path, sample).entropy_bps
 
 
-def analyze_file(path: Path) -> FileInfo:
+def archive_name(root: Path, file: Path) -> str:
+    """The archive-relative name `engine._collect` gives ``file`` when the user
+    added ``root``: the bare name for a file, ``<root>/<path inside>`` for a
+    folder. Kept beside the analyzer so the estimate can price it."""
+    root, file = Path(root), Path(file)
+    if root.is_file():
+        return file.name
+    return f"{root.name}/{file.relative_to(root).as_posix()}"
+
+
+def analyze_file(path: Path, root: Path | None = None) -> FileInfo:
+    """``root`` is the input this file was found under, when there is one;
+    with it the analysis also records the file's archive-name length."""
     path = Path(path)
     st = path.stat()
     size = st.st_size
@@ -302,7 +319,17 @@ def analyze_file(path: Path) -> FileInfo:
         # A second open, JPEGs only: the frame can sit far past `head`.
         lepton_refuses=(jpeg.looks_like_jpeg(head) and jpeg.lepton_refuses(path)),
         is_jpeg=jpeg.looks_like_jpeg(head),
+        arc_name_bytes=_arc_name_bytes(root, path),
     )
+
+
+def _arc_name_bytes(root: Path | None, path: Path) -> int:
+    if root is None:
+        return 0
+    try:
+        return len(archive_name(root, path).encode("utf-8"))
+    except ValueError:      # not under root after all: unknown, not fatal
+        return 0
 
 
 def iter_files(root: Path) -> list[Path]:
@@ -383,7 +410,7 @@ def iter_empty_dirs(root: Path,
 
 
 def analyze_tree(root: Path) -> list[FileInfo]:
-    return [analyze_file(p) for p in iter_files(root)]
+    return [analyze_file(p, root) for p in iter_files(root)]
 
 
 def describe_unreadable(path: Path, exc: OSError,
@@ -431,7 +458,7 @@ def analyze_tree_safe(root: Path) -> tuple[list[FileInfo], list[tuple[Path, str]
     skipped: list[tuple[Path, str]] = []
     for p in iter_files(root):
         try:
-            infos.append(analyze_file(p))
+            infos.append(analyze_file(p, root))
         except OSError as exc:
             skipped.append((p, describe_unreadable(p, exc)))
     return infos, skipped

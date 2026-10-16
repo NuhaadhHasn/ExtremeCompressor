@@ -44,6 +44,7 @@ from types import MappingProxyType
 
 from . import jpeg, oggpack
 from .analyzer import FileInfo
+from .manifest import STORED_PREFIX
 from .planner import Plan, Profile, plan as make_plan, store_reason
 from .tools import ToolInfo
 
@@ -592,28 +593,39 @@ def _dedup_credit(stored: list[FileInfo]) -> int:
                for size, count in by_size.items() if count > 1)
 
 
-def _overhead(infos: list[FileInfo], stored_count: int) -> int:
+def _name_bytes(info: FileInfo) -> int:
+    """The file's archive name in bytes: recorded by the analyzer when it
+    knew the input root (B19d), else the basename, the old reading."""
+    return info.arc_name_bytes or len(info.path.name.encode("utf-8"))
+
+
+def _overhead(infos: list[FileInfo], stored: list[FileInfo]) -> int:
     """Manifest + zip headers. The manifest is deflated; everything else in the
     container is ZIP_STORED.
 
-    `names` uses the *basename*, not the archive-relative path that actually
-    lands in the manifest - measured on a `node_modules` tree those are 20 and
-    152 bytes, so this term under-reads a deep tree ~7x. It is left alone
-    because `_overhead` is not given the relmap, and because deflating the
-    manifest shrinks the whole term by another order of magnitude: 8.5 MB of
-    ledger for 57,020 files becomes ~850 KB against a multi-gigabyte archive.
-    `manifest.manifest_size_estimate` is the function that has to be exact,
-    and it takes the real relative paths.
+    **B19(d): each stored file's zip entry carries its full archive name
+    twice** - `stored/<root>/<path>` in the local header and again in the
+    central directory, uncompressed. This term used to add every file's
+    *basename* once, piped files included (they have no entry of their own:
+    they travel inside the payload). On anything but a flat folder that
+    under-booked: 64 Takeout MOVs came out 3,173 B over a store-only estimate
+    whose range has zero width, and a 4-deep synthetic tree 2,748 B over 12
+    files. The disk preflight books this figure, so it may err high, never
+    low.
+
+    The manifest's ledger keys are the same archive names; there they are
+    deflated, and `_MANIFEST_DEFLATE_FACTOR` covers them.
     """
     if not infos:
         return 0
-    names = sum(len(i.path.name) for i in infos)
+    names = sum(_name_bytes(i) for i in infos)
     manifest = (_LEDGER_BYTES_PER_FILE * len(infos)
                 + names)                             # ledger key
+    member_names = sum(len(STORED_PREFIX) + _name_bytes(i) for i in stored)
     return (_CONTAINER_BASE
             + int(manifest * _MANIFEST_DEFLATE_FACTOR)
-            + names                                  # zip header per entry
-            + _ZIP_ENTRY_BYTES * (stored_count + 2))  # + manifest and payload
+            + 2 * member_names                       # local + central header
+            + _ZIP_ENTRY_BYTES * (len(stored) + 2))  # + manifest and payload
 
 
 # -- B13: Ogg audio packed by balrogg ---------------------------------------
@@ -796,7 +808,7 @@ def estimate_size(infos: list[FileInfo], the_plan: Plan,
 
     stored_bytes = sum(i.size for i in stored)
     piped_bytes = sum(i.size for i in piped)
-    overhead = _overhead(infos, len(stored))
+    overhead = _overhead(infos, stored)
 
     low = expected = high = 0.0
     for info in piped:

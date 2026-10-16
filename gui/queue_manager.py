@@ -107,17 +107,19 @@ class AnalysisWorker(QRunnable):
         try:
             # Walking the tree is one cheap pass; do it first so the count is
             # known and the bar can be determinate for the expensive part.
-            files: list[Path] = []
+            # Each file keeps the root it was found under, so the analysis
+            # can record its archive name for the overhead estimate (B19d).
+            files: list[tuple[Path, Path]] = []
             for path in self.paths:
-                files.extend(iter_files(path))
+                files.extend((path, f) for f in iter_files(path))
             total = len(files)
             self.signals.progress.emit(0, total)
 
             tick = _scan_tick(total)
             infos = []
-            for index, file in enumerate(files, start=1):
+            for index, (root, file) in enumerate(files, start=1):
                 try:
-                    infos.append(analyze_file(file))
+                    infos.append(analyze_file(file, root))
                 except OSError as exc:
                     # K3: `analyze_file` opens the file, so one open Excel or
                     # Outlook document raised here, the bare `except` below

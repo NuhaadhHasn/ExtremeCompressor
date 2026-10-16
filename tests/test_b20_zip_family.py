@@ -168,6 +168,27 @@ def test_the_ceiling_covers_every_measured_file():
     assert min(every) >= _ZIP_CONTAINER_RATIO[0]
 
 
+#: End to end at Extreme (b13-app-*-b20.jsonl), every file restored: the
+#: corpus's bytes and files, and engine.compress seconds with D9 (contended).
+E2E_TIME = {"epub": (5_686_653, 6, 31.7), "aar": (5_665_058, 7, 14.3),
+            "nupkg": (1_392_266, 3, 4.6), "appx": (6_015_103, 2, 11.4)}
+
+
+@pytest.mark.parametrize("label", sorted(E2E_TIME))
+def test_the_measured_time_sits_in_the_range(label):
+    """Expanding a container's members is Precomp's slow regime: compress
+    phases ran 0.26-0.79 MB/s (median 0.46) against the generic chain's
+    1.41, so EPUB's 31.7 s sat far above a 13.8 s ceiling before."""
+    from excmp.estimate import estimate_time
+    size, n, measured = E2E_TIME[label]
+    suffix = {"epub": ".epub", "aar": ".aar", "nupkg": ".nupkg", "appx": ".appx"}[label]
+    infos = [FileInfo(path=Path(f"f{i}{suffix}"), size=size // n,
+                      category=Category.COMPRESSED_ARCHIVE, entropy_bps=7.99,
+                      expandable=True) for i in range(n)]
+    t = estimate_time(infos, plan(infos, Profile.EXTREME, TOOLS))
+    assert t.low <= measured <= t.high, (t.low, t.expected, t.high)
+
+
 # -- end to end ----------------------------------------------------------------
 
 def test_an_epub_goes_through_precomp_and_comes_back(tmp_path):

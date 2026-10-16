@@ -752,8 +752,14 @@ _LEPTON_DECODE_PER_FILE_S = 0.04
 # top of whatever Precomp chain runs, so Insane, whose zpaqfranz dominates,
 # pays it too: B18's Insane MP3 run measured 0.06 MB/s compress, this model
 # 0.08. Contended priors: a quiet re-measure should replace them.
-_RECODE_RATE = {"jpeg": 0.41e6, "mp3": 0.35e6}
-_RECODE_VERIFY_RATE = {"jpeg": 0.83e6, "mp3": 0.72e6}
+#
+# B20 adds the containers it routes by structure (EPUB, AAR, NuGet, APPX...):
+# expanding every member is Precomp's slow regime. End to end at Extreme,
+# compress phase 0.26 (EPUB), 0.40 (NuGet), 0.52 (AAR), 0.79 (APPX) MB/s,
+# median 0.46; self-test 0.59-1.63, median 1.5. (A 64 KB ODT job was all
+# process start-up and is left out.)
+_RECODE_RATE = {"jpeg": 0.41e6, "mp3": 0.35e6, "zip": 0.46e6}
+_RECODE_VERIFY_RATE = {"jpeg": 0.83e6, "mp3": 0.72e6, "zip": 1.5e6}
 _RECODE_BASE_RATE = 1.41e6          # _CODEC_RATE["precomp+sevenzip"]
 _RECODE_BASE_VERIFY_RATE = 6.5e6    # _VERIFY_RATE["precomp+sevenzip"]
 
@@ -772,6 +778,8 @@ def _recode_kind(info: FileInfo) -> str | None:
         return "jpeg"
     if info.path.suffix.lower() == ".mp3":
         return "mp3"
+    if info.expandable and info.path.suffix.lower() not in _PRECOMP_EXPANDABLE:
+        return "zip"        # B20's containers; B5's types keep the chain rate
     return None
 
 

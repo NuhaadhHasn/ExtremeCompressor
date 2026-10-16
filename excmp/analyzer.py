@@ -23,6 +23,7 @@ predicting from the worst sample needed only 0.95x.
 from __future__ import annotations
 
 import math
+import struct
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
@@ -165,30 +166,81 @@ _ZIP_FAMILY = {".zip", ".docx", ".xlsx", ".pptx", ".jar", ".apk", ".odt",
 _PDF_SCAN_BYTES = 64 << 10
 
 
+#: B20 review: the largest central directory the probe will read. An honest
+#: one costs ~50 bytes per member, so this is ~600,000 members; a corrupt end
+#: record claiming a whole multi-GB file made zipfile read all of it, during
+#: analysis, for any file with a zip head.
+_ZIP_CD_LIMIT = 32 << 20
+
+#: B20 review: how much of the file Precomp must have something to do with.
+#: "Any deflated member" called the app's own `.excmp` archives expandable (a
+#: stored payload beside a deflated manifest) and a zip of deflated random
+#: data, piped them, and put the Precomp ceiling under the truth. Two kinds of
+#: member count: deflate output that actually compressed (Precomp expands it)
+#: and PNG/JPEG images, stored or not (Precomp expands a PNG's own deflate and
+#: recodes a JPEG with packJPG). Counting only the first would have dropped
+#: 22 of the 38 real Office files B5 measured its 50% on (images in .docx and
+#: .pptx); with both, all 38 and all 22 B20 samples clear 0.10 (the lowest
+#: real one was 0.63).
+_ZIP_MIN_DEFLATE_SHARE = 0.10
+_ZIP_MEDIA_MEMBERS = (".png", ".jpg", ".jpeg")
+
+
+def _zip_cd_size(path: Path) -> int | None:
+    """The central directory size the end record claims, or None if there is
+    no end record (it always sits in the last 65,557 bytes)."""
+    size = path.stat().st_size
+    with path.open("rb") as fh:
+        fh.seek(max(0, size - 65_557))
+        tail = fh.read()
+    i = tail.rfind(b"PK\x05\x06")
+    if i < 0 or len(tail) - i < 22:
+        return None
+    cd = struct.unpack("<I", tail[i + 12:i + 16])[0]
+    if cd == 0xFFFFFFFF:                       # zip64: the real size is there
+        j = tail.rfind(b"PK\x06\x06", 0, i)
+        if j < 0 or len(tail) - j < 48:
+            return None
+        cd = struct.unpack("<Q", tail[j + 40:j + 48])[0]
+    return cd
+
+
 def _zip_is_expandable(path: Path) -> bool:
     """True when this really is a zip whose members Precomp could expand.
 
-    Reads the central directory only - member *flags*, never member data - so
-    it costs one seek and a short read regardless of how large the file is.
+    Reads the central directory only - member *flags* and sizes, never member
+    data - so it costs one seek and a short read regardless of how large the
+    file is.
 
     Encryption is the case that matters. `Wondershare ... pass=123.zip` is
     263 MB and 37% of the estimator's backtest corpus, and Extreme measured
     **2.97%** on that corpus: Precomp cannot see inside an encrypted member,
     so believing the `.zip` extension would predict a large gain that never
-    arrives.
+    arrives. And since B20 (review) the deflated members have to be worth
+    expanding: see `_ZIP_MIN_DEFLATE_SHARE`.
     """
     try:
+        size = path.stat().st_size
+        cd = _zip_cd_size(path)
+        if cd is None or cd > min(_ZIP_CD_LIMIT, size):
+            return False
         with zipfile.ZipFile(path) as zf:
             members = zf.infolist()
-    except (OSError, zipfile.BadZipFile, ValueError):
-        # Not a zip after all, or truncated. This runs during analysis, which
-        # K3 spent a phase making incapable of failing a job.
+    except Exception:  # noqa: BLE001
+        # Not a zip after all, truncated, or one the stdlib can't read: it
+        # raises NotImplementedError for a "version needed" above 6.3, which
+        # 7-Zip opens fine (B20 review: 288 of 20,000 mutated zips). This
+        # runs during analysis, which K3 made incapable of failing a job.
         return False
-    if not members:
+    if not members or not size:
         return False
     if any(info.flag_bits & 0x1 for info in members):
         return False
-    return any(info.compress_type == zipfile.ZIP_DEFLATED for info in members)
+    useful = sum(info.compress_size for info in members
+                 if info.filename.lower().endswith(_ZIP_MEDIA_MEMBERS)
+                 or (info.compress_type == zipfile.ZIP_DEFLATED
+                     and info.compress_size < 0.95 * info.file_size))
+    return useful >= _ZIP_MIN_DEFLATE_SHARE * size
 
 
 def _pdf_is_expandable(head: bytes) -> bool:

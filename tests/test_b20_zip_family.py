@@ -189,6 +189,131 @@ def test_the_measured_time_sits_in_the_range(label):
     assert t.low <= measured <= t.high, (t.low, t.expected, t.high)
 
 
+# -- review fixes --------------------------------------------------------------
+
+def test_a_zip_the_stdlib_cannot_read_never_fails_analysis(tmp_path):
+    """(1) zipfile raises NotImplementedError for a "version needed" above
+    6.3, which 7-Zip reads fine; the probe caught three exception types, so
+    analysis, and the whole job, failed on every profile. It must answer
+    False instead (K3: analysis never fails a job)."""
+    from excmp.analyzer import analyze_file, analyze_tree_safe
+    p = _zip(tmp_path / "pkg.nupkg")
+    data = bytearray(p.read_bytes())
+    cd = data.find(b"PK\x01\x02")
+    data[cd + 6] = 64                     # version needed to extract: 6.4
+    p.write_bytes(bytes(data))
+    assert analyze_file(p).expandable is False
+    infos, skipped = analyze_tree_safe(tmp_path)
+    assert len(infos) == 1 and not skipped
+
+
+def test_a_corrupt_end_record_is_not_read_whole(tmp_path, monkeypatch):
+    """(5) An end record claiming a huge central directory made zipfile read
+    that many bytes during analysis. The probe answers from the record."""
+    import struct
+    import zipfile as zf
+    from excmp.analyzer import _zip_is_expandable
+    p = tmp_path / "x.aar"
+    body = b"PK\x03\x04" + b"\x00" * 100_000
+    # Claims a 200 MB directory: past the cap and past the file itself.
+    eocd = b"PK\x05\x06" + struct.pack("<HHHHIIH", 0, 0, 1, 1, 200_000_000, 4, 0)
+    p.write_bytes(body + eocd)
+    opened = []
+    monkeypatch.setattr(zf, "ZipFile", lambda *a, **k: opened.append(a) or (_ for _ in ()).throw(AssertionError("opened")))
+    assert _zip_is_expandable(p) is False
+    assert opened == []
+
+
+def _two_member_zip(path, big: bytes, big_method, small=b"<manifest/>" * 200):
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("manifest.json", small, compress_type=zipfile.ZIP_DEFLATED)
+        zf.writestr("payload.bin", big, compress_type=big_method)
+    return path
+
+
+@pytest.mark.parametrize("big_method, label", [
+    (zipfile.ZIP_STORED, "our own .excmp: stored payload, deflated manifest"),
+    (zipfile.ZIP_DEFLATED, "deflated random data: deflate gained nothing"),
+])
+def test_a_deflated_member_must_carry_a_real_share(tmp_path, big_method, label):
+    """(2) "Any member deflated" called both expandable, piped them, and put
+    the Precomp ceiling under the truth (1.002 against ≤ 0.891). The probe
+    now needs deflate output that actually compressed to be at least a tenth
+    of the file: every measured gainer had 0.21 or more."""
+    from excmp.analyzer import analyze_file
+    p = _two_member_zip(tmp_path / "x.cbz", random.Random(5).randbytes(2_000_000),
+                        big_method)
+    assert analyze_file(p).expandable is False, label
+
+
+def test_an_image_heavy_document_still_counts(tmp_path):
+    """Counting only deflate that compressed dropped 22 of 38 real Office
+    files whose bulk is images, where Precomp expands PNGs and packJPG
+    recodes JPEGs. A .pptx of stored JPEGs must still count."""
+    from excmp.analyzer import analyze_file
+    p = tmp_path / "talk.pptx"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("ppt/slides/slide1.xml", b"<p/>" * 50, compress_type=zipfile.ZIP_DEFLATED)
+        zf.writestr("ppt/media/image1.jpeg", random.Random(7).randbytes(900_000),
+                    compress_type=zipfile.ZIP_STORED)
+    assert analyze_file(p).expandable is True
+
+
+def test_an_epub_with_a_fifth_of_real_deflate_still_counts(tmp_path):
+    """The weakest measured gainer: an EPUB whose deflated JPEGs are most of
+    it, with 21% of its bytes in deflate that compressed. 12% saved."""
+    from excmp.analyzer import analyze_file
+    p = tmp_path / "book.epub"
+    with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("text.xhtml", _words(30_000))
+        zf.writestr("cover.jpg", random.Random(6).randbytes(700_000))
+    info = analyze_file(p)
+    assert info.expandable is True
+
+
+def test_a_low_entropy_container_keeps_its_sample_based_estimate():
+    """(4) An .xpi of stored source text plus a small deflated manifest:
+    piped either way (its bytes compress), estimated 0.137-0.313 from its own
+    samples, measured 0.225. B20 replaced that with 0.36-1.0, putting the
+    truth under `low`. The worst-file ratio is for files that look random."""
+    from excmp.estimate import estimate_size
+    info = FileInfo(path=Path("ext.xpi"), size=1_560_000,
+                    category=Category.COMPRESSED_ARCHIVE, entropy_bps=5.2,
+                    sample_ratio=0.25, sample_ratio_max=0.30, expandable=True)
+    est = estimate_size([info], plan([info], Profile.EXTREME, TOOLS))
+    payload = lambda v: (v - est.overhead_bytes) / info.size  # noqa: E731
+    assert payload(est.low) <= 0.225 <= payload(est.high)
+    assert payload(est.low) <= payload(est.expected) <= payload(est.high)
+
+
+def test_b5_s_low_entropy_branch_no_longer_inverts_its_range():
+    """(4, older) B5's branch for a low-entropy expandable file returned
+    expected 0.55 beside a high of probe x 1.05, so expected > high whenever
+    the probe read under ~0.52."""
+    from excmp.estimate import estimate_size
+    info = FileInfo(path=Path("notes.zip"), size=1_000_000,
+                    category=Category.COMPRESSED_ARCHIVE, entropy_bps=5.0,
+                    sample_ratio=0.25, sample_ratio_max=0.30, expandable=True)
+    est = estimate_size([info], plan([info], Profile.EXTREME, TOOLS))
+    assert est.low <= est.expected <= est.high
+
+
+def test_epubs_reserve_the_temp_space_precomp_needs():
+    """(3) Precomp's output was 18.2x an EPUB sample byte-weighted (9.4-96.7x
+    per file) and 10.4x for ODT/ODS, against the 5x default the disk
+    preflight booked."""
+    from excmp.planner import precomp_inflation
+    assert precomp_inflation([_container("b.epub")]) >= 18
+    assert precomp_inflation([_container("d.odt")]) >= 10
+    assert precomp_inflation([_container("l.aar")]) == 5     # measured ~3x
+
+
+def test_the_reason_quotes_the_per_file_range():
+    """(6) "19-57%" were group totals; per file the measured range is
+    11-64% (an EPUB at 0.888, a NuGet at 0.361)."""
+    assert "11-64%" in store_reason(_container("book.epub"))
+
+
 # -- end to end ----------------------------------------------------------------
 
 def test_an_epub_goes_through_precomp_and_comes_back(tmp_path):

@@ -175,7 +175,7 @@ def store_reason(info: FileInfo) -> str | None:
         return ("container of deflated files (zip, EPUB, Office, PDF...): "
                 "stored as-is on this profile; where Precomp is installed, "
                 "Extreme expands and recompresses it losslessly (measured "
-                "19-57% smaller)")
+                "11-64% smaller per file)")
     if info.entropy_bps >= ENTROPY_STORE_THRESHOLD:
         return (
             f"high-entropy data ({info.entropy_bps:.2f} bits/byte): "
@@ -269,7 +269,12 @@ _PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4", ".mov"}
 #: down and expanding it yields raw pixels. Budgeting 5x for a PNG folder
 #: under-reserves temp by an order of magnitude, and running out of temp
 #: mid-pipeline is exactly what the preflight exists to prevent.
-_INFLATION_BY_EXT = {".png": 50}
+#:
+#: B20 (review): the containers it pipes by structure, measured the same way,
+#: `.pcf` over input: EPUB 18.2x byte-weighted (9.4-96.7x per file: they carry
+#: PNGs), ODT/ODS 10.4x (6.3-16.5x). AAR, APPX and NuGet came to ~3x, inside
+#: the default.
+_INFLATION_BY_EXT = {".png": 50, ".epub": 20, ".odt": 12, ".ods": 12, ".odp": 12}
 _INFLATION_DEFAULT = 5
 
 

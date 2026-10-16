@@ -512,14 +512,16 @@ def _piped_ratios(info: FileInfo, factor: float,
         return _MP3_PRECOMP_RATIO
     if has_precomp and info.lepton_refuses:
         return _JPEG_PRECOMP_RATIO
-    if (has_precomp and info.expandable
-            and info.path.suffix.lower() not in _PRECOMP_EXPANDABLE):
-        # B20's containers; B5's measured types keep B5's figures below.
-        return _ZIP_CONTAINER_RATIO
     if store_reason(info) is not None:
         # Piped only because the profile has Precomp - see _ZLIB_* above.
         if info.zlib_stream:
             return _ZLIB_LOW, _ZLIB_EXPECTED, _ZLIB_HIGH
+        if (has_precomp and info.expandable
+                and info.path.suffix.lower() not in _PRECOMP_EXPANDABLE):
+            # B20's containers, which look random; B5's measured types keep
+            # B5's figures below. A container whose bytes *don't* look random
+            # falls through to its own samples (review, B20).
+            return _ZIP_CONTAINER_RATIO
         if has_precomp and info.expandable:
             # Roughly half of the real PDF/Office corpus lands here: high
             # entropy, so `store_reason` would keep it, but the container
@@ -527,13 +529,6 @@ def _piped_ratios(info: FileInfo, factor: float,
             # `sample_ratio_max` (~0.90) as `expected` and predicted no gain.
             return (_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED, 1.0)
         return _OVERRIDE_LOW, info.sample_ratio_max, 1.0
-
-    if has_precomp and info.expandable:
-        # Structurally known to hold an expandable deflate layer. The probe's
-        # own reading of this file beats the entropy sample, which measured
-        # 0.88-0.91 on exactly these files while the real chain took half.
-        return (_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED,
-                min(1.0, info.sample_ratio_max * _HIGH_SLACK))
 
     # The multiplier is evaluated at *this file's* own probe reading, so a
     # file the probe calls incompressible is predicted not to shrink while a
@@ -545,6 +540,16 @@ def _piped_ratios(info: FileInfo, factor: float,
         # The probe cannot see the deflate streams Precomp will open, so the
         # optimistic end has to allow for it. See _PRECOMP_OPTIMISTIC.
         low = min(low, _PRECOMP_OPTIMISTIC)
+    if has_precomp and info.expandable:
+        # Structurally known to hold an expandable deflate layer. The probe's
+        # own reading of this file beats the entropy sample, which measured
+        # 0.88-0.91 on exactly these files while the real chain took half:
+        # so B5's figures cap the sample-based ones. This used to *replace*
+        # them, which returned expected 0.55 beside a high of probe x 1.05,
+        # an inverted range whenever the probe read under ~0.52, and put a
+        # mostly-stored text .xpi's real 0.225 under `low` (review, B20).
+        low = min(low, _EXPANDABLE_LOW)
+        expected = min(expected, _EXPANDABLE_EXPECTED)
     return low, expected, max(expected, high)
 
 

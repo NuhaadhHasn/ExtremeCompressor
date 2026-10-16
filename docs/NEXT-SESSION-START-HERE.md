@@ -81,7 +81,7 @@ chain. End to end at Extreme, 18.8 MB of real samples, every file restored:
 **1.62% → 43.68%** (NuGet 58.19%, AAR 57.47%, APPX 47.76%, ODT/ODS 42.94%,
 EPUB 22.09%). Priced at its worst file (0.89, an EPUB) and timed as
 Precomp's slow regime (median 0.46 MB/s; EPUB's 31.7 s had sat far above
-the old ceiling). Tests: `tests/test_b20_zip_family.py` (41).
+the old ceiling). Reviewed: the probe can no longer fail analysis (zipfile raised `NotImplementedError` on some valid zips), a container needs a tenth of its bytes in members Precomp can work on (the app's own `.excmp` had counted), EPUB/ODF temp space is booked (Precomp's output reached 18× and 10×), and B5's low-entropy estimate no longer inverts its range. Tests: `tests/test_b20_zip_family.py` (51).
 
 ---
 
@@ -139,7 +139,7 @@ content; the estimate now does too (`FileInfo.is_jpeg`).
 `suite_wt.py C:\Users\nuhaa\PycharmProjects\ExtremeCompressor-b20`, below
 normal. Every test must pass; the corpus guard must be clean. Expected
 count: 1,549 passed on `main` plus B19's and B20's additions
-(`test_b19_media.py` 85, `test_b20_zip_family.py` 41; a few skip without the
+(`test_b19_media.py` 85, `test_b20_zip_family.py` 51; a few skip without the
 bench samples in `C:\excmp-bench\b19\samples` or the Windows wallpapers).
 `test_estimate_backtest.py` already passed on the B20 tree with the corpus
 guard clean (8/8, 2026-10-16), but **watch for other tests that pinned the

@@ -9,8 +9,11 @@
 > time; and two older estimator bugs are fixed: store-only overhead was
 > under-booked, and **calibration had been writing a ratio into B8's slope
 > since 2026-09-08** (this machine's store made Normal 33% pessimistic)
-> ([record](benchmarks/2026-10-16-b19-mov-jpeg.md)). The data limit is
-> lifted: downloads are allowed again.
+> ([record](benchmarks/2026-10-16-b19-mov-jpeg.md)). **B20 is built on
+> `b20-zip-family`** (stacked on B19): EPUB, ODT, AAR, NuGet and APPX files
+> that Extreme stored are now expanded by Precomp, **1.62% → 43.68%** on the
+> samples ([record](benchmarks/2026-10-16-b20-zip-family.md)). The data limit
+> is lifted: downloads are allowed again.
 >
 > Status date: **2026-10-16**. **Everything is merged into `main`**: B14
 > (DArc 3.0.4 measured, **not integrated**:
@@ -566,6 +569,21 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
+- [~] B20. 🟡 **BUILT 2026-10-16, merge pending the full suite** (branch
+      `b20-zip-family`, stacked on `b19-media`) — **zip-structured
+      containers Extreme stored by mistake.** B5's structural probe knew an
+      EPUB or ODT is a zip Precomp can expand, but only the estimate used it;
+      the planner piped by a suffix list, so a real EPUB (deflate output looks
+      random) was stored as "~0%", and AAR/AAB/NuGet/APPX were never probed.
+      Now any file with a zip head is probed and anything expandable is piped
+      on a Precomp chain. End to end at Extreme on 18.8 MB of real samples,
+      every file restored: **1.62% → 43.68%** (NuGet 58.19%, AAR 57.47%,
+      APPX 47.76%, ODT/ODS 42.94%, EPUB 22.09%). Priced at its worst file
+      (0.89, an EPUB) under the ceiling, and timed as Precomp's slow regime
+      (median 0.46 MB/s). Record:
+      [benchmarks/2026-10-16-b20](benchmarks/2026-10-16-b20-zip-family.md).
+      Left open: samples, not corpora (the 121 MB of AABs waits for heavy
+      work); B5's own 0.55 is a mean plus margin, not a worst file.
 - [~] B19. 🟡 **BUILT 2026-10-16, merge pending the full suite** (branch
       `b19-media`) — the media B18 left unmeasured, measured, and a
       long-standing estimator blind spot fixed. Every archive restored and

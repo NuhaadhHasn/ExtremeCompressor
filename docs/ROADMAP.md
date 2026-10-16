@@ -1,5 +1,17 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-10-16**. **Everything is merged into `main`**: B14
+> (DArc 3.0.4 measured, **not integrated**:
+> [record](benchmarks/2026-10-15-b14-darc.md)), **B18** (zstd keeps `-1` and
+> honours an explicit thread count; MP3/MP4 the probe flags are compressed;
+> **every MP3 goes to Precomp on Extreme/Insane, 18.02% / 15.87% / 18.97%
+> end to end**; `-intense` kept on:
+> [record](benchmarks/2026-10-15-b18-settings.md)) and the B13 toolfetch test
+> fix. Tests: **1,549 passed, 1 skipped, 1 xfailed** locally, corpus guard
+> clean; CI green. **Next session is an owner agenda** (handoff §3):
+> quiet-machine re-measures, then B6 if an Oodle sample exists. The owner is
+> on limited mobile data: no downloads.
+>
 > Status date: **2026-10-15**. **Everything is merged into `main`**: I11 (the
 > self-test is a visible, timed phase) and **B13: balrogg repacks Ogg audio
 > on the store route, 1.112% → 13.181% on music and 0.297% → 10.785% on game

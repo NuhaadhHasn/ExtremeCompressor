@@ -400,7 +400,7 @@ def _stored_video_plus_text():
     from excmp.analyzer import Category, FileInfo
     return [
         FileInfo(path=Path("v.mp4"), size=2_000_000_000, category=Category.VIDEO,
-                 entropy_bps=7.99, sample_ratio=0.99, sample_ratio_max=0.99),
+                 entropy_bps=7.99, sample_ratio=1.0, sample_ratio_max=1.0),
         FileInfo(path=Path("notes.txt"), size=20_000_000, category=Category.TEXT,
                  entropy_bps=4.0, sample_ratio=0.3, sample_ratio_max=0.35),
     ]

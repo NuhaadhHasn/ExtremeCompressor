@@ -73,7 +73,7 @@ def test_stored_bytes_are_exact_not_estimated():
     """Media is copied verbatim, so a store-only plan has no uncertainty in
     its payload at all - low, expected and high must agree apart from the
     container overhead, and every byte must be accounted for."""
-    infos = [_info(f"clip{i}.mp4", 10_000_000, Category.VIDEO, 7.99, mean=0.99)
+    infos = [_info(f"clip{i}.mp4", 10_000_000, Category.VIDEO, 7.99, mean=1.0)
              for i in range(5)]
     est = estimate_size(infos, _plan_for(infos, Profile.NORMAL))
 
@@ -155,7 +155,7 @@ def test_only_precomp_chains_are_flagged_as_upper_bounds():
     assert not estimate_size(infos, _plan_for(infos, Profile.FAST)).upper_bound
     assert estimate_size(infos, _plan_for(infos, Profile.EXTREME)).upper_bound
     # Nothing piped means nothing for Precomp to surprise us with.
-    media = [_info("clip.mp4", 10_000_000, Category.VIDEO, 7.99, mean=0.99)]
+    media = [_info("clip.mp4", 10_000_000, Category.VIDEO, 7.99, mean=1.0)]
     assert not estimate_size(media, _plan_for(media, Profile.EXTREME)).upper_bound
 
 
@@ -205,7 +205,7 @@ def test_stored_bytes_are_io_bound_and_piped_bytes_are_codec_bound():
     And since D9, EVERY byte costs a third thing: the pre-publish self-test
     restores the whole archive, so the wait the user is being promised must
     include it or the estimate is systematically low."""
-    stored_only = [_info("clip.mp4", 400_000_000, Category.VIDEO, 7.99, mean=0.99)]
+    stored_only = [_info("clip.mp4", 400_000_000, Category.VIDEO, 7.99, mean=1.0)]
     piped_only = [_info("data.bin", 400_000_000, entropy=3.0, mean=0.4)]
 
     io_time = estimate_time(stored_only, _plan_for(stored_only, Profile.NORMAL))

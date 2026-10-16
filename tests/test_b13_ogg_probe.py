@@ -73,12 +73,12 @@ def test_an_ogg_the_probe_cannot_shrink_stays_stored():
 
 
 @pytest.mark.parametrize("name, category", [
-    ("film.mp4", Category.VIDEO),
+    ("film.mkv", Category.VIDEO),
     ("photo.jpg", Category.IMAGE),
-    ("song.mp3", Category.AUDIO),
 ])
 def test_unmeasured_media_keeps_the_old_rule(name, category):
-    """Only Ogg was measured. A probe below 1.0 on these changes nothing yet."""
+    """Only Ogg was measured here. MP3 and MP4 were measured by B18 and joined
+    it (test_b18_media_probe.py); a probe below 1.0 on these changes nothing."""
     assert store_reason(_media(name, category, 0.95)) is not None
 
 

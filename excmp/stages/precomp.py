@@ -28,8 +28,15 @@ class PrecompStage(Stage):
     tool_name = "precomp"
 
     def __init__(self, intense: bool = True):
-        # -intense also finds raw zlib streams (game paks); costs time, which
-        # is exactly what the Extreme/Insane profiles trade for ratio.
+        # -intense also finds raw zlib streams: data with no container around
+        # it, the shape of game paks. B18 (2026-10-15/16) measured both sides:
+        # turning it off saved 0.78% / 0.85% on installers and 0.16% / 0.08%
+        # on deflate data (Extreme / Insane), but on a raw zlib stream Precomp
+        # then finds nothing at all, 16.8% bigger on a synthetic sample, and
+        # test_extreme_chain caught Extreme silently becoming Normal. Small
+        # win against a whole-stream loss on data nobody has measured yet, so
+        # it stays on until B6's game data settles it
+        # (tests/test_b18_precomp_intense.py).
         self.intense = intense
 
     def _exe(self) -> str:

@@ -15,6 +15,7 @@ A preflight that refuses jobs that would have succeeded gets switched off, and
 then it protects nobody.
 """
 
+import random
 import shutil
 
 import pytest
@@ -119,7 +120,10 @@ def test_a_store_only_job_still_budgets_the_self_test_restore(tmp_path):
 
     root = tmp_path / "media"
     root.mkdir()
-    (root / "clip.mp4").write_bytes(b"\x00\x00\x00\x20ftypisom" + bytes(range(256)) * 400)
+    # Random bytes: an incompressible video stays stored. A repeating pattern
+    # reads as compressible to the probe, and B18 pipes such an MP4.
+    (root / "clip.mp4").write_bytes(b"\x00\x00\x00\x20ftypisom"
+                                    + random.Random(18).randbytes(102_400))
     infos = analyze_tree(root)
     the_plan = make_plan(infos, Profile.NORMAL, find_tools())
 

@@ -1,5 +1,11 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-10-16, night**. **B19 and B20 are merged into
+> `main`** (`73024bb`, `763f046`) after one full suite on the B20 tree:
+> **1,684 passed, 1 skipped, 1 xfailed**, corpus guard clean; both branches
+> deleted. The owner's measurement agenda (Insane rows, big containers,
+> quiet re-measures) is in the handoff.
+>
 > Status date: **2026-10-16, afternoon**. **B19 is built on branch
 > `b19-media`, merge pending the local full suite** (the owner paused heavy
 > work): `.mov` joins the probe rule; on Extreme/Insane, **JPEGs lepton
@@ -569,8 +575,9 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
-- [~] B20. 🟡 **BUILT 2026-10-16, merge pending the full suite** (branch
-      `b20-zip-family`, stacked on `b19-media`) — **zip-structured
+- [x] B20. ✅ **MERGED 2026-10-16** (`763f046`; full suite on the B20 tree,
+      which held B19 too: 1,684 passed, 1 skipped, 1 xfailed, corpus guard
+      clean; CI green on the branch) — **zip-structured
       containers Extreme stored by mistake.** B5's structural probe knew an
       EPUB or ODT is a zip Precomp can expand, but only the estimate used it;
       the planner piped by a suffix list, so a real EPUB (deflate output looks
@@ -584,8 +591,8 @@ OSI rule comes back before anything ships.
       [benchmarks/2026-10-16-b20](benchmarks/2026-10-16-b20-zip-family.md).
       Left open: samples, not corpora (the 121 MB of AABs waits for heavy
       work); B5's own 0.55 is a mean plus margin, not a worst file.
-- [~] B19. 🟡 **BUILT 2026-10-16, merge pending the full suite** (branch
-      `b19-media`) — the media B18 left unmeasured, measured, and a
+- [x] B19. ✅ **MERGED 2026-10-16** (`73024bb`, with B20's suite) — the
+      media B18 left unmeasured, measured, and a
       long-standing estimator blind spot fixed. Every archive restored and
       SHA-256 compared. Record:
       [benchmarks/2026-10-16-b19](benchmarks/2026-10-16-b19-mov-jpeg.md).

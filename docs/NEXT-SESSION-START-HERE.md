@@ -1,16 +1,14 @@
 # 🚦 START HERE — handoff (written 2026-10-16)
 
-> **Two code branches are pushed, reviewed and CI-green, and wait only for the
-> local full suite**: `b18-settings` (6 commits) and `b13-followups` (1 commit,
-> worktree `..\ExtremeCompressor-b13fu`). The suite was started on
-> `b18-settings` at 02:20 on 2026-10-16, as the owner asked, at the very end
-> of the session. **If both branches still exist on GitHub, the merges did not
-> happen: do §3.1 and §3.2 first.** B14 is on `main` (docs only).
+> **B18 is merged into `main`** (2026-10-16, `6adf005`): local suite 1,548
+> passed, 2 skipped, 1 xfailed, corpus guard clean, CI green. B14 is on
+> `main` (docs only). **`b13-followups`** (1 test-only commit, CI-green) was
+> being merged next; **if it still exists on GitHub, do §3.2 first.**
 >
 > **Next session is an owner agenda**, in this order (§3 has each spec):
 > 0. **Name the session** (`/rename`; the title tool isn't in this client).
-> 1. **Merge `b18-settings`** after the local suite passes.
-> 2. **Merge `b13-followups`** the same way.
+> 1. ~~Merge `b18-settings`~~ ✅ done.
+> 2. **Merge `b13-followups`** if it's still open.
 > 3. **Quiet-machine re-measures** (B13's Ogg restore rate, packMP3's rates),
 >    only when the owner says the machine is quiet.
 > 4. **B6**, only with an owner-provided Oodle sample.
@@ -189,5 +187,6 @@ real game data; a per-data-type switch may be the answer.
   chain for raw zlib data; with `-intense` off Precomp found nothing there.
   A real regression, not a stale test: fixed in `3821a99` by keeping
   `-intense` on (record §3).
-- 03:40, `3821a99`: rerun started. If the branch is still unmerged, rerun
-  `suite.py` on it and merge if everything passes (§3.1).
+- 03:40 and later, `3821a99`: two reruns reaped for low memory; the third
+  passed, 07:52: **1,548 passed, 2 skipped, 1 xfailed** (25 min 2 s), corpus
+  guard clean. Merged as `6adf005`.

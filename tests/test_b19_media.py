@@ -615,6 +615,100 @@ def test_the_header_walk_gets_past_standalone_markers_and_long_chains(tmp_path, 
     assert jpeg.frame_header(p) == (4, 2482, 3508)
 
 
+# (E) Calibration wrote a ratio into a slope. `_calibrate` passes the job's
+# final/orig and `calibrate.record` blended it into `factor_for`, which B8
+# turned into the slope k of (1 - k) + k*r. The skeptic, on a probe-0.4 text
+# file: five jobs at ratio 0.97 moved 7-Zip's k 0.726 -> 0.912 (estimate
+# 22.58 -> 18.11 MB, optimistic), five at 0.20 to 0.325 (32.20 MB). This
+# machine's own store holds k = 0.4126: Normal 33% pessimistic.
+
+def _probe_text(size=100_000_000):
+    return FileInfo(path=Path("t.txt"), size=size, category=Category.TEXT,
+                    entropy_bps=4.5, sample_ratio=0.4, sample_ratio_max=0.4)
+
+
+@pytest.mark.parametrize("ratio", [0.97, 0.20])
+@pytest.mark.parametrize("stages", [["sevenzip"], ["precomp", "sevenzip"]])
+def test_a_job_s_ratio_never_moves_the_slope(tmp_path, ratio, stages):
+    from excmp.calibrate import blended_rates, record
+    from excmp.estimate import Rates, estimate_size
+    store = tmp_path / "cal.json"
+    for _ in range(5):
+        record(stages, piped_bytes=100 << 20, elapsed_s=50.0,
+               achieved_factor=ratio, path=store)
+    learned = blended_rates(path=store)
+    assert learned.factor_for(stages) == Rates().factor_for(stages)
+    assert learned.rate_for(stages) != Rates().rate_for(stages)   # rates still learn
+    info = _probe_text()
+    profile = Profile.EXTREME if "precomp" in stages else Profile.NORMAL
+    the_plan = plan([info], profile, TOOLS)
+    assert (estimate_size([info], the_plan, learned).expected
+            == estimate_size([info], the_plan, Rates()).expected)
+
+
+def test_a_stored_legacy_factor_is_ignored(tmp_path):
+    """Stores written before B19 hold ratios in `factor`; they must not be
+    read back as slopes. The learned rate beside one still applies."""
+    import json as _json
+    from excmp.calibrate import blended_rates
+    from excmp.estimate import Rates
+    store = tmp_path / "cal.json"
+    store.write_text(_json.dumps({"chains": {"sevenzip": {
+        "rate": 2184515.689059, "samples": 3, "factor": 0.412618}}}))
+    learned = blended_rates(path=store)
+    assert learned.factor_for(["sevenzip"]) == Rates().factor_for(["sevenzip"])
+    assert learned.rate_for(["sevenzip"]) == pytest.approx(2184515.689059)
+
+
+def _calibrating_worker(tmp_path, summary):
+    from types import SimpleNamespace
+    from gui.models import Job
+    from gui.queue_manager import CompressWorker
+
+    class _Rec:
+        def emit(self, *a):
+            pass
+
+    signals = SimpleNamespace(progress=_Rec(), log=_Rec(), started=_Rec(), done=_Rec(),
+                              failed=_Rec(), cancelled=_Rec())
+    job = Job(inputs=[tmp_path], out_path=tmp_path / "o.excmp",
+              profile=Profile.EXTREME, summary=summary)
+    return CompressWorker(job, signals, tmp_path, tools={})
+
+
+def _result(piped, elapsed):
+    from types import SimpleNamespace
+    return SimpleNamespace(piped_bytes=piped, final_bytes=1, orig_bytes=2,
+                           elapsed_s=elapsed,
+                           routes=[{"action": "pipeline", "stages": ["precomp", "sevenzip"]}])
+
+
+def test_a_job_mostly_of_recoded_media_teaches_no_rate(tmp_path, monkeypatch):
+    """(E/B) 135 MB of CMYK at Extreme ran at ~0.09-0.4 MB/s; learned as the
+    chain's rate it would slow every later Extreme estimate (reviewer: -23%
+    after one job). Its time is modelled by `recode_cost` instead."""
+    recorded = []
+    monkeypatch.setattr("excmp.calibrate.record", lambda *a, **kw: recorded.append(kw))
+    infos = [_photo(f"c{i}.jpg", 10_000_000, refuses=True) for i in range(5)]
+    worker = _calibrating_worker(tmp_path, _photo_summary(infos, Profile.EXTREME))
+    worker._calibrate(_result(50_000_000, 400.0))
+    assert recorded == []
+
+
+def test_a_little_recoded_media_is_subtracted_not_learned(tmp_path, monkeypatch):
+    recorded = []
+    monkeypatch.setattr("excmp.calibrate.record", lambda *a, **kw: recorded.append(kw))
+    infos = ([_photo("c.jpg", 2_000_000, refuses=True)]
+             + [_text(f"t{i}.txt", 10_000_000) for i in range(10)])
+    summary = _photo_summary(infos, Profile.EXTREME)
+    assert 0 < summary.recode_seconds
+    worker = _calibrating_worker(tmp_path, summary)
+    worker._calibrate(_result(102_000_000, 300.0))
+    (kwargs,) = recorded
+    assert kwargs["elapsed_s"] == pytest.approx(300.0 - summary.recode_seconds)
+    assert "achieved_factor" not in kwargs
+
+
 # -- (d) the container overhead of stored files -------------------------------
 #
 # Found by checking B19's estimates against real archives: a store-only

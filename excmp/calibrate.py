@@ -72,9 +72,9 @@ class ChainCalibration:
     #: and fall outside the sanity window.
     rate: float
     samples: int = 0
-    #: Achieved output/input ratio, or None if never observed. This is the
-    #: J1-note-3 blind spot: no cheap probe can predict what Precomp will
-    #: find, so watching what it actually achieved is the only real fix.
+    #: Achieved output/input ratio, as stores before B19 recorded it. No longer
+    #: written or applied: it was blended into B8's slope as if it were one
+    #: (see `record`). Still parsed, so an old store loads.
     factor: float | None = None
     #: B17. The zpaq method a zpaqfranz chain's rate was learned at. Insane
     #: moved from -m4 to -m58 without the chain key changing, so a rate learned
@@ -179,17 +179,19 @@ def record(stages: Sequence[str], piped_bytes: int, elapsed_s: float,
         # behaviour the EMA exists to avoid.
         rate = baseline * (1 - ALPHA) + observed * ALPHA
 
-        factor = prior.factor if prior is not None else None
-        if achieved_factor is not None and 0 < achieved_factor <= 1.5:
-            # Same rule for the ratio: the shipped factor is the prior.
-            factor_prior = (factor if factor is not None
-                            else Rates().factor_for(stages))
-            factor = factor_prior * (1 - ALPHA) + achieved_factor * ALPHA
-
+        # B19: the achieved ratio is no longer learned. It was blended into
+        # `Rates.factor_for`, which B8 turned into a *slope* (k in
+        # (1 - k) + k*r) without this function noticing: five jobs at ratio
+        # 0.97 moved 7-Zip's k from 0.726 to 0.912, so the estimator grew
+        # more optimistic after jobs that compressed worse, and five at 0.20
+        # moved it to 0.325. A whole-job ratio (stored bytes included) can't
+        # be turned into a slope without the probe readings behind it, so
+        # nothing is learned until something can be learned correctly.
+        # `achieved_factor` stays in the signature for old callers.
         cal.chains[key] = ChainCalibration(
             rate=rate,
             samples=(prior.samples + 1) if prior is not None else 1,
-            factor=factor,
+            factor=None,
             zpaq_method=ZPAQFRANZ_METHOD if "zpaqfranz" in key else None)
         _save(cal, target)
     except (OSError, ValueError, TypeError, PublishError):
@@ -214,11 +216,12 @@ def blended_rates(base: Rates | None = None,
         return base
 
     codec = dict(base.codec)
-    factor = dict(base.codec_factor)
     for key, entry in cal.chains.items():
         codec[key] = entry.rate
-        if entry.factor is not None:
-            factor[key] = entry.factor
-    return Rates(io_rate=base.io_rate, codec=codec, codec_factor=factor,
+    # A stored `factor` is ignored (B19): every one written so far is a
+    # whole-job output ratio, which `codec_factor` would read as a slope. This
+    # machine's own store held 0.4126 for 7-Zip, which made Normal's
+    # estimate of a probe-0.4 file 33% pessimistic.
+    return Rates(io_rate=base.io_rate, codec=codec, codec_factor=base.codec_factor,
                  rate_spread=base.rate_spread, verify=base.verify,
-                 ogg_pack=base.ogg_pack)
+                 ogg_pack=base.ogg_pack, jpeg_pack=base.jpeg_pack)

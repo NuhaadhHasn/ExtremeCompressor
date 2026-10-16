@@ -243,6 +243,10 @@ class _EngineWorker(QRunnable):
         # and countdown use; the second is what calibration must subtract from
         # a job time that also contains the pause.
         self._verify_t0: float | None = None
+        # B19: what Precomp's recoders were expected to add, which calibration
+        # must not learn as the chain's own speed either.
+        self._recode_s = job.summary.recode_seconds if job.summary else 0.0
+        self._recode_bytes = job.summary.recode_bytes if job.summary else 0
         # B13: the pack phase's span, which calibration must also leave out.
         self._pack_t0: float | None = None
         self._pack_end = 0.0
@@ -434,8 +438,14 @@ class CompressWorker(_EngineWorker):
                        if r.get("action") == "pipeline"), [])
         if not stages or not piped:
             return
-        factor = (result.final_bytes / result.orig_bytes
-                  if result.orig_bytes else None)
+        # B19: a job made mostly of media Precomp recodes itself (MP3, the
+        # JPEGs lepton refuses) ran at that recoder's pace, ~0.4 MB/s, which
+        # says little about the chain: one such job moved the learned Extreme
+        # rate by -23% (review). Those are timed by `recode_cost` instead.
+        # Below a quarter of the piped bytes, their modelled share of the time
+        # is taken out and the rest is learned.
+        if self._recode_bytes * 4 >= piped:
+            return
         # I11: the self-test is estimated separately (`_VERIFY_RATE`), so it
         # must not also be learned as part of the codec's rate. Counting it in
         # both put the whole restore into an Insane estimate twice.
@@ -445,9 +455,10 @@ class CompressWorker(_EngineWorker):
         # taught the estimator a rate several times too slow for the chain.
         pack_s = (self._pack_end - self._pack_t0
                   if self._pack_t0 is not None else 0.0)
-        codec_s = result.elapsed_s - self._verify_elapsed - pack_s
-        record(stages, piped_bytes=piped, elapsed_s=codec_s,
-               achieved_factor=factor)
+        codec_s = result.elapsed_s - self._verify_elapsed - pack_s - self._recode_s
+        # No `achieved_factor` (B19): a whole-job ratio is not the slope the
+        # estimator's factor became in B8 (see `calibrate.record`).
+        record(stages, piped_bytes=piped, elapsed_s=codec_s)
 
     def _add_recovery(self, archive) -> None:
         from excmp.recovery import available, create

@@ -139,16 +139,19 @@ def test_learning_one_chain_leaves_the_others_alone(store):
 # The ratio, which is the part no probe can predict
 # ---------------------------------------------------------------------------
 
-def test_the_achieved_ratio_is_learned_too(store):
-    """J1 note 3: sampling cannot predict what Precomp will find, and no cheap
-    probe can. Watching what it actually achieved is the only real fix."""
+def test_the_achieved_ratio_is_not_learned_into_the_slope(store):
+    """J1 note 3 wanted the achieved ratio learned, and this test once checked
+    that the factor approached 0.20 after 25 jobs at 0.20. But B8 made the
+    factor a *slope*, and blending a whole-job ratio into it ran backwards:
+    jobs that compressed better made later estimates more pessimistic, and
+    incompressible ones made them optimistic (skeptic, B19). The test checked
+    the stored number and never the estimate it produced. Until a slope can be
+    fitted from the probe readings behind a job, nothing is learned."""
     shipped = Rates().factor_for(["precomp", "sevenzip"])
     for _ in range(25):
         record(["precomp", "sevenzip"], piped_bytes=100 << 20, elapsed_s=50.0,
                achieved_factor=0.20, path=store)
-    after = blended_rates(path=store).factor_for(["precomp", "sevenzip"])
-    assert after != shipped
-    assert abs(after - 0.20) < 0.08, f"{after} never approached 0.20"
+    assert blended_rates(path=store).factor_for(["precomp", "sevenzip"]) == shipped
 
 
 def test_a_nonsense_factor_is_ignored(store):

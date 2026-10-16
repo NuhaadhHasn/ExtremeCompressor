@@ -77,6 +77,7 @@ class AnalysisSummary:
     #: so the bar's split agrees with the table (`estimate.recode_cost`).
     recode_seconds: float = 0.0
     recode_verify_seconds: float = 0.0
+    recode_bytes: int = 0
     #: The same under the strongest available chain, which the
     #: recommendation reasons about (it says whether "seconds" is true).
     strongest_recode_seconds: float = 0.0
@@ -210,6 +211,7 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         pack_jpeg_bytes=cost.jpeg_bytes,
         recode_seconds=recode.compress_seconds,
         recode_verify_seconds=recode.verify_seconds,
+        recode_bytes=recode.bytes,
         strongest_recode_seconds=strongest.compress_seconds,
     )
 

@@ -64,8 +64,11 @@ LEPTON_MAX_SIDE = 16386
 _SOF_MARKERS = frozenset({0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
                           0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
 
-#: Markers with no length field: TEM, RST0-7, and a stray SOI. Read as
-#: segments, their "length" is the next marker's bytes (review, B19).
+#: Markers with no length field: TEM, RST0-7, and a stray SOI. T.81 allows
+#: none of them before the frame (B.2), but a decoder may still read such a
+#: file, so they are stepped over rather than read as a segment whose
+#: "length" is the next marker's bytes (review, B19). A miss here was only
+#: ever the old route, never a lossless risk.
 _STANDALONE = frozenset({0x01, *range(0xD0, 0xD9)})
 
 #: How many markers to walk before giving up. Real files had at most 17

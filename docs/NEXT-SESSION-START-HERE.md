@@ -1,17 +1,20 @@
 # 🚦 START HERE — handoff (written 2026-10-16)
 
-> **B18 is merged into `main`** (2026-10-16, `6adf005`): local suite 1,548
-> passed, 2 skipped, 1 xfailed, corpus guard clean, CI green. B14 is on
-> `main` (docs only). **`b13-followups`** (1 test-only commit, CI-green) was
-> being merged next; **if it still exists on GitHub, do §3.2 first.**
+> **Everything is merged into `main` and pushed; no branch exists besides
+> `main`.** B18 (`6adf005`) and the B13 toolfetch test fix (`4a4e065`), both
+> after the local suite and CI green: **1,549 passed, 1 skipped, 1 xfailed**,
+> corpus guard clean. B14 is on `main` (docs only).
 >
 > **Next session is an owner agenda**, in this order (§3 has each spec):
 > 0. **Name the session** (`/rename`; the title tool isn't in this client).
-> 1. ~~Merge `b18-settings`~~ ✅ done.
-> 2. **Merge `b13-followups`** if it's still open.
+> 1. ~~Merge `b18-settings`~~ ✅ 2. ~~Merge `b13-followups`~~ ✅
 > 3. **Quiet-machine re-measures** (B13's Ogg restore rate, packMP3's rates),
 >    only when the owner says the machine is quiet.
 > 4. **B6**, only with an owner-provided Oodle sample.
+>
+> **The owner is on limited mobile data** (2026-10-16): about 1 GB in total
+> across all sessions on this PC. No downloads, installs, image pulls or big
+> fetches; ask first if anything needs one.
 >
 > **The owner runs other sessions and Docker Desktop on this machine, and
 > Docker and WSL must stay running** (owner, 2026-10-16). `vmmem` alone holds

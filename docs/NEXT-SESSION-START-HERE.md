@@ -10,6 +10,13 @@
 >   are now expanded by Precomp, 1.62% → 43.68% on samples. Pushed, **CI
 >   green**.
 >
+> **Nothing on the agenda needs development.** B19 and B20 are complete:
+> coded, tested (targeted suites, the estimator backtest, the corpus guard),
+> reviewed, rendered and CI-green. What is left is **testing and
+> measurement only**: the full suite, the merges, and the timing runs below.
+> (The roadmap still has open development items, §4, but none is on this
+> agenda.)
+>
 > **Next session is an owner agenda**, in this order (§3 has each spec).
 > Items 1–3 are heavy: start each only when the owner says the machine
 > allows, and **never stop a heavy run that is already going** (owner,

@@ -575,6 +575,21 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
+- [x] Quiet re-measure. ✅ **2026-10-17** (branch `quiet-rates`) — B13's,
+      B19's and B20's contended time priors, measured again with WSL and
+      Docker stopped: three rounds, 37 rows, 0 mismatches. **packJPG and
+      packMP3 were 2.5–3.4× slow** (now 1.03 / 1.18 MB/s compress, 1.02 /
+      1.49 self-test); lepton 3.25 MB/s + 0.043 s/file pack, 6.2 + 0.036
+      decode; **balrogg's decode was 1.6× fast** (1.5 → 0.94 MB/s); the B20
+      container rate stands (0.44 on 158 MB of big containers). The
+      recoders' time now has its own spread on the slow side
+      (`_RECODE_SPREAD = 4.0`), so the contended runs still fit. **A defect
+      found on the way:** the small-folder suggestion said "the full chain
+      costs seconds" from the recoders' extra alone, so CMYK, MP3-beside-text
+      and Ogg folders were promised seconds beside a table saying minutes.
+      It reads the whole job's time now. Insane on recoded media is still
+      estimated 2–3× high (strict xfail). Record:
+      [benchmarks/2026-10-17](benchmarks/2026-10-17-quiet-remeasure.md).
 - [x] B20. ✅ **MERGED 2026-10-16** (`763f046`; full suite on the B20 tree,
       which held B19 too: 1,684 passed, 1 skipped, 1 xfailed, corpus guard
       clean; CI green on the branch) — **zip-structured

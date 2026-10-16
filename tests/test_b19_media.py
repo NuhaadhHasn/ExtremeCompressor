@@ -542,13 +542,18 @@ def test_a_recoded_folder_s_measured_time_sits_in_the_range(files, measured_s):
 
 def test_the_bar_s_time_includes_the_recode(tmp_path):
     """(B) The progress bar takes its split from the summary, not the files."""
+    from excmp.estimate import recode_cost, recoded_seconds
     from gui.queue_manager import _time_split
     infos = [_photo(f"c{i}.jpg", 10_000_000, refuses=True) for i in range(5)]
     summary = _photo_summary(infos, Profile.EXTREME)
-    assert summary.recode_seconds > 50_000_000 / 1.41e6
+    the_plan = plan(infos, Profile.EXTREME, TOOLS)
+    # The recoded files' whole time on this chain. (Was "the extra > 50 MB at
+    # 1.41 MB/s", which only held at packJPG's contended 0.41 MB/s; at the
+    # quiet rates the extra alone is too small to catch a bar that drops it.)
+    whole = recoded_seconds(recode_cost(infos, the_plan), the_plan.routes[0].stages)
     compress_s, verify_s = _time_split(summary)
-    assert compress_s >= summary.recode_seconds
-    assert verify_s >= summary.recode_verify_seconds > 0
+    assert compress_s >= whole[0] > 0
+    assert verify_s >= whole[1] > 0
 
 
 def test_without_precomp_nothing_is_recoded():

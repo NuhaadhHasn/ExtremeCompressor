@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from excmp.analyzer import Category, FileInfo
-from excmp.estimate import (DEFAULT_RATES, Rates, compare_profiles, pack_cost,
-                            packable, recode_cost)
+from excmp.estimate import (DEFAULT_RATES, Rates, compare_profiles, estimate_time,
+                            pack_cost, packable, recode_cost, recoded_seconds)
 from excmp.planner import Plan, Profile, precomp_inflation, store_reason
 from excmp.planner import plan as make_plan
 from excmp.sample import MeasuredRun, Sample
@@ -78,8 +78,12 @@ class AnalysisSummary:
     recode_seconds: float = 0.0
     recode_verify_seconds: float = 0.0
     recode_bytes: int = 0
-    #: The same under the strongest available chain, which the
-    #: recommendation reasons about (it says whether "seconds" is true).
+    #: Under the strongest available chain, which the recommendation reasons
+    #: about: the whole job's expected seconds (it says whether "seconds" is
+    #: true), and the recoded files' share of them (compress and self-test,
+    #: the chain's share included: `estimate.recoded_seconds`), which says
+    #: whether Precomp's recoders are why.
+    strongest_seconds: float = 0.0
     strongest_recode_seconds: float = 0.0
 
     @property
@@ -191,8 +195,10 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
 
     cost = pack_cost(infos, the_plan)
     recode = recode_cost(infos, the_plan)
-    strongest = (recode if reference_plan is None
-                 else recode_cost(infos, reference_plan))
+    strongest_plan = the_plan if reference_plan is None else reference_plan
+    strongest_stages = next((r.stages for r in strongest_plan.routes
+                             if r.action == "pipeline"), [])
+    strongest = recoded_seconds(recode_cost(infos, strongest_plan), strongest_stages)
     return AnalysisSummary(
         total_bytes=total,
         file_count=len(infos),
@@ -212,7 +218,8 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         recode_seconds=recode.compress_seconds,
         recode_verify_seconds=recode.verify_seconds,
         recode_bytes=recode.bytes,
-        strongest_recode_seconds=strongest.compress_seconds,
+        strongest_seconds=estimate_time(infos, strongest_plan).expected,
+        strongest_recode_seconds=sum(strongest),
     )
 
 
@@ -343,12 +350,19 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
         return Profile.FAST, _mostly_settled_reason(summary)
 
     if summary.total_bytes <= SMALL_JOB_BYTES:
-        if summary.strongest_recode_seconds >= 60:
-            # B19 review: Precomp's MP3/JPEG recoders run at ~0.4 MB/s, so a
-            # 50 MB folder of print JPEGs is minutes, not seconds.
+        # "Seconds" is a claim about the whole job, so it reads the whole
+        # job's estimate (2026-10-17 review: a folder half CMYK and half text,
+        # or Ogg that balrogg repacks, was told "seconds" beside a table
+        # saying minutes). The cause is named only when it is the cause:
+        # Precomp's MP3/JPEG recoders, ~1 MB/s each way measured quiet.
+        if summary.strongest_seconds >= 60:
+            if summary.strongest_recode_seconds * 2 >= summary.strongest_seconds:
+                return Profile.EXTREME, (
+                    "Small, though Precomp recodes these files slowly — minutes, "
+                    "not seconds. Still the best ratio.")
             return Profile.EXTREME, (
-                "Small, though Precomp recodes these files slowly — minutes, not "
-                "seconds. Still the best ratio.")
+                "Small, though the full chain still takes minutes here. Still "
+                "the best ratio.")
         return Profile.EXTREME, (
             "Small enough that the full chain costs seconds, so take the best ratio.")
 

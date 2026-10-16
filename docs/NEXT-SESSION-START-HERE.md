@@ -1,28 +1,33 @@
-# 🚦 START HERE — handoff (written 2026-10-16)
+# 🚦 START HERE — handoff (written 2026-10-16, evening)
 
-> **Everything is merged into `main` and pushed; no branch exists besides
-> `main`.** B18 (`6adf005`) and the B13 toolfetch test fix (`4a4e065`), both
-> after the local suite and CI green: **1,549 passed, 1 skipped, 1 xfailed**,
-> corpus guard clean. B14 is on `main` (docs only).
+> **`main` is unchanged since `2d8b235`** apart from docs. **B19 is built,
+> reviewed and pushed on branch `b19-media`** (worktree
+> `..\ExtremeCompressor-b19`), **waiting only for the local full suite**,
+> which the owner paused on 2026-10-16 along with all heavy CPU/RAM work.
+> CI runs on the branch push.
 >
-> **Next session is an owner agenda**, in this order (§3 has each spec):
+> **Next session is an owner agenda**, in this order (§3 has each spec).
+> Items 1–3 are heavy: start each only when the owner says the machine
+> allows, and **never stop a heavy run that is already going** (owner,
+> 2026-10-16: "pause" means start nothing new).
 > 0. **Name the session** (`/rename`; the title tool isn't in this client).
-> 1. ~~Merge `b18-settings`~~ ✅ 2. ~~Merge `b13-followups`~~ ✅
-> 3. **Quiet-machine re-measures** (B13's Ogg restore rate, packMP3's rates),
->    only when the owner says the machine is quiet.
-> 4. **B6**, only with an owner-provided Oodle sample.
+> 1. **Full suite on `b19-media`, then merge it.**
+> 2. **Insane on the design JPEGs** (branch and `main`), for the record.
+> 3. **Quiet-machine re-measures**: Ogg restore, packMP3, and now packJPG and
+>    lepton (all four are contended priors in the estimator).
+> 4. **B20: zip-structured containers Extreme stores by mistake** (EPUB,
+>    ODT/ODS/ODP, AAR, AAB, NuGet, APPX): measure, then route. Light to
+>    build, needs a Precomp measurement first.
+> 5. **B6**, only with an owner-provided Oodle sample.
 >
-> **The owner is on limited mobile data** (2026-10-16): about 1 GB in total
-> across all sessions on this PC. No downloads, installs, image pulls or big
-> fetches; ask first if anything needs one.
+> **The data limit is lifted** (owner, 2026-10-16): downloads are allowed
+> again. Ask once per batch, as always.
 >
 > **The owner runs other sessions and Docker Desktop on this machine, and
-> Docker and WSL must stay running** (owner, 2026-10-16). `vmmem` alone holds
-> ~6.5 GB; 2–4 GB is usually free. Claude Code reaps background shells when
-> memory runs critically low (it killed a benchmark and the full suite on
-> 2026-10-15/16). So: one heavy process at a time, below-normal priority
-> (checked with `Get-Process`), rows logged as they land, and **the full
-> suite last**, when the owner says memory allows.
+> Docker and WSL must stay running.** `vmmem` took ~50% of the CPU on
+> 2026-10-16; 2.8–4.6 GB was free. One heavy process at a time,
+> below-normal priority (checked with `Get-Process`), rows logged as they
+> land, and the full suite last.
 >
 > **Target machine:** Dell Inspiron 15-3567, i5-7200U (2 cores / 4 threads),
 > 15.9 GB. Run `Get-CimInstance Win32_Processor` before quoting a speed.
@@ -31,115 +36,146 @@
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-- **Use `C:\excmp-bench\b17\suite.py`** (corpus guard around the suite), run
-  from the repo root, below-normal from creation:
-  `cmd /c 'start "" /b /belownormal /wait .venv\Scripts\python.exe C:\excmp-bench\b17\suite.py > out.txt 2>&1'`.
-- **Clear `%TEMP%\pytest-of-<you>` first, and freeze the code before
+- **On a worktree use `C:\excmp-bench\b19\suite_wt.py <tree>`** (corpus guard
+  around the suite, the main venv run inside the tree), below-normal from
+  creation; its docstring has the exact command. `b17\suite.py` only works
+  from a checkout with its own `.venv`.
+- **A worktree has no `tools\bin`** (untracked): junction it, or tool tests
+  skip and Insane silently runs as Extreme. `..\ExtremeCompressor-b19\tools\bin`
+  is already a junction to the main checkout's.
+- **Clear `%TEMP%\pytest-of-<you>` first, and freeze the tree before
   starting.** Editing `docs/` mid-run is fine; nothing else is.
 
 ---
 
-## 1. What shipped (2026-10-15 → 10-16)
+## 1. What B19 is (branch `b19-media`, 6 commits on `2d8b235`)
 
-| item | what | record |
+Record: `docs/benchmarks/2026-10-16-b19-mov-jpeg.md` (on the branch).
+Every archive restored and SHA-256 compared; 0 mismatches anywhere.
+
+| | what | result |
 |---|---|---|
-| **B14** ❌ | DArc 3.0.4 (maintained FreeArc, Rust) **measured, not integrated**: +1.37% to +27.80% against Insane on all three corpora, beats Extreme only on deflate data (−1.00%). B12a closes with it | [2026-10-15-b14](benchmarks/2026-10-15-b14-darc.md) |
-| **B18** ✅ | (a) zstd keeps `-1` (identical bytes; timings too noisy), now honours an explicit thread count, capped. (b) **`-intense` kept on**: off saved 0.08–0.85% but lost whole raw-zlib streams (−16.8% synthetic); the local suite caught it. (c) **MP3/MP4 probe rule**. (c′) **every MP3 to Precomp on Extreme/Insane** (packMP3): 18.02%/15.87%/18.97% end to end | [2026-10-15-b18](benchmarks/2026-10-15-b18-settings.md) |
-| B13 follow-up | the toolfetch discovery test finally runs (it always skipped); checks balrogg, flac, qpdf | branch `b13-followups` |
+| (a) | `.mov` joins B18's probe rule | flagged MOVs 1.01% under 7-Zip, the rest 0.046%; 72 KB on 909 MB end to end |
+| (b) | **JPEGs lepton refuses go to Precomp's packJPG** on Extreme/Insane | lepton refuses CMYK and any side > 16,386 px (measured on 0.5.8); the store route kept them raw. **Design folder 3.48% → 42.83%, other CMYK −0.01% → 44.67%** at Extreme. Piping *every* JPEG lost on web images (18.80% vs 21.14%) |
+| (c) | **the estimate models lepton** | it had priced every photo folder at 0% (range +28.6% above the real archive); now a range with lepton's time, and the card no longer calls photos "already compressed" |
+| (d) | container overhead | store-only estimates were *under* the real archive (3,173 B on 64 files): each stored name is now booked twice |
+| (e) | **calibration wrote a ratio into B8's slope** | since 2026-09-08; this machine's store made Normal 33% pessimistic. Ratio learning removed; rates still learn |
+| review | two lenses + a skeptic | ceilings now use each packer's worst file; **Precomp's packJPG/packMP3 time is modelled** (`recode_cost`); the Fast suggestion's sentences match the table; JPEG-named-`.ogg` double count; no integrity or lossless defects |
+
+Tests: `tests/test_b19_media.py` (85), plus `test_calibrate.py`,
+`test_b18_media_probe.py` and `test_b13_estimate.py` adjusted. The related
+suites pass (351 tests in the last targeted run); **the full suite has not
+run on the branch.** The GUI was rendered in both themes at each step
+(`C:\excmp-bench\b19\render_b19.py`, images in `render\`).
 
 ---
 
 ## 2. Findings worth not rediscovering
 
-### Precomp recodes MP3, and the probe can't see it
+### A JPEG's frame header can sit half a megabyte in
 
-Precomp v0.4.7 lists `3 = MP3` among its stream types: packMP3, built in.
-Every one of 21 real MP3s lost 10.0–25.9% through `precomp -cn → 7z`,
-including the ones the zstd probe called incompressible. It costs
-cross-file matches (two near-identical MP3s become unrelated streams), and
-its time estimate is still optimistic (§3.3). **Before calling any media
-"already compressed", ask what Precomp's `-t` list says it can open** —
-`J = JPG` is on it too, unmeasured against lepton.
+Print CMYK files carry their ICC profile first: the frame sat at 565 KB in
+every one. `jpeg.frame_header` walks the markers. Never trust a fixed-size
+head for JPEG structure.
 
-### Filter a corpus by the exact suffix the rule ships for
+### Under a ceiling, every term is a worst case
 
-B18's "57 MP4s" were 51 MP4 + 6 MOV, because the probe search matched
-`.mov` too. The reviewer caught it; the MP4-only figures moved from
-8.99%/1.12% to 9.20%/1.61%.
+On a Precomp chain with anything piped, `expected` is shown as "≤ X". B18
+learned it for MP3; B19's lepton term and B13's Ogg term still used means
+until the Windows 4K wallpapers plus one text file came out 96 KB over.
+Store-route packers now price at their worst file there
+(`_LEPTON_CEILING`, `_PACK_CEILING`).
 
-### On a Precomp chain, `expected` is a ceiling
+### Lepton has no effort setting, so it doesn't separate the profiles
 
-The GUI shows it as "≤ X". An average there (0.835 for MP3) put "≤ 64.0 MB"
-over a 64.4 MB archive. Any per-type ratio on a Precomp chain must use the
-worst case measured, not the mean (`_MP3_PRECOMP_RATIO` uses 0.90).
+Anything that ranks profiles must treat lepton's bytes as the same in every
+row. Counting them as "shrinkable" once made a photo folder suggest Extreme
+at 3× Fast's RAM for the same archive. They stay in the floor
+`recommend_profile` reads; balrogg's Ogg doesn't (its effort rises).
 
-### Two measurement traps
+### Check that a test asserts the outcome, not the mechanism
 
-- **The venv's `python.exe` is a launcher.** `Popen(...)._handle` on a Python
-  child reads the launcher's memory (4 MB for a 171 MiB job). Measure a
-  Python child from inside it. Native tools are fine.
-- **Untyped ctypes `SetPriorityClass(GetCurrentProcess(), …)` silently
-  fails** (`ERROR_INVALID_HANDLE`). Use `creationflags=` or
-  `start /belownormal`, and check with `Get-Process`.
+`test_the_achieved_ratio_is_learned_too` checked that the stored factor
+moved and never looked at the estimate, so it pinned a backwards feedback
+loop in place for five weeks.
 
-### Write test files with the Edit tool
+### Files named `.jpg` aren't all JPEGs
 
-A Python-in-heredoc rewrite turned `\x00` into real NUL bytes and `\b` into
-a backspace, and a mangled path made the real-file tests skip silently (5
-skipped, which is how it was noticed). Watch the skip count.
+53 of 6,686 here were PNG, WebP or macOS forks. The store route claims by
+content; the estimate now does too (`FileInfo.is_jpeg`).
 
 ### Still true
 
-- **Measure the incumbent that fills the slot**, **two corpora**, **never
-  pin a contended timing**, **a silent no-op looks like a negative result**,
-  **render the GUI** (the shrink-hint change was rendered in both themes
-  with Details open: `C:\excmp-bench\b18\render_hint.py`), **the archive is
-  not byte-reproducible**, **CI's runner is not the target**.
+- **The venv's `python.exe` is a launcher**; untyped ctypes
+  `SetPriorityClass` silently fails; write test files with the Edit tool.
+- **Measure the incumbent that fills the slot**, **two corpora** (B19's
+  header-refused JPEGs are one scan of one drive, recorded as thin), **never
+  pin a contended timing** (B19's lepton/packJPG/packMP3 rates are priors
+  with wide ranges), **render the GUI** (both B19 GUI defects passed every
+  test), **CI's runner is not the target**.
 
 ---
 
 ## 3. The agenda, in order
 
-### 1. Merge `b18-settings`
+### 1. Full suite on `b19-media`, then merge (heavy: owner's go first)
 
-Reviewed by two lenses and a skeptic (every finding reproduced or measured,
-then fixed), the GUI change rendered in both themes, CI green on `e9e9e93`.
-What's left is the local gate: `suite.py` (corpus guard around the suite,
-below-normal, see the top). Every test must pass. Expected count: 1,504
-passed on `main` before, plus about 50 new B18 tests (some skip without the
-bench samples in `C:\excmp-bench\b18\samples`). If it passes: `git merge
---no-ff b18-settings` on `main`, push, delete the branch locally and on
-GitHub. Then update CLAUDE.md: the test count, and the threads paragraph
-(zstd's `-1` **has** now been measured against 2: identical bytes, +184 MiB,
-timings too noisy; an explicit count is honoured, capped at `-1`).
+`suite_wt.py C:\Users\nuhaa\PycharmProjects\ExtremeCompressor-b19`, below
+normal. Every test must pass; the corpus guard must be clean. Expected
+count: 1,549 passed on `main` plus B19's additions (`test_b19_media.py` has
+85; a few skip without the bench samples in `C:\excmp-bench\b19\samples` or
+the Windows wallpapers). **Watch for estimator tests that pinned the old
+overhead or calibration behaviour** in files the targeted runs didn't cover
+(e.g. `test_estimate_backtest.py`, which reads the real Programs corpus).
+Then: CI green on the branch (`gh run list --branch b19-media`), `git merge
+--no-ff b19-media` on `main`, push, delete the branch locally and on GitHub,
+`git worktree remove ..\ExtremeCompressor-b19` (remove the `tools\bin`
+junction first with `rmdir`, not a recursive delete, which would follow it
+into the main checkout's binaries). Update CLAUDE.md's test count.
 
-### 2. Merge `b13-followups`
+### 2. Insane on the design JPEGs (heavy)
 
-One test-only commit: `test_an_e1_installed_tool_is_found_by_normal_discovery`
-now restores the real install root for itself. It was mutation-checked here
-(fails with discovery broken, passes against `tools\bin`), and CI is green.
-Same gate and merge. Then `git worktree remove ..\ExtremeCompressor-b13fu`
-and `..\ExtremeCompressor-main` (created for this docs commit).
+`C:\excmp-bench\b19\run_e2e2.cmd` has the commands: `b19_app.py
+<corpus> <out> <label> insane` with `EXCMP_REPO` set to the worktree for the
+branch row, and without it for `main`. The branch's Extreme row exists
+(42.829%); the Insane run was stopped in its self-test on 2026-10-16. Add
+both rows to the B19 record.
 
 ### 3. Quiet-machine re-measures (only with the owner's say-so that it's quiet)
 
-- **B13's Ogg restore rate**: `C:\excmp-bench\b13\b13_app.py C:\excmp-bench\b13\music <out> quiet normal`,
-  normal priority, nothing else heavy running. Compare D9 and extract
-  seconds with `_PACK_DECODE_RATE` (1.5 MB/s); re-pin only from a median of
-  three.
-- **packMP3's rates** (new, B18): Extreme on the music MP3s was predicted
-  13–82 s and took 180 s; the self-test assumes 6.5 MB/s restore for the
-  Precomp chain while packMP3 restored at 0.07–1.46 MB/s per file
-  (contended). `C:\excmp-bench\b18\mp3_perfile.py` and `b18_app.py
-  <corpus> <out> <label> extreme` measure it. The estimator needs an MP3
-  term in the time model the way `pack_cost` has one for Ogg.
+Each replaces a contended prior in `excmp/estimate.py`; re-pin only from a
+median of three:
+- **B13's Ogg restore rate** (`_PACK_DECODE_RATE`, 1.5 MB/s):
+  `C:\excmp-bench\b13\b13_app.py C:\excmp-bench\b13\music <out> quiet normal`.
+- **packMP3 and packJPG** (`_RECODE_RATE`, `_RECODE_VERIFY_RATE`): B18's
+  `mp3_perfile.py`/`b18_app.py` and B19's `b19_app.py` on `jpg-cmyk2` and
+  `jpg-design`, Extreme; the phase times come from the rows' `events`.
+- **lepton** (`_LEPTON_PACK_RATE` etc.): `b19_app.py` on `jpg-phone` and
+  `jpg-web`, any profile.
 
-### 4. B6 — only with an owner-provided Oodle sample
+### 4. B20: zip-structured containers Extreme stores (owner's agenda item, new)
 
-Unchanged. It also settles **`-intense`**: B18 measured it costing
-0.08–0.85% on installers and deflate archives, and kept it on because
-without it raw zlib streams (game paks) aren't found at all. Measure both on
-real game data; a per-data-type switch may be the answer.
+Found 2026-10-16. B5's structural probe (`analyzer.probe_expandable`) knows
+`.epub/.odt/.ods/.odp` are zips with deflated members, but the planner pipes
+by a suffix list (`_PRECOMP_EXPANDABLE`) that lacks them, so a real EPUB is
+**stored at Extreme with "already compressed … ~0%"**. Reproduced with a
+synthetic high-entropy EPUB/ODT/ODS/ODP. Zip-structured files under other
+names (AAR, AAB, NuGet, APPX, VSIX, WHL, WAR, CBZ, XPI) aren't even probed.
+On the owner's drives: 31 EPUB (326 MB), 102 AAR (114 MB), 2 AAB (121 MB),
+10 NuGet (42 MB), 14 ODT/ODS (37 MB), 6 APPX (26 MB)
+(`C:\excmp-bench\b20\zipfamily.tsv`).
+**Measure first** (B18's lesson: the ceiling must be the worst file):
+`precomp -cn -intense → 7z` per file on samples of EPUB and AAR at least,
+two folders each, against storing. Then: probe any file whose head is a zip
+local header, pipe `info.expandable` files on a Precomp chain *in addition
+to* the suffix list (`.gz` relies on the list), and give the new types a
+measured ratio. Keep the encrypted-zip case in mind (B5 §4: a 263 MB
+encrypted `.zip` expands to nothing).
+
+### 5. B6, only with an owner-provided Oodle sample
+
+Unchanged. It also settles **`-intense`** (B18): measure both on real game
+data.
 
 ---
 
@@ -147,9 +183,11 @@ real game data; a per-data-type switch may be the answer.
 
 | item | what |
 |---|---|
-| **Media not yet measured** | MOV (65 files in Downloads, a corpus is there), MKV, WebM, M4A: still stored. Precomp `J = JPG` vs lepton (B2) never compared |
-| **Estimator** | per-file only: near-duplicate files made one corpus come out *under* its range (MP3 misc, Normal). Any piped duplicates do this |
-| **I11 leftovers** | zpaqfranz reports 100% at stage start (Insane's bar freezes); a store-only job's bar jumps; old calibration self-corrects in ~9 jobs |
+| **Media not yet measured** | MKV (16 files, 2.07 GB in Downloads-1), WebM, M4A (26, 356 MB): still stored. HEIC/WebP: no lossless recompressor in the toolchain |
+| **Calibration** | learns rates only since B19; learning a proper slope needs the probe readings behind each job |
+| **Estimator** | per-file only: near-duplicate files make a corpus come out *under* its range (B18) |
+| **Precomp memory** | grows with pixels, not file size (5000² CMYK: 220 MiB). 7-Zip's 3 GB still dominates Extreme's quoted peak; a very large print sheet could change that |
+| **I11 leftovers** | zpaqfranz reports 100% at stage start (Insane's bar freezes); a store-only job's bar jumped (B19's lepton pack band may fix it: check) |
 | **B13** | the owner's *Celeste* FMOD download never arrived |
 | **D6b, I5, I10** | fuzz targets; Explorer menu (**ask first**, HKCU); settings search / drag-out / jump list |
 | **B15, D4b, C, H, E3–E5** | too early / elevated session / lossy phase / installer phase / release-only |
@@ -159,37 +197,26 @@ real game data; a per-data-type switch may be the answer.
 
 ## 5. Things not to re-litigate
 
-- **Precomp keeps `-intense`** (B18): off is 0.08–0.85% smaller on
-  installers and deflate archives but finds nothing in raw zlib streams.
-  B6's game data is the only thing that reopens it.
+- **Lepton keeps every JPEG it accepts; Precomp gets only what lepton
+  refuses** (B19): piping every JPEG lost on web images and cost 4.5× the
+  time on photos.
+- **Calibration learns rates, not the factor** (B19), until a slope can be
+  fitted properly.
+- **Precomp keeps `-intense`** (B18); B6's game data is the only thing that
+  reopens it.
 - **Every MP3 goes to Precomp on Extreme/Insane**; on Fast/Normal the probe
-  decides, as for MP4 and Ogg. MOV/MKV/WebM/M4A stay stored until measured.
+  decides, as for MP4, MOV and Ogg. MKV/WebM/M4A stay stored until measured.
 - **zstd keeps `threads=-1`** by default; an explicit count is honoured and
-  capped at it.
-- **DArc is not integrated.** It reopens only if a release writes `cm` or
-  `pmm` (ppmonstr).
-- **Insane runs `-m58`, and balrogg `-9` on Insane.** balrogg effort: Fast
-  `-1`, Normal `-4`, Extreme `-5`, Insane `-9`.
+  capped.
+- **DArc is not integrated. LOLZ is not integrated. SREP stays out.**
+- **Insane runs `-m58`, and balrogg `-9` on Insane.**
 - **Default threads is one per physical core** for 7-Zip and zpaqfranz.
 - **Code is merged after suite + review + CI green on its branch**, and the
   branch is deleted. The owner doesn't want to review diffs.
-- **LOLZ is not integrated. SREP stays out.**
 - **With balrogg installed, Ogg stays on the store route and is repacked.**
-- **The repo is private and the OSI rule is retired**; the lossless guarantee
-  matters more as a result. **Never weaken verification to fit a tool in.**
+- **The repo is private and the OSI rule is retired**; the lossless
+  guarantee matters more as a result. **Never weaken verification to fit a
+  tool in.**
 - **No AI attribution in commit messages, ever.**
 - **Four top-level tabs is the ceiling.**
 - **A measured ratio ranks the profiles; it does not forecast the job.**
-
----
-
-## Suite history, 2026-10-16
-
-- 02:43, `e9e9e93`: **1 failed**, 1,548 passed, 2 skipped, 1 xfailed (corpus
-  guard clean). `test_extreme_manifest_records_chain` expects Precomp in the
-  chain for raw zlib data; with `-intense` off Precomp found nothing there.
-  A real regression, not a stale test: fixed in `3821a99` by keeping
-  `-intense` on (record §3).
-- 03:40 and later, `3821a99`: two reruns reaped for low memory; the third
-  passed, 07:52: **1,548 passed, 2 skipped, 1 xfailed** (25 min 2 s), corpus
-  guard clean. Merged as `6adf005`.

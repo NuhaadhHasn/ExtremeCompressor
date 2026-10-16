@@ -684,8 +684,12 @@ _PACK_ENCODE_RATE = {"vorbis": 0.119e6, "opus": 1.337e6}
 _PACK_EFFORT_TIME = {1: 0.042, 2: 0.074, 3: 0.087, 4: 0.113, 5: 0.27,
                      6: 0.49, 7: 0.55, 8: 0.75, 9: 1.0}
 
-# Decode speed, both formats (143.5 MB in 94 s; 26.4 MB in 18 s).
-_PACK_DECODE_RATE = 1.5e6
+# Decode speed, both formats. The CLI per file said 1.5 MB/s (143.5 MB in
+# 94 s; 26.4 MB in 18 s), but through the app D9 decodes slower: the B13
+# music corpus (170 MB, 11 Vorbis, 2 .oga, 5 Opus) at Normal took 122, 181
+# and 183 s on a quiet machine (2026-10-17; docs/benchmarks/
+# 2026-10-17-quiet-remeasure.md), median 0.94 MB/s. Extract matched (0.88).
+_PACK_DECODE_RATE = 0.94e6
 
 # The same Vorbis files took 85 s and then 290 s at -9 an hour apart, so the
 # range has to be at least that wide.
@@ -724,47 +728,54 @@ _LEPTON_RATIO = (0.62, 0.79, 1.0)
 _LEPTON_CEILING = 0.97
 
 # Time. `jpeg.pack` compresses and then decompresses every file to prove it,
-# and D9 decodes it once more. Fitted to the app's own phase times on two
-# corpora (contended, below-normal priority; B2 measured 4.4 MB/s for pack +
-# check on the old i7-3540M): phone 49.1 MB / 150 files packed in 27.0 s and
-# decoded in 14.7 s, web 20.2 MB / 292 files in 20.2 s and 15.9 s. Bytes
-# plus a per-file cost fits both. The third corpus doesn't: design work
-# packed 15.8 MB / 24 files in 11.9 s against 7.8 s predicted (+52%, inside
-# the range). These are priors from a busy machine, so they take
-# _PACK_SPREAD's range, and a quiet re-measure should replace them.
-_LEPTON_PACK_RATE = 2.3e6
-_LEPTON_PER_FILE_S = 0.04
-_LEPTON_DECODE_RATE = 5.8e6
-_LEPTON_DECODE_PER_FILE_S = 0.04
+# and D9 decodes it once more. Bytes plus a per-file cost, fitted to the
+# app's own phase times on two corpora, median of three quiet runs each
+# (2026-10-17, at Fast: lepton has no effort): phone 49.1 MB / 150 files
+# packed in 21.6 s and decoded in 13.3 s, web 20.4 MB / 299 files in 19.2 s
+# and 14.1 s. The design folder's 24 photos (15.8 MB) then predict 5.9 s
+# against 4.5-6.3 s measured. The contended priors these replace (2.3 MB/s
+# + 0.04 s pack, 5.8 + 0.04 decode) sat within 30%; runs still swing (phone
+# packed in 15.6-22.4 s the same night), so they keep _PACK_SPREAD's range.
+_LEPTON_PACK_RATE = 3.25e6
+_LEPTON_PER_FILE_S = 0.043
+_LEPTON_DECODE_RATE = 6.2e6
+_LEPTON_DECODE_PER_FILE_S = 0.036
 
 
 # -- B19: Precomp's own recoders ----------------------------------------------
 #
 # Precomp recodes two media types itself on Extreme and Insane: MP3 with
 # packMP3 (B18: every MP3 is piped) and JPEG with packJPG (B19: the ones
-# lepton refuses). Both are far slower than the generic Precomp chain the
-# model billed them at (1.41 MB/s compress, 6.5 MB/s self-test). The app's
-# own phase times at Extreme, every file restored, contended:
+# lepton refuses). Both are slower than the generic Precomp chain the model
+# billed them at (1.41 MB/s compress, 6.5 MB/s self-test). The app's own
+# phase times at Extreme, every file restored, three quiet runs on each of
+# two corpora (2026-10-17; docs/benchmarks/2026-10-17-quiet-remeasure.md):
 #
-#     packJPG  compress 0.39-0.63 MB/s over five runs, median 0.41;
-#              self-test 0.48-0.94, median 0.83
-#     packMP3  compress 0.30-0.73 over four runs, median 0.35;
-#              self-test 0.07-0.92, median 0.72
+#     packJPG  compress 0.57-1.25 MB/s, median 1.03; self-test median 1.02
+#              (design 151 MB, other CMYK 8 MB)
+#     packMP3  compress 0.31-1.41 MB/s, median 1.18; self-test median 1.49
+#              (music 34 MB, misc 80 MB)
 #
-# (A sixth JPEG run took 0.09 MB/s while this session rendered the GUI beside
-# it; the median keeps one bad hour from setting the prior, and the range is
-# what covers it.) The difference from the generic chain is added per byte on
-# top of whatever Precomp chain runs, so Insane, whose zpaqfranz dominates,
-# pays it too: B18's Insane MP3 run measured 0.06 MB/s compress, this model
-# 0.08. Contended priors: a quiet re-measure should replace them.
+# The contended priors these replace (packJPG 0.41 / 0.83, packMP3 0.35 /
+# 0.72, from the afternoon of 2026-10-16 with WSL busy) were 2.5-3.4x slow
+# on compress. The difference from the generic chain is added per byte on top
+# of whatever Precomp chain runs, so Insane pays it too.
 #
 # B20 adds the containers it routes by structure (EPUB, AAR, NuGet, APPX...):
-# expanding every member is Precomp's slow regime. End to end at Extreme,
-# compress phase 0.26 (EPUB), 0.40 (NuGet), 0.52 (AAR), 0.79 (APPX) MB/s,
-# median 0.46; self-test 0.59-1.63, median 1.5. (A 64 KB ODT job was all
-# process start-up and is left out.)
-_RECODE_RATE = {"jpeg": 0.41e6, "mp3": 0.35e6, "zip": 0.46e6}
-_RECODE_VERIFY_RATE = {"jpeg": 0.83e6, "mp3": 0.72e6, "zip": 1.5e6}
+# expanding every member is Precomp's slow regime. The two AABs (121 MB) and
+# a 36.8 MB ODT ran at 0.446 and 0.439 MB/s compress, 1.68 and 3.06 MB/s
+# self-test, so the sample-based 0.46 / 1.5 stand. The 1-6 MB samples ran
+# 0.08-0.51 MB/s on the quiet night: there a job's fixed start-up cost, which
+# the model doesn't have, outweighs the rate.
+_RECODE_RATE = {"jpeg": 1.03e6, "mp3": 1.18e6, "zip": 0.46e6}
+_RECODE_VERIFY_RATE = {"jpeg": 1.02e6, "mp3": 1.49e6, "zip": 1.5e6}
+
+# How far a recoded file's time swings, chain share included. A recoder runs
+# single-threaded, and the slowest compress phase measured is 4.0x under the
+# quiet median (packMP3 at 0.30 MB/s, B18, WSL busy). That run and B19's
+# contended rows have to stay inside the range, so recoded bytes take this
+# instead of the chain's spread.
+_RECODE_SPREAD = 4.0
 _RECODE_BASE_RATE = 1.41e6          # _CODEC_RATE["precomp+sevenzip"]
 _RECODE_BASE_VERIFY_RATE = 6.5e6    # _VERIFY_RATE["precomp+sevenzip"]
 
@@ -808,6 +819,21 @@ def recode_cost(infos: list[FileInfo], the_plan: Plan,
                                - 1 / _RECODE_BASE_VERIFY_RATE)
     return RecodeCost(bytes=total, compress_seconds=max(0.0, compress),
                       verify_seconds=max(0.0, verify))
+
+
+def recoded_seconds(recode: RecodeCost, stages: Sequence[str],
+                    rates: Rates = DEFAULT_RATES) -> tuple[float, float]:
+    """(compress, self-test) seconds the recoded files take on this chain.
+
+    `RecodeCost` holds only what the recoders add beyond the chain's rate;
+    this puts the chain's own share of those bytes back, because the recoder
+    sets the pace for all of it. At the measured rates the extra alone is a
+    fraction of the job (50 MB of CMYK: 13 s of about 98 s), so anything that
+    asks "how long do these files take" has to read this instead.
+    """
+    rate, verify_rate = rates.rate_for(stages), rates.verify_rate_for(stages)
+    return ((recode.bytes / rate if rate else 0.0) + recode.compress_seconds,
+            (recode.bytes / verify_rate if verify_rate else 0.0) + recode.verify_seconds)
 
 
 @dataclass(frozen=True)
@@ -1018,15 +1044,23 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     compress_seconds, verify_seconds = time_split(stored_bytes, piped_bytes,
                                                   stages, rates, pack=cost,
                                                   recode=recode)
-    # Includes the recode time (B19), so the chain's spread covers it too.
     codec_seconds = compress_seconds - io_seconds - cost.seconds
     spread = max(1.0, rates.spread_for(stages))
 
-    base = io_seconds + verify_seconds
+    # The recoded files' whole time, compress and self-test: their recoder
+    # sets the pace, so it swings by _RECODE_SPREAD rather than the chain's
+    # spread (2026-10-17).
+    recode_compress, recode_verify = recoded_seconds(recode, stages, rates)
+    recoded = recode_compress + recode_verify
+    codec_seconds -= recode_compress
+
+    base = io_seconds + verify_seconds - recode_verify
     return TimeEstimate(
-        low=base + codec_seconds / spread + cost.seconds / _PACK_SPREAD,
-        expected=base + codec_seconds + cost.seconds,
-        high=base + codec_seconds * spread + cost.seconds * _PACK_SPREAD,
+        low=(base + codec_seconds / spread + recoded / _RECODE_SPREAD
+             + cost.seconds / _PACK_SPREAD),
+        expected=base + codec_seconds + recoded + cost.seconds,
+        high=(base + codec_seconds * spread + recoded * _RECODE_SPREAD
+              + cost.seconds * _PACK_SPREAD),
     )
 
 

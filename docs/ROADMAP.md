@@ -1,5 +1,17 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-10-17**. **The owner's measurement agenda is done.**
+> B19 and B20 merged (`73024bb`, `763f046`); Insane on the design JPEGs
+> (42.827%, nothing over Extreme) and B20's big containers (AABs −0.001% →
+> 65.56%) recorded; the **quiet re-measure** merged (`7b698f0`): Precomp's
+> recoders had been priced 2.5–3.4× slow and balrogg's decode 1.6× fast, the
+> range has a slow-side spread for the recoders, and a small folder is no
+> longer promised "seconds" beside a table saying minutes
+> ([record](benchmarks/2026-10-17-quiet-remeasure.md)). Tests: **1,709
+> passed, 1 skipped, 3 xfailed**, corpus guard clean; CI green on the branch. **Next: B21**
+> (handoff §3), the stored formats nobody has measured: GIF, PNG by content,
+> MKV/WebM/M4A.
+>
 > Status date: **2026-10-16, night**. **B19 and B20 are merged into
 > `main`** (`73024bb`, `763f046`) after one full suite on the B20 tree:
 > **1,684 passed, 1 skipped, 1 xfailed**, corpus guard clean; both branches
@@ -575,6 +587,18 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
+- [ ] B21. **The stored formats nobody has measured** (next, per the
+      2026-10-17 handoff). Baseline first, two corpora, per file then end to
+      end, every file restored. (1) **GIF through Precomp**: `-t` lists
+      `F = GIF`, and GIFs are stored today (122 in Downloads, 33 MB; 93 in
+      Downloads-1, 7.6 MB); measure `precomp → 7z` against storing, as B19
+      did for JPEG and B20 for zips. (2) **PNG by content**: Precomp gets
+      PNGs by suffix (`_PRECOMP_MEDIA`), and 43 files named `.jpg` on the
+      owner's drives are PNGs, stored at 0% (B3 measured 38% on PNG). (3)
+      **MKV (16 files, 2.07 GB), WebM, M4A (26, 356 MB)** through B18's probe
+      rule measurement; ffprobe only if the zstd probe proves blind there.
+      Then, as B22: Insane's rate on recoded media (flips two strict xfails)
+      and a fixed per-job cost in the time model.
 - [x] Quiet re-measure. ✅ **2026-10-17** (branch `quiet-rates`) — B13's,
       B19's and B20's contended time priors, measured again with WSL and
       Docker stopped: three rounds, 37 rows, 0 mismatches. **packJPG and

@@ -7,7 +7,8 @@
 >   **CI green**.
 > - **B20** on `b20-zip-family`, **stacked on `b19-media`** (worktree
 >   `..\ExtremeCompressor-b20`): EPUB/ODT/AAR/NuGet/APPX that Extreme stored
->   are now expanded by Precomp, 1.62% → 43.68% on samples.
+>   are now expanded by Precomp, 1.62% → 43.68% on samples. Pushed, **CI
+>   green**.
 >
 > **Next session is an owner agenda**, in this order (§3 has each spec).
 > Items 1–3 are heavy: start each only when the owner says the machine
@@ -194,6 +195,7 @@ data.
 | **Estimator** | per-file only: near-duplicate files make a corpus come out *under* its range (B18) |
 | **Precomp memory** | grows with pixels, not file size (5000² CMYK: 220 MiB). 7-Zip's 3 GB still dominates Extreme's quoted peak; a very large print sheet could change that |
 | **I11 leftovers** | zpaqfranz reports 100% at stage start (Insane's bar freezes); a store-only job's bar jumped (B19's lepton pack band may fix it: check) |
+| **Leads, unmeasured** | **GIF**: Precomp's `-t` lists `F = GIF` and GIFs are stored today (122 in Downloads, 33 MB; 93 in Downloads-1, 7.6 MB): measure `precomp → 7z` against storing, as B19/B20 did. **PNG by content**: Precomp gets PNGs by suffix (`_PRECOMP_MEDIA`), and 43 files named `.jpg` on the owner's drives are PNGs, stored at 0%; B3 measured 38% on PNG. **ffprobe** (FFmpeg 9.0.2 is installed and discovered, unused): could tell ALAC from AAC in M4A or PCM/ProRes inside MOV before routing; only worth it if the zstd probe proves blind there |
 | **B13** | the owner's *Celeste* FMOD download never arrived |
 | **D6b, I5, I10** | fuzz targets; Explorer menu (**ask first**, HKCU); settings search / drag-out / jump list |
 | **B15, D4b, C, H, E3–E5** | too early / elevated session / lossy phase / installer phase / release-only |

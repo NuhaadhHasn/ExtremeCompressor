@@ -45,7 +45,7 @@ from types import MappingProxyType
 from . import jpeg, oggpack
 from .analyzer import FileInfo
 from .manifest import STORED_PREFIX
-from .planner import Plan, Profile, plan as make_plan, store_reason
+from .planner import _PRECOMP_EXPANDABLE, Plan, Profile, plan as make_plan, store_reason
 from .tools import ToolInfo
 
 # --- calibration ----------------------------------------------------------
@@ -229,6 +229,15 @@ _ZLIB_LOW, _ZLIB_EXPECTED, _ZLIB_HIGH = 0.28, 0.45, 1.0
 # where a particular file turns out to hold nothing.
 _EXPANDABLE_LOW, _EXPANDABLE_EXPECTED = 0.30, 0.55
 _OVERRIDE_LOW = 0.30
+
+# B20: expandable containers outside B5's PDF/Office types, which the planner
+# now pipes by structure rather than by name. `precomp -cn -intense` then
+# 7-Zip, file by file, 22 real files, every one restored (2026-10-16): NuGet
+# 0.36-0.60, APPX 0.49-0.71, AAR 0.47-0.70, ODT/ODS 0.60-0.67, EPUB
+# 0.67-0.89. EPUBs, mostly images, gain least. Under the Precomp ceiling
+# `expected` is the worst file (0.888, an EPUB): B5's 0.55 would have put the
+# "≤ X" under every EPUB measured. `low` is the best file.
+_ZIP_CONTAINER_RATIO = (0.36, 0.89, 1.0)
 
 # The limit of what sampling can know, found the hard way.
 #
@@ -507,6 +516,12 @@ def _piped_ratios(info: FileInfo, factor: float,
         # Piped only because the profile has Precomp - see _ZLIB_* above.
         if info.zlib_stream:
             return _ZLIB_LOW, _ZLIB_EXPECTED, _ZLIB_HIGH
+        if (has_precomp and info.expandable
+                and info.path.suffix.lower() not in _PRECOMP_EXPANDABLE):
+            # B20's containers, which look random; B5's measured types keep
+            # B5's figures below. A container whose bytes *don't* look random
+            # falls through to its own samples (review, B20).
+            return _ZIP_CONTAINER_RATIO
         if has_precomp and info.expandable:
             # Roughly half of the real PDF/Office corpus lands here: high
             # entropy, so `store_reason` would keep it, but the container
@@ -514,13 +529,6 @@ def _piped_ratios(info: FileInfo, factor: float,
             # `sample_ratio_max` (~0.90) as `expected` and predicted no gain.
             return (_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED, 1.0)
         return _OVERRIDE_LOW, info.sample_ratio_max, 1.0
-
-    if has_precomp and info.expandable:
-        # Structurally known to hold an expandable deflate layer. The probe's
-        # own reading of this file beats the entropy sample, which measured
-        # 0.88-0.91 on exactly these files while the real chain took half.
-        return (_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED,
-                min(1.0, info.sample_ratio_max * _HIGH_SLACK))
 
     # The multiplier is evaluated at *this file's* own probe reading, so a
     # file the probe calls incompressible is predicted not to shrink while a
@@ -532,6 +540,16 @@ def _piped_ratios(info: FileInfo, factor: float,
         # The probe cannot see the deflate streams Precomp will open, so the
         # optimistic end has to allow for it. See _PRECOMP_OPTIMISTIC.
         low = min(low, _PRECOMP_OPTIMISTIC)
+    if has_precomp and info.expandable:
+        # Structurally known to hold an expandable deflate layer. The probe's
+        # own reading of this file beats the entropy sample, which measured
+        # 0.88-0.91 on exactly these files while the real chain took half:
+        # so B5's figures cap the sample-based ones. This used to *replace*
+        # them, which returned expected 0.55 beside a high of probe x 1.05,
+        # an inverted range whenever the probe read under ~0.52, and put a
+        # mostly-stored text .xpi's real 0.225 under `low` (review, B20).
+        low = min(low, _EXPANDABLE_LOW)
+        expected = min(expected, _EXPANDABLE_EXPECTED)
     return low, expected, max(expected, high)
 
 
@@ -739,8 +757,14 @@ _LEPTON_DECODE_PER_FILE_S = 0.04
 # top of whatever Precomp chain runs, so Insane, whose zpaqfranz dominates,
 # pays it too: B18's Insane MP3 run measured 0.06 MB/s compress, this model
 # 0.08. Contended priors: a quiet re-measure should replace them.
-_RECODE_RATE = {"jpeg": 0.41e6, "mp3": 0.35e6}
-_RECODE_VERIFY_RATE = {"jpeg": 0.83e6, "mp3": 0.72e6}
+#
+# B20 adds the containers it routes by structure (EPUB, AAR, NuGet, APPX...):
+# expanding every member is Precomp's slow regime. End to end at Extreme,
+# compress phase 0.26 (EPUB), 0.40 (NuGet), 0.52 (AAR), 0.79 (APPX) MB/s,
+# median 0.46; self-test 0.59-1.63, median 1.5. (A 64 KB ODT job was all
+# process start-up and is left out.)
+_RECODE_RATE = {"jpeg": 0.41e6, "mp3": 0.35e6, "zip": 0.46e6}
+_RECODE_VERIFY_RATE = {"jpeg": 0.83e6, "mp3": 0.72e6, "zip": 1.5e6}
 _RECODE_BASE_RATE = 1.41e6          # _CODEC_RATE["precomp+sevenzip"]
 _RECODE_BASE_VERIFY_RATE = 6.5e6    # _VERIFY_RATE["precomp+sevenzip"]
 
@@ -759,6 +783,8 @@ def _recode_kind(info: FileInfo) -> str | None:
         return "jpeg"
     if info.path.suffix.lower() == ".mp3":
         return "mp3"
+    if info.expandable and info.path.suffix.lower() not in _PRECOMP_EXPANDABLE:
+        return "zip"        # B20's containers; B5's types keep the chain rate
     return None
 
 

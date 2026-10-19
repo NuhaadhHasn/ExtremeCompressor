@@ -1,5 +1,30 @@
 # 🚦 START HERE — handoff (written 2026-10-17, early morning)
 
+> ## ⏸ B21 PAUSED MID-PHASE (2026-10-19, 17:35) — resume here, not at §3
+>
+> The owner paused all work after Claude Code's low-memory reaper stopped
+> the MKV measurement. **Their instruction for resuming: take the
+> recommended option — restart the 6 remaining MKVs, then finish.**
+>
+> - **Branch `b21-stored-formats`, commit `a9e030e`, in the worktree
+>   `..\ExtremeCompressor-b21`** (`tools\bin` junctioned to the main
+>   checkout's; unlink it before removing the worktree). Not pushed, not
+>   merged. Items 1 (GIF) and 2 (PNG/GIF by content) are done, measured,
+>   reviewed (three reviewers + a skeptic) and fixed; record:
+>   `docs/benchmarks/2026-10-19-b21-stored-formats.md` on the branch.
+>   B21 test file: 32 passed, 1 strict xfail (Insane on GIF, for B22).
+> - **Resume:** `C:\excmp-bench\b21\b21_media.py codec mkv` (resumable;
+>   10 of 16 rows in `media\mkv.jsonl`, the 6 largest, 1.54 GB, left), run
+>   below normal from `C:\excmp-bench\b21`. WebM and M4A are done
+>   (`media\webm.jsonl`, `media\m4a.jsonl`). Then decide `.mkv`/`.webm`/`.m4a`
+>   in `_PROBE_DECIDES` (so far M4A flagged 7.37% vs not 1.79%; WebM 6.97% vs
+>   0.57% on 3 files; MKV 4.07% vs 3.00% on 10 of 16 — weak separation),
+>   fill §3 of the record, then full suite + corpus guard
+>   (`C:\excmp-bench\b19\suite_wt.py <worktree>`), push, CI green, merge
+>   `--no-ff`, delete the branch, rewrite this file.
+> - **B22 grows:** Insane on GIF ran 564.7 s against a 333 s high (no
+>   paging); Insane on PNG unmeasured. Opposite direction from JPEG/MP3.
+
 > **The owner's measurement agenda is done.** `main` is at `7b698f0` plus docs:
 > **B19 and B20 merged** after one full suite on the B20 tree; **Insane on
 > the design JPEGs** and **B20's big containers** measured and recorded;

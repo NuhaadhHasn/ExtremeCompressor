@@ -164,6 +164,12 @@ def store_reason(info: FileInfo) -> str | None:
                 "stored as-is on this profile; where Precomp is installed, "
                 "Extreme recodes it losslessly (measured 24-61% smaller), and "
                 "Insane runs the same Precomp step")
+    if image_format(info) in _PRECOMP_IMAGES:
+        # B21 (review): only seen where the file stays stored. On a chain with
+        # Precomp `plan()` pipes it, so this never shows beside Extreme.
+        return ("PNG or GIF image: stored as-is on this profile; where Precomp "
+                "is installed, Extreme recodes it losslessly (measured 7-38% "
+                "smaller)")
     if info.category in _MEDIA:
         return (
             "media file: already compressed by its codec; stored losslessly so "
@@ -191,24 +197,52 @@ def store_reason(info: FileInfo) -> str | None:
 # as `.gz`, a single deflate stream rather than a zip.
 _PRECOMP_EXPANDABLE = {".zip", ".gz", ".jar", ".apk", ".docx", ".xlsx", ".pptx", ".pdf"}
 
-#: Media formats whose high entropy is **deflate output**, not real randomness
-#: (B3). These are the one exception to the "media stays stored" rule, because
-#: expanding a deflate stream is precisely what Precomp does and it
-#: reconstructs the original bytes exactly.
+#: Images whose high entropy is a **layer Precomp undoes**, not real
+#: randomness: the one exception to the "media stays stored" rule, because
+#: Precomp expands the layer and reconstructs the original bytes exactly.
+#: Matched by content (`FileInfo.image_format`, B21), not by name.
 #:
-#: Measured on 15 real PNGs: stored 3,522,560 bytes; `precomp -> 7z`
-#: **2,152,650**, a 38.9% saving with a byte-identical restore. For comparison
-#: `oxipng` — which the roadmap originally specified — managed 31.8% and
-#: produced **zero** byte-identical files, because it rewrites the image to a
-#: smaller encoding. That is pixel-lossless, not byte-lossless, so it cannot
-#: satisfy a SHA-256 ledger and belongs in Phase C beside the AV1 re-encoder.
+#: PNG (B3) is deflate all the way down. Measured on 15 real PNGs: stored
+#: 3,522,560 bytes; `precomp -> 7z` **2,152,650**, a 38.9% saving with a
+#: byte-identical restore. For comparison `oxipng` — which the roadmap
+#: originally specified — managed 31.8% and produced **zero** byte-identical
+#: files, because it rewrites the image to a smaller encoding. That is
+#: pixel-lossless, not byte-lossless, so it cannot satisfy a SHA-256 ledger
+#: and belongs in Phase C beside the AV1 re-encoder.
+#:
+#: GIF (B21, 2026-10-19) is LZW, which Precomp recodes too (`-t` lists
+#: "F = GIF"). `precomp -cn -intense` then 7-Zip, file by file, every file
+#: restored: **25.66%** off 64 GIFs from Downloads (30.0 MB) and **6.85%**
+#: off 24 from Downloads-1 (6.0 MB), against 0% stored. Precomp couldn't
+#: re-create the LZW of 28 of the 88, and those pass through (2.1% smaller
+#: under 7-Zip). Over 1 KB, two it did recode came out *bigger*, 1.176 and
+#: 1.254 of 72 KB and 18 KB: noisy frames whose LZW beat LZMA on the raw
+#: pixels. 90 KB of 36 MB, and nothing cheap tells them apart. (Under 1 KB,
+#: per file, 7-Zip's own container outweighs the GIF; a solid archive pays
+#: that once.)
 #:
 #: Kept deliberately tiny. JPEG must NOT be here: its entropy is real, and it
 #: has its own specialist on the stored route (B2/lepton).
-_DEFLATE_MEDIA = {".png"}
+_PRECOMP_IMAGES = {"png", "gif"}
+
+#: What a name says, for a FileInfo nobody read (`image_format` is None).
+_IMAGE_SUFFIXES = {".png": "png", ".gif": "gif"}
+
+
+def image_format(info: FileInfo) -> str:
+    """``"png"``, ``"gif"`` or ``""``: what the file's first bytes said, or
+    its name when nobody read them (a hand-built FileInfo).
+
+    By content because the store route claims a JPEG by content: keyed on
+    the name, the two disagreed on 278 files on the owner's drives (B21).
+    """
+    if info.image_format is not None:
+        return info.image_format
+    return _IMAGE_SUFFIXES.get(info.path.suffix.lower(), "")
+
 
 #: Media a chain *with Precomp* pipes whatever its probe says, because Precomp
-#: itself recompresses it losslessly: PNG's deflate (B3, above), and MP3,
+#: itself recompresses it losslessly: PNG and GIF (above, by content), and MP3,
 #: which Precomp v0.4.7 recodes with its built-in packMP3 (`-t` lists
 #: "3 = MP3"). The probe cannot see packMP3's gain: it measures what zstd
 #: finds. End to end at Extreme, every file restored (B18, 2026-10-16):
@@ -218,7 +252,7 @@ _DEFLATE_MEDIA = {".png"}
 #:     MP3 misc         11.22%            8.42%            15.87%
 #:
 #: Without Precomp (Fast, Normal) an MP3 is left to the probe rule.
-_PRECOMP_MEDIA = _DEFLATE_MEDIA | {".mp3"}
+_PRECOMP_MEDIA = {".mp3"}
 
 #: Audio containers holding **uncompressed** PCM (B4).
 #:
@@ -229,7 +263,7 @@ _PRECOMP_MEDIA = _DEFLATE_MEDIA | {".mp3"}
 #: heuristic reads as incompressible. Only knowing the *format* tells you that
 #: an audio predictor will take 43% off.
 #:
-#: This is the audio twin of `_DEFLATE_MEDIA` above, and it is a separate set
+#: This is the audio twin of `_PRECOMP_IMAGES` above, and it is a separate set
 #: because the remedy is different: a PNG is routed *into* the pipeline for
 #: Precomp to expand, whereas a WAV stays on the store route and is packed
 #: there by `flacaudio`, the way B2 packs a JPEG with lepton.
@@ -274,8 +308,19 @@ _PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4", ".mov"}
 #: `.pcf` over input: EPUB 18.2x byte-weighted (9.4-96.7x per file: they carry
 #: PNGs), ODT/ODS 10.4x (6.3-16.5x). AAR, APPX and NuGet came to ~3x, inside
 #: the default.
-_INFLATION_BY_EXT = {".png": 50, ".epub": 20, ".odt": 12, ".ods": 12, ".odp": 12}
+#:
+#: B21: a PNG is one by content, like its routing. GIF came to 2.02x
+#: byte-weighted over 88 real files (2.12x over the 63 Precomp wrote a .pcf
+#: for), inside the default; one 1600x1124 single frame reached 27.5x alone.
+_INFLATION_PNG = 50
+_INFLATION_BY_EXT = {".epub": 20, ".odt": 12, ".ods": 12, ".odp": 12}
 _INFLATION_DEFAULT = 5
+
+
+def _inflation(info: FileInfo) -> int:
+    if image_format(info) == "png":
+        return _INFLATION_PNG
+    return _INFLATION_BY_EXT.get(info.path.suffix.lower(), _INFLATION_DEFAULT)
 
 
 def precomp_inflation(infos: list[FileInfo]) -> int:
@@ -288,9 +333,7 @@ def precomp_inflation(infos: list[FileInfo]) -> int:
     total = sum(i.size for i in infos)
     if not total:
         return _INFLATION_DEFAULT
-    weighted = sum(
-        i.size * _INFLATION_BY_EXT.get(i.path.suffix.lower(), _INFLATION_DEFAULT)
-        for i in infos)
+    weighted = sum(i.size * _inflation(i) for i in infos)
     return max(_INFLATION_DEFAULT, round(weighted / total))
 
 
@@ -309,11 +352,13 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
         # looks on the surface - exactly the shape of game pak files. Media
         # stays stored (its entropy is real), known non-deflate archives
         # (.rar/.7z/.zst) stay stored too.
-        # PNG is the one media format whose entropy is deflate rather than
-        # real, so it gets the override the rest of _MEDIA is denied (B3).
-        # A JPEG lepton will refuse joins it (B19): the store route would
-        # keep it raw, and Precomp's packJPG recodes it losslessly.
-        deflate_media = (info.path.suffix.lower() in _PRECOMP_MEDIA
+        # PNG and GIF are the media whose entropy is a layer Precomp undoes
+        # rather than real, so they get the override the rest of _MEDIA is
+        # denied (B3, B21), by content. A JPEG lepton will refuse joins
+        # them (B19): the store route would keep it raw, and Precomp's
+        # packJPG recodes it losslessly.
+        deflate_media = (image_format(info) in _PRECOMP_IMAGES
+                         or info.path.suffix.lower() in _PRECOMP_MEDIA
                          or info.lepton_refuses)
         if reason is not None and has_precomp and (
                 info.category not in _MEDIA or deflate_media):

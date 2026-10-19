@@ -45,7 +45,8 @@ from types import MappingProxyType
 from . import jpeg, oggpack
 from .analyzer import FileInfo
 from .manifest import STORED_PREFIX
-from .planner import _PRECOMP_EXPANDABLE, Plan, Profile, plan as make_plan, store_reason
+from .planner import (_PRECOMP_EXPANDABLE, Plan, Profile, image_format,
+                      plan as make_plan, store_reason)
 from .tools import ToolInfo
 
 # --- calibration ----------------------------------------------------------
@@ -504,6 +505,16 @@ _MP3_PRECOMP_RATIO = (0.74, 0.90, 1.0)
 #: `high` is 1.0: a file packJPG can't open passes through about as it was.
 _JPEG_PRECOMP_RATIO = (0.39, 0.76, 1.0)
 
+#: A piped GIF's `high` (B21, review). Over 1 KB, two of 88 recoded GIFs came
+#: out bigger through `precomp -> 7z`, 1.176 and 1.254 of their size (noisy
+#: frames whose LZW beat LZMA on the raw pixels), and a one-file job of the
+#: worse one went 24.5% over a `high` of 1.0 through the engine. The disk
+#: preflight books `high`. `expected` stays the probe's reading: a GIF that
+#: grows is rare enough (90 KB of 36 MB) that pricing every GIF at 1.26 would
+#: make Extreme's ceiling a lie about the folders that shrink 7-26%; a job of
+#: only such GIFs can exceed "≤ X", as an MP3 packMP3 declines can.
+_GIF_PRECOMP_HIGH = 1.26
+
 
 def _piped_ratios(info: FileInfo, factor: float,
                   has_precomp: bool) -> tuple[float, float, float]:
@@ -528,6 +539,8 @@ def _piped_ratios(info: FileInfo, factor: float,
             # probe says Precomp can open it. Before B5 this returned
             # `sample_ratio_max` (~0.90) as `expected` and predicted no gain.
             return (_EXPANDABLE_LOW, _EXPANDABLE_EXPECTED, 1.0)
+        if has_precomp and image_format(info) == "gif":
+            return _OVERRIDE_LOW, info.sample_ratio_max, _GIF_PRECOMP_HIGH
         return _OVERRIDE_LOW, info.sample_ratio_max, 1.0
 
     # The multiplier is evaluated at *this file's* own probe reading, so a
@@ -744,9 +757,9 @@ _LEPTON_DECODE_PER_FILE_S = 0.036
 
 # -- B19: Precomp's own recoders ----------------------------------------------
 #
-# Precomp recodes two media types itself on Extreme and Insane: MP3 with
-# packMP3 (B18: every MP3 is piped) and JPEG with packJPG (B19: the ones
-# lepton refuses). Both are slower than the generic Precomp chain the model
+# Precomp recodes media itself on Extreme and Insane: MP3 with packMP3 (B18:
+# every MP3 is piped) and JPEG with packJPG (B19: the ones lepton refuses),
+# and PNG and GIF below (B21). Both are slower than the generic Precomp chain the model
 # billed them at (1.41 MB/s compress, 6.5 MB/s self-test). The app's own
 # phase times at Extreme, every file restored, three quiet runs on each of
 # two corpora (2026-10-17; docs/benchmarks/2026-10-17-quiet-remeasure.md):
@@ -769,8 +782,29 @@ _LEPTON_DECODE_PER_FILE_S = 0.036
 # start-up doesn't explain it (a 64 KB ODT job takes ~2 s); the CPU log
 # shows nothing beside the slow runs, so on samples that small the rate is
 # noise.
-_RECODE_RATE = {"jpeg": 1.03e6, "mp3": 1.18e6, "zip": 0.46e6}
-_RECODE_VERIFY_RATE = {"jpeg": 1.02e6, "mp3": 1.49e6, "zip": 1.5e6}
+#
+# B21 adds PNG and GIF, which had no term at all: since B3 a PNG was billed at
+# the generic 1.41 MB/s. Precomp expands each into raw pixels (a 1.4 KB PNG
+# became a 704 KB .pcf) and 7-Zip then pays for the pixels. Three rounds at
+# Extreme on each of two corpora per format, every file restored
+# (2026-10-19; docs/benchmarks/2026-10-19-b21-stored-formats.md):
+#
+#     PNG  compress 0.187-0.218 MB/s, 0.21 over all six runs; self-test
+#          0.58-1.37, 0.76 (8.2 MB from each drive, 70 and 80 files)
+#     GIF  compress 0.275-0.334 MB/s on 30.0 MB (64 files), 0.61-0.92 on
+#          6.0 MB (24); 0.34 over all six runs; self-test 2.40
+#
+# Rates are total bytes over total seconds: the two GIF corpora ran 2x apart
+# and a median of six fell between them, under every run of the larger one.
+# Not a quiet afternoon: another session's hooks held ~30-60% of the CPU on
+# average per run (peaks 79%). The compress rates still agreed within ~20%
+# on three of the four corpora; the least contended PNG run of an earlier
+# set went 2x faster, which the low end holds. The cost follows pixels, not
+# bytes, so a folder of small, large-canvas images runs slower than this.
+_RECODE_RATE = {"jpeg": 1.03e6, "mp3": 1.18e6, "zip": 0.46e6,
+                "png": 0.21e6, "gif": 0.34e6}
+_RECODE_VERIFY_RATE = {"jpeg": 1.02e6, "mp3": 1.49e6, "zip": 1.5e6,
+                       "png": 0.76e6, "gif": 2.40e6}
 
 # How much slower than the quiet median a recoded file's time can run (the
 # high side only; see estimate_time). B18's contended packMP3 run compressed
@@ -795,6 +829,8 @@ class RecodeCost:
 def _recode_kind(info: FileInfo) -> str | None:
     if info.lepton_refuses:
         return "jpeg"
+    if (fmt := image_format(info)) in ("png", "gif"):
+        return fmt          # B21: by content, as the planner routes them
     if info.path.suffix.lower() == ".mp3":
         return "mp3"
     if info.expandable and info.path.suffix.lower() not in _PRECOMP_EXPANDABLE:

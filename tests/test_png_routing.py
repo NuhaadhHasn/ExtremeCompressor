@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 
 from excmp.analyzer import Category, FileInfo
-from excmp.planner import (_DEFLATE_MEDIA, Profile, plan, precomp_inflation)
+from excmp.planner import (_PRECOMP_IMAGES, Profile, plan, precomp_inflation)
 from excmp.tools import ToolInfo
 
 WITH_PRECOMP = {"precomp": ToolInfo("precomp", "p", ""),
@@ -97,9 +97,11 @@ def test_real_media_still_stays_stored(name):
 
 
 def test_the_deflate_exception_list_is_deliberately_tiny():
-    """Only formats whose high entropy is *deflate output*. Adding a format
-    here on a hunch is how a media file starts getting piped for nothing."""
-    assert _DEFLATE_MEDIA == {".png"}
+    """Only formats whose high entropy is a layer Precomp undoes. Adding a
+    format here on a hunch is how a media file starts getting piped for
+    nothing. GIF joined on a measurement (B21: 25.66% and 6.85% on two real
+    corpora, every file restored; tests/test_b21_stored_formats.py)."""
+    assert _PRECOMP_IMAGES == {"png", "gif"}
 
 
 def test_a_png_with_genuinely_low_entropy_is_piped_anyway():

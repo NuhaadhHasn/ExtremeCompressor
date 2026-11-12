@@ -278,10 +278,10 @@ _UNCOMPRESSED_AUDIO = {".wav", ".aiff", ".aif", ".w64", ".rf64"}
 from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers)
 
 #: Compressed media whose own probe decides whether it is piped: B13a's Ogg,
-#: plus MP3 and MP4 since B18, and MOV since B19. Measured under 7-Zip,
-#: every file restored, the files the probe flagged against the ones it did
-#: not (group totals; per file the groups overlap, 0.17% flagged to 5.81%
-#: not):
+#: plus MP3 and MP4 since B18, MOV since B19, and MKV, WebM and M4A since
+#: B21. Measured under 7-Zip, every file restored, the files the probe
+#: flagged against the ones it did not (group totals; per file the groups
+#: overlap, 0.17% flagged to 5.81% not):
 #:
 #:     MP3, music (5)              4.17% saved    0.35%
 #:     MP3, misc (16)              5.24%          0.45%
@@ -289,13 +289,19 @@ from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers
 #:     downloaded video, MP4 (9)   3.77%          0.32%
 #:     Takeout MOV (64)            1.01%          0.046%   (B19)
 #:     Downloads-1 MOV (2)         none flagged   0.015%   (B19)
+#:     MKV, course videos etc (16) 3.68%          2.23%    (B21)
+#:     M4A, course audio etc (25)  7.37%          1.79%    (B21)
+#:     WebM (3)                    6.97%          0.57%    (B21)
 #:
+#: MKV separates weakly: every one shrank 0.4-28%, and the four the probe
+#: passes over still gave 2.23%. But the probe routes 81% of the MKV bytes
+#: and 88% of what 7-Zip can take, the same trade as MP4's 1.61%.
 #: An MP3 on a chain with Precomp is piped regardless (`_PRECOMP_MEDIA`).
-#: Every other container (MKV, WebM, M4A...) keeps "stored as-is" until it
-#: is measured too: sharing a codec with MP4 is not the same as having been
-#: looked at. With balrogg installed an Ogg file never reaches this rule
-#: (`store_reason` packs it first).
-_PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4", ".mov"}
+#: Every other container (AVI, WMV, FLV, AAC...) keeps "stored as-is" until
+#: it is measured too: sharing a codec with MP4 is not the same as having
+#: been looked at. With balrogg installed an Ogg file never reaches this
+#: rule (`store_reason` packs it first).
+_PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4", ".mov", ".mkv", ".webm", ".m4a"}
 
 #: How far Precomp inflates its output mid-pipeline, per data type. The
 #: generic figure is 5x (research/10 C-3), but **PNG measured ~50x** — 15 PNGs

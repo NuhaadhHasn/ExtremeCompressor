@@ -68,15 +68,16 @@ def test_an_mp3_or_mp4_the_probe_cannot_shrink_stays_stored(name, category):
 
 
 @pytest.mark.parametrize("name, category", [
-    ("movie.mkv", Category.VIDEO),
-    ("movie.webm", Category.VIDEO),
-    ("tune.m4a", Category.AUDIO),
+    ("movie.avi", Category.VIDEO),
+    ("movie.wmv", Category.VIDEO),
+    ("tune.aac", Category.AUDIO),
     ("photo.jpg", Category.IMAGE),
 ])
 def test_unmeasured_media_keeps_the_old_rule(name, category):
     """Measured means measured: a container that shares a codec with MP4
-    (M4A) is still a different set of files nobody has looked at. (MOV was
-    measured in B19 and joined the rule: tests/test_b19_media.py.)"""
+    (AAC) is still a different set of files nobody has looked at. (MOV was
+    measured in B19 and joined the rule: tests/test_b19_media.py; MKV, WebM
+    and M4A in B21: tests/test_b21_stored_formats.py.)"""
     assert store_reason(_media(name, category, 0.95)) is not None
 
 

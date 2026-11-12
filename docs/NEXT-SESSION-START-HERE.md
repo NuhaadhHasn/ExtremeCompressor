@@ -1,49 +1,21 @@
-# 🚦 START HERE — handoff (written 2026-10-17, early morning)
+# 🚦 START HERE — handoff (written 2026-11-12)
 
-> ## ⏸ B21 PAUSED MID-PHASE (2026-10-19, 17:35) — resume here, not at §3
+> **B21 is merged** (`9ac2d4e`): GIFs go through Precomp on Extreme and
+> Insane, PNG and GIF are recognised by their first bytes, and PNG/GIF have
+> time rates of their own. Tests: **1,741 passed, 1 skipped, 4 xfailed**
+> locally (12 min 46 s), corpus guard clean; CI green on the branch.
 >
-> The owner paused all work after Claude Code's low-memory reaper stopped
-> the MKV measurement. **Their instruction for resuming: take the
-> recommended option — restart the 6 remaining MKVs, then finish.**
->
-> - **Branch `b21-stored-formats`, commit `a9e030e`, in the worktree
->   `..\ExtremeCompressor-b21`** (`tools\bin` junctioned to the main
->   checkout's; unlink it before removing the worktree). Not pushed, not
->   merged. Items 1 (GIF) and 2 (PNG/GIF by content) are done, measured,
->   reviewed (three reviewers + a skeptic) and fixed; record:
->   `docs/benchmarks/2026-10-19-b21-stored-formats.md` on the branch.
->   B21 test file: 32 passed, 1 strict xfail (Insane on GIF, for B22).
-> - **Resume:** `C:\excmp-bench\b21\b21_media.py codec mkv` (resumable;
->   10 of 16 rows in `media\mkv.jsonl`, the 6 largest, 1.54 GB, left), run
->   below normal from `C:\excmp-bench\b21`. WebM and M4A are done
->   (`media\webm.jsonl`, `media\m4a.jsonl`). Then decide `.mkv`/`.webm`/`.m4a`
->   in `_PROBE_DECIDES` (so far M4A flagged 7.37% vs not 1.79%; WebM 6.97% vs
->   0.57% on 3 files; MKV 4.07% vs 3.00% on 10 of 16 — weak separation),
->   fill §3 of the record, then full suite + corpus guard
->   (`C:\excmp-bench\b19\suite_wt.py <worktree>`), push, CI green, merge
->   `--no-ff`, delete the branch, rewrite this file.
-> - **B22 grows:** Insane on GIF ran 564.7 s against a 333 s high (no
->   paging); Insane on PNG unmeasured. Opposite direction from JPEG/MP3.
-
-> **The owner's measurement agenda is done.** `main` is at `7b698f0` plus docs:
-> **B19 and B20 merged** after one full suite on the B20 tree; **Insane on
-> the design JPEGs** and **B20's big containers** measured and recorded;
-> and the **quiet-machine re-measure** done and merged (`quiet-rates`): the
-> contended time priors replaced from medians of three, the range given a
-> slow-side spread for Precomp's recoders, and a suggestion defect fixed on
-> the way. Tests: **1,709 passed, 1 skipped, 3 xfailed** locally, corpus guard clean; CI green on the branch (`c7835a7`).
->
-> **Only B6 is left of the old agenda, and it waits on the owner's Oodle
-> sample.** So the next session starts **B21** (§3): the formats still
-> stored that nobody has measured, baseline first.
+> **Next: B21b** (§3). Item 3 of B21, MKV/WebM/M4A under B18's probe rule,
+> is written and measured on its own branch, and **the owner held it back
+> on 2026-11-12** until the disk preflight stops refusing video folders.
 >
 > **The owner runs other sessions and Docker Desktop on this machine, and
-> Docker and WSL must stay running.** (They were stopped on the night of
-> 2026-10-16, by the owner, which is what made the re-measure quiet. Never
-> stop them yourself.) One heavy process at a time, below-normal priority,
-> rows logged as they land, the full suite last. **Claude Code's low-memory
-> reaper stopped a run that night with 4.1 GB free 30 s earlier**; when it
-> fires, report it and ask before restarting.
+> Docker and WSL must stay running.** Never stop them yourself. One heavy
+> process at a time, below-normal priority, rows logged as they land, the
+> full suite last. **Claude Code's low-memory reaper stopped two of B21's
+> runs**; when it fires, report it and ask before restarting. **Drive C: had
+> 6.4-8.7 GB free** on 2026-11-12 (888 of 894 GB used): enough for the
+> suite, but it is what makes B21b's preflight finding bite.
 >
 > **Target machine:** Dell Inspiron 15-3567, i5-7200U (2 cores / 4 threads),
 > 15.9 GB. Run `Get-CimInstance Win32_Processor` before quoting a speed.
@@ -55,105 +27,112 @@
 - The full suite with the corpus guard: `C:\excmp-bench\b17\suite.py` from
   a checkout with its own `.venv`; on a worktree,
   `C:\excmp-bench\b19\suite_wt.py <tree>` (it needs `tools\bin` junctioned).
-  Clear `%TEMP%\pytest-of-<you>` first, and freeze the tree while it runs.
+  pytest rotates its own temp (`%TEMP%\pytest-of-<you>`, three runs kept);
+  freeze the tree while it runs.
 - **`C:\excmp-bench\contention.ps1`** logs, every 15 s, the bench's CPU
-  share against everything else's, the free RAM and the bench's largest
-  working set. Run it beside any timing you mean to pin. Defender's process
-  is protected and doesn't appear in it.
-- A detached worktree `..\ExtremeCompressor-pre-b19` at `2d8b235` (the
-  `main` B19 started from) was used for incumbent rows and removed after the merge (junction unlinked first). No worktrees are left.
+  share against everything else's. Run it beside any timing you mean to pin.
+  **"bash" in it is usually another Claude session's `remember` plugin
+  hooks** (`post-tool-hook.sh`, up to ~60 s of CPU each): walk
+  `ParentProcessId` before blaming anything, and make no tool calls of your
+  own while a timing runs.
+- **Worktree `..\ExtremeCompressor-b21`** is checked out on
+  `b21b-media-probe` (`01296b1`, local only, based on B21's pre-merge
+  `a9e030e`: merge `main` into it first). Its `tools\bin` is a junction to
+  the main checkout's: **unlink it before removing the worktree**.
 
 ---
 
-## 1. What shipped (2026-10-16 night – 10-17)
+## 1. What shipped (2026-10-19 – 11-12)
 
 | item | result | record |
 |---|---|---|
-| **B19 + B20 merged** | one suite on the B20 tree: 1,684 passed, 1 skipped, 1 xfailed, corpus guard clean | `73024bb`, `763f046` |
-| **Insane, design JPEGs** | **42.827%** against Extreme's 42.829%: Insane gains nothing on packJPG output; the incumbent stores them (3.48%) | B19 record, "Insane, measured that night" |
-| **B20, big containers** | two AABs (121 MB) **−0.001% → 65.56%**, the 36.8 MB ODT **→ 24.55%**; all restored. Per file 0.668/0.672/0.754, under the 0.89 ceiling | B20 record §8 |
-| **Quiet re-measure** | 37 rows, 0 mismatches. **packJPG/packMP3 had been 2.5–3.4× slow** (now 1.03/1.18 MB/s compress, 1.02/1.49 self-test); lepton 3.25 MB/s + 0.043 s/file pack, 6.2 + 0.036 decode; **balrogg's decode had been 1.6× fast** (1.5 → 0.94 MB/s); the container rate (0.46) stands | `docs/benchmarks/2026-10-17-quiet-remeasure.md` |
-| **The range** | the recoders' paced time widens the **high** side by `_RECODE_SPREAD = 4.0`; the low side stays the chain's; quiet rows outside their range 12 → 4 of 35, contended rows unchanged (2 of 13) | same |
-| **Suggestion defect** | "the full chain costs seconds" was told to CMYK-, MP3- and Ogg-heavy small folders beside a table saying minutes; it reads the whole job's expected time now | same, §3 |
+| **GIF through Precomp** | stored → piped on chains with Precomp. Extreme **25.78%** (64 GIFs, 30.0 MB) and **6.98%** (24, 6.0 MB) against −0.04/−0.08% stored; Insane 11.29%. Every file restored | `docs/benchmarks/2026-10-19-b21-stored-formats.md` §1 |
+| **PNG/GIF by content** | `FileInfo.image_format` from the full signature; planner and temp budget read it. **249 JPEGs named `.png`** now reach lepton: 26.57% → **28.12%**, ~5× faster; **8 PNGs named `.jpg`** −0.10% → **6.78%** | §2 |
+| **PNG/GIF time** | they had no term since B3 (billed at 1.41 MB/s). Recode kinds now: **PNG 0.21 / 0.76 MB/s, GIF 0.34 / 2.40** (compress / self-test, byte-weighted over three rounds per corpus); all 12 rows of the pinned set inside the range | §4 |
+| **Review fixes** | a stored PNG/GIF says Extreme shrinks it; Normal no longer calls a GIF/PNG folder "already compressed, ~0%"; the ≥8 GiB card no longer promises Normal "most of the win"; a piped GIF's `high` is 1.26 (two noisy GIFs came out 1.176 and 1.254) | test file "review fixes" |
+| **MKV/WebM/M4A measured** | probe-flagged against not, 7-Zip, every file restored: MKV 3.68 / 2.23%, M4A 7.37 / 1.79%, WebM 6.97 / 0.57% — **rule on `b21b-media-probe`, not merged** | §3 |
 
-Tests added: `tests/test_quiet_rates.py` (27: 25 pass, 2 strict xfails).
+Tests added: `tests/test_b21_stored_formats.py` (33: 32 pass, 1 strict xfail).
 
 ---
 
 ## 2. Findings worth not rediscovering
 
-### Contended priors are wrong by a factor, not a margin
+### The names lied in both directions
 
-The B19 afternoon (WSL's `vmmem` near 50% of the CPU) put Precomp's recoders
-at a third of their quiet speed, and balrogg's decode the other way (the CLI
-per-file rate was faster than the app's D9). **Pin from quiet medians, and
-let the range's high side carry contention.** Spreading both ways emptied
-the low end (design: 71.5 s low, fastest run 279 s).
+B19 recorded 43 PNGs named `.jpg`; a re-scan of the same drives (and of
+B19's own listing) finds **10**. The bigger set was the other way round:
+**268 JPEGs named `.png`**, which the suffix sent to packJPG. Route and
+price by content; scan both directions before quoting either.
 
-### An "extra over the chain" is not "how long these files take"
+### When two corpora disagree, weight by bytes
 
-`RecodeCost` holds what the recoders add beyond the chain's rate. At the
-contended priors the extra happened to be most of the time, so a sentence
-reading it was right by accident; at the measured rates it's 13 s of 98.
-`estimate.recoded_seconds` gives the whole paced time. Anything that says
-"seconds" or "minutes" reads a whole-job estimate.
+GIF ran 0.28–0.33 MB/s on one corpus and 0.61–0.92 on the other. The median
+of six (0.47) fell between them and under every run of the bigger corpus;
+total bytes over total seconds (0.34) is the rate that sums over a mixed
+folder. A reviewer recomputing from the raw rows caught it.
 
-### Insane on recoded media is estimated 2–3× high
+### Precomp's cost follows pixels, not bytes
 
-`precomp+zpaqfranz` is billed at Silesia's 0.091 MB/s; on packJPG/packMP3
-output the pipeline ran at 0.26 and 0.19 MB/s (one quiet run each), so quiet
-runs finish under the low end. Strict xfails in `tests/test_quiet_rates.py`.
-And Insane bought nothing over Extreme on the design JPEGs.
+A 1.4 KB PNG became a 704 KB `.pcf`. Small, large-canvas images run ~1.4×
+the per-byte estimate on a quiet machine; the slow side holds it.
 
-### Phase-true constants can make a whole job look worse
+### Insane on pixel-expanding media is estimated low
 
-Lepton's re-fit matches its pack and D9 phases exactly, and photo folders
-now come out 15–19% under as a whole: 6–10 s per job sits outside the
-phases the model knows. The fix is a per-job cost, not a fudged rate.
+Insane on 6 MB of GIFs ran **564.7 s against a 333 s high**, no paging.
+That's the opposite direction from packJPG/packMP3 output (2–3× high), and
+not explained by expansion (that corpus's `.pcf` was 1.14×). Strict xfail
+`test_insane_on_gifs_holds_the_one_measured_run`.
 
-### Solid archives beat the per-file estimate on near-duplicates
+### Piping more media raises the disk floor
 
-Two React Native AABs: 0.67 each per file, 0.344 together, under the range's
-low end. The estimator is per file (known gap); an under-estimate is the
-safe direction.
+The preflight's floor is `piped × 2 + total + out`. Piping 1.67 GB of MKV
+takes the owner's video folder from 3.85 to 6.97 GiB, so with 4–7 GB free
+a job that used to store is refused outright. MP4/MOV since B18 too. This
+is why B21b waits.
 
 ### Still true
 
+- **Contended priors are wrong by a factor**; pin quiet medians and let the
+  range's high side carry contention.
+- **`recoded_seconds`, not `RecodeCost`, answers "how long do these files
+  take".**
 - **The venv's `python.exe` is a launcher**; untyped ctypes
-  `SetPriorityClass` silently fails; write test files with the Edit/Write
-  tool and `unix2dos` them (the repo's files are CRLF).
-- **Measure the incumbent that fills the slot**, **two corpora**, **never pin
-  a contended timing**, **render the GUI**, **CI's runner is not the
-  target**, **check a test asserts the outcome, not the mechanism** (B19's
-  edited bar test had stopped being able to fail; the review caught it).
+  `SetPriorityClass` silently fails; write files with Edit/Write and
+  `unix2dos` them (the repo is CRLF).
+- **Measure the incumbent that fills the slot**, **two corpora**, **render
+  the GUI**, **CI's runner is not the target**, **check a test asserts the
+  outcome**, and **a `grep -c` that finds nothing exits 1** and stops an
+  `&&` chain (B21 lost a push to it).
 
 ---
 
-## 3. Next: B21, the stored formats nobody has measured
+## 3. Next: B21b, MKV/WebM/M4A with a disk fallback
 
-Spec: `docs/ROADMAP.md`, B21. **Measure the baseline first**
-(memory: three of four proposed tools lost to the route already there), two
-corpora, per file then end to end, every file restored and SHA-256 compared.
-In this order:
+Spec: `docs/ROADMAP.md`, B21b; data in the B21 record §3. The rule is
+done (`01296b1`: `.mkv/.webm/.m4a` in `_PROBE_DECIDES`, tests, two older
+tests moved to AVI/WMV/AAC). Before it merges:
 
-1. **GIF through Precomp.** Precomp's `-t` lists `F = GIF`; GIFs are stored
-   today (122 in Downloads, 33 MB; 93 in Downloads-1, 7.6 MB). Measure
-   `precomp → 7z` per file against storing, as B19 did for JPEG and B20 for
-   zips (`C:\excmp-bench\b20\zip_perfile.py` is the pattern).
-2. **PNG by content.** Precomp gets PNGs by suffix (`_PRECOMP_MEDIA`); 43
-   files named `.jpg` on the owner's drives are PNGs and are stored at 0%.
-   B3 measured 38% on PNG. Route by the first bytes, as the store route does
-   for JPEG (`FileInfo.is_jpeg`).
-3. **MKV (16 files, 2.07 GB in Downloads-1), WebM, M4A (26, 356 MB)**: the
-   B18/B19 probe rule's measurement (`C:\excmp-bench\b19\setup_mov.py` and
-   B18's `b18_media.py` are the pattern). ffprobe (installed, unused) only if
-   the zstd probe turns out blind there.
+1. **Store instead of refuse.** In the engine's compress preflight
+   (`engine._check_compress_space` / `compress_space_needs`), when the plan
+   doesn't fit but the same files with the probe-decided media stored
+   would, store them and say so in the result, rather than refuse a job
+   for 2–4%. TDD: the reviewer's repro is the owner's 16 MKVs as
+   `FileInfo`s against a free-space figure between the two floors. It
+   protects MP4/MOV too. Lossless either way; keep the SHA-256 gate as is.
+2. **The recommendation.** A folder that is mostly probe-piped video gets
+   Extreme ("lots of compressible data") while the table flags Extreme as
+   no better than Normal (`recommend_profile` reads
+   `floor_pipeline_fraction`; `recommend_with_estimates` keeps an
+   `upper_bound` row). True of MP4 since B18.
+3. **Optional:** keep pass-through video out of Extreme's calibration (one
+   run learned 3.1 MB/s against the 1.41 prior).
 
-Then, as B22 if B21 is done: **Insane's rate on recoded media** (three quiet
-runs each on JPEG and MP3 output, which flips the xfails) and **a fixed
-per-job cost** in the time model.
+Then: e2e on `C:\excmp-bench\b21\{mkv,webm,m4a}` (hard links;
+`run_media_e2e.cmd`), the full suite, review, push, CI, merge.
 
-Downloads aren't needed for any of it. Ask once per batch if they become so.
+Then **B22**: Insane on recoded media (JPEG, MP3, GIF, PNG; three quiet
+runs each) and a fixed per-job cost.
 
 ---
 
@@ -161,12 +140,14 @@ Downloads aren't needed for any of it. Ask once per batch if they become so.
 
 | item | what |
 |---|---|
-| **Estimator** | per-file only (near-duplicates come out under the range: the AABs); no fixed per-job cost (photo folders 15–19% under, 64 KB jobs, two 6 MB container runs 3–4× slow for no visible reason); Insane on recoded media 2–3× high; calibration: the recode extras sit on a fixed 1.41 MB/s base and `summarize` reads default rates where the table reads calibrated ones (latent until a Precomp rate is learned) |
+| **Estimator** | per-file only (near-duplicates come out under the range); no fixed per-job cost (store-only GIF jobs 17–20 s against 0.1–0.6 s; photo folders 15–19% under); Insane on recoded media (above); a piped file under 3 MiB is one probe sample, so `low` = `expected` (M4A came in 12.7 KB under); the store-only overhead estimate misses by a few bytes both ways (16 B low on 25 M4As) |
 | **Calibration** | learns rates only since B19; learning a proper slope needs the probe readings behind each job |
 | **B5's 0.55** | a mean plus margin, not a worst file; re-check file by file under B18's rule |
-| **Precomp memory** | grows with pixels, not file size (5000² CMYK: 220 MiB; a design job's Precomp reached 791 MB working set on the quiet night) |
-| **I11 leftovers** | zpaqfranz reports 100% at stage start (Insane's bar freezes); a store-only job's bar jumped (check whether B19's lepton pack band fixed it) |
-| **Media** | HEIC/WebP: no lossless recompressor in the toolchain |
+| **Precomp memory** | grows with pixels, not file size (5000² CMYK: 220 MiB; a design job's Precomp reached 791 MB) |
+| **GUI** | with one category, the Details treemap is a single huge block (seen rendering B21; not fixed) |
+| **Tests** | `tests/test_edge_cases.py:1` raises a `SyntaxWarning` (unescaped `\.` in its docstring) |
+| **I11 leftovers** | zpaqfranz reports 100% at stage start (Insane's bar freezes); a store-only job's bar jumped |
+| **Media** | HEIC/WebP: no lossless recompressor; AVI/WMV/FLV/AAC unmeasured |
 | **B13** | the owner's *Celeste* FMOD download never arrived |
 | **B6** | only with an owner-provided Oodle sample; it also settles `-intense` |
 | **D6b, I5, I10** | fuzz targets; Explorer menu (**ask first**, HKCU); settings search / drag-out / jump list |
@@ -177,22 +158,26 @@ Downloads aren't needed for any of it. Ask once per batch if they become so.
 
 ## 5. Things not to re-litigate
 
+- **PNG and GIF are routed and priced by content** (`image_format`, B21);
+  a hand-built `FileInfo` (`None`) is taken at its name.
+- **GIF goes to Precomp on Extreme/Insane**, stored on Fast/Normal. Its
+  `high` is 1.26; its `expected` stays the probe's reading.
+- **Recode rates are byte-weighted when corpora disagree** (B21).
+- **MKV/WebM/M4A join the probe rule** (measured, decided) **once the disk
+  fallback lands** (owner, 2026-11-12). ffprobe isn't needed.
 - **Time priors are quiet medians; contention goes in the range's high
   side** (2026-10-17). The low end is the chain's.
-- **Lepton's constants are phase-true** even though whole photo jobs come
-  out under; the gap is a missing per-job cost.
-- **The container rate stays 0.46 MB/s**: the big containers confirmed it,
-  the small samples are noise.
+- **Lepton's constants are phase-true**; the gap is a missing per-job cost.
+- **The container rate stays 0.46 MB/s.**
 - **"Seconds"/"minutes" in a suggestion reads the whole job's estimate.**
 - **Lepton keeps every JPEG it accepts; Precomp gets only what lepton
-  refuses** (B19).
+  refuses** (B19), by content.
 - **Calibration learns rates, not the factor** (B19).
-- **Containers are piped by structure, not name** (B20); the suffix list
-  stays for what the probe can't see (`.gz`).
+- **Containers are piped by structure, not name** (B20).
 - **Precomp keeps `-intense`** (B18); B6's game data is the only thing that
   reopens it.
 - **Every MP3 goes to Precomp on Extreme/Insane**; on Fast/Normal the probe
-  decides, as for MP4, MOV and Ogg. MKV/WebM/M4A stay stored until measured.
+  decides, as for MP4, MOV and Ogg.
 - **zstd keeps `threads=-1`** by default; an explicit count is honoured and
   capped.
 - **DArc is not integrated. LOLZ is not integrated. SREP stays out.**

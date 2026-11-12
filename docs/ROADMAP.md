@@ -1,5 +1,13 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-11-12**. **B21 merged**: GIFs go through Precomp on
+> Extreme/Insane (25.78% and 6.98% where they were stored), PNG and GIF are
+> recognised by their first bytes (268 JPEGs named `.png` reach lepton now),
+> and PNG/GIF have their own time rates, which they never had. Tests:
+> **1,741 passed, 1 skipped, 4 xfailed**, corpus guard clean; CI green on
+> the branch. **Next: B21b**, the MKV/WebM/M4A probe rule, measured and
+> waiting on a disk-preflight fallback; then B22.
+>
 > Status date: **2026-10-17**. **The owner's measurement agenda is done.**
 > B19 and B20 merged (`73024bb`, `763f046`); Insane on the design JPEGs
 > (42.827%, nothing over Extreme) and B20's big containers (AABs −0.001% →
@@ -587,18 +595,49 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
-- [ ] B21. **The stored formats nobody has measured** (next, per the
-      2026-10-17 handoff). Baseline first, two corpora, per file then end to
-      end, every file restored. (1) **GIF through Precomp**: `-t` lists
-      `F = GIF`, and GIFs are stored today (122 in Downloads, 33 MB; 93 in
-      Downloads-1, 7.6 MB); measure `precomp → 7z` against storing, as B19
-      did for JPEG and B20 for zips. (2) **PNG by content**: Precomp gets
-      PNGs by suffix (`_PRECOMP_MEDIA`), and 43 files named `.jpg` on the
-      owner's drives are PNGs, stored at 0% (B3 measured 38% on PNG). (3)
-      **MKV (16 files, 2.07 GB), WebM, M4A (26, 356 MB)** through B18's probe
-      rule measurement; ffprobe only if the zstd probe proves blind there.
-      Then, as B22: Insane's rate on recoded media (flips two strict xfails)
-      and a fixed per-job cost in the time model.
+- [ ] B21b. **MKV, WebM and M4A join the probe rule, with a disk fallback**
+      (next). The rule is written and measured on branch
+      `b21b-media-probe` (`01296b1`, local, in the `..\ExtremeCompressor-b21`
+      worktree): probe-flagged against not, under 7-Zip, every file
+      restored, **MKV 3.68% / 2.23%** (16 files, 2.07 GB), **M4A 7.37% /
+      1.79%** (25, 356 MB), **WebM 6.97% / 0.57%** (3); end to end MKV
+      sample 4.53%, WebM 1.67%, M4A 0.02%. **Held back by the owner on
+      2026-11-12** because review found the disk preflight then refuses the
+      owner's 2 GB MKV folder at every profile when C: has ~4-7 GB free
+      (floor `piped × 2 + total + out`: 3.85 → 6.97 GiB); MP4/MOV have done
+      the same since B18. To merge: (1) when only the store-only floor fits,
+      store the probe-piped media and say so instead of refusing; (2) the
+      recommendation stops picking Extreme for a video folder the table
+      flags as no better than Normal; (3) consider keeping pass-through
+      video out of Extreme's calibration (one run: 3.1 MB/s against 1.41).
+      Record: [benchmarks/2026-10-19](benchmarks/2026-10-19-b21-stored-formats.md) §3.
+- [ ] B22. **Insane's rate on recoded media, and a per-job cost.** Insane on
+      packJPG/packMP3 output is estimated 2-3× **high** (two strict xfails);
+      **Insane on GIF ran 564.7 s against a 333 s high** (one run, no
+      paging; strict xfail), the other way, and Insane on PNG (~50× Precomp
+      expansion) is unmeasured. Store-only and small jobs carry 10-50 s the
+      model doesn't have (B21: stored GIF folders 17-20 s against 0.1-0.6 s).
+- [x] B21. ✅ **MERGED 2026-11-12** (`9ac2d4e`; full suite on the branch: **1,741
+      passed, 1 skipped, 4 xfailed**, corpus guard clean; CI green on the
+      branch) — **GIF through Precomp, PNG and GIF by content.** (1) GIFs
+      were stored; on a chain with Precomp they are piped now: Extreme
+      **25.78%** and **6.98%** on two corpora (64 and 24 GIFs) against
+      −0.04%/−0.08% stored, Insane 11.29%. Precomp couldn't re-create the
+      LZW of 28 of 88 (they pass through); two recoded GIFs over 1 KB came
+      out bigger (1.176, 1.254), so a piped GIF's `high` is 1.26. (2)
+      `FileInfo.image_format` reads PNG/GIF from the first bytes; the
+      planner and the temp budget use it. **The roadmap's "43 PNGs named
+      `.jpg`" was 10** on re-scan (B19's own listing gives 10 too), and the
+      other direction was bigger: **268 JPEGs named `.png`** went to
+      packJPG; now lepton takes them, 26.57% → 28.12% and ~5× faster. (3)
+      **PNG and GIF had no time term since B3** (billed at the generic
+      1.41 MB/s); now recode kinds at 0.21 / 0.76 and 0.34 / 2.40 MB/s,
+      byte-weighted over three rounds per corpus. Review (three reviewers and
+      a skeptic) also fixed: Normal telling a GIF/PNG folder "already
+      compressed, ~0%", the ≥8 GiB card promising Normal "most of the win"
+      on data Normal stores, and the stored PNG/GIF reason not saying where
+      they shrink. (MKV/WebM/M4A were measured too: B21b.)
+      [Record](benchmarks/2026-10-19-b21-stored-formats.md).
 - [x] Quiet re-measure. ✅ **2026-10-17** (branch `quiet-rates`) — B13's,
       B19's and B20's contended time priors, measured again with WSL and
       Docker stopped: three rounds, 37 rows, 0 mismatches. **packJPG and

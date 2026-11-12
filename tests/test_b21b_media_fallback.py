@@ -111,7 +111,10 @@ def test_the_owners_mkv_folder_is_stored_rather_than_refused(profile, tmp_path, 
         engine._check_compress_space(out, tmp, infos, plan(infos, profile, TOOLS))
     the_plan = engine._plan_that_fits(infos, profile, TOOLS, out, tmp)
     assert all(a == "store" for a in _routes(the_plan).values())
-    assert any("stored as-is" in w for w in the_plan.warnings)
+    warning = next(w for w in the_plan.warnings if "stored as-is" in w)
+    # (review E1) the floor counts piped bytes twice, so the gap is about twice
+    # the files' size: quote the gap itself.
+    assert f"Free about {(full - lean) >> 20} MiB more" in warning, warning
 
 
 def _video_tree(root: Path) -> Path:
@@ -122,6 +125,10 @@ def _video_tree(root: Path) -> Path:
     pattern = random.Random(21).randbytes(4096)
     (src / "lesson.mkv").write_bytes(b"\x1a\x45\xdf\xa3" + pattern * 400)
     (src / "notes.txt").write_text("the quick brown fox. " * 4000)
+    # A video the probe passes over: stored for its own reason, so the
+    # archive holds two different store reasons.
+    (src / "clip.mp4").write_bytes(b"\x00\x00\x00\x20ftypisom"
+                                   + random.Random(18).randbytes(102_400))
     return src
 
 
@@ -147,8 +154,12 @@ def test_a_job_that_only_fits_without_the_video_runs_and_says_so(tmp_path, monke
 
     result = engine.compress([src], out, Profile.NORMAL, StageContext(temp_dir=tmp))
 
-    routes = {Path(e.name).name: e.route for e in engine.list_archive(out).entries}
-    assert routes == {"lesson.mkv": "store", "notes.txt": "pipeline"}
+    entries = {Path(e.name).name: e for e in engine.list_archive(out).entries}
+    assert {n: e.route for n, e in entries.items()} == {
+        "lesson.mkv": "store", "notes.txt": "pipeline", "clip.mp4": "store"}
+    # (review E2) each stored file says why on its own, not a joined summary
+    assert entries["lesson.mkv"].reason.startswith("compressed video/audio: stored as-is")
+    assert entries["clip.mp4"].reason.startswith("media file")
     assert any("stored as-is" in w for w in result.warnings), result.warnings
     engine.extract(out, tmp_path / "x", StageContext(temp_dir=tmp_path / "t2"))
     for f in src.iterdir():
@@ -165,42 +176,14 @@ def test_a_job_that_cannot_fit_either_way_is_still_refused(tmp_path, monkeypatch
     infos = analyze_tree(src)
     out, tmp = tmp_path / "out.excmp", tmp_path / "t"
     tmp.mkdir()
-    _full, lean = _floors(infos, Profile.NORMAL, find_tools(), out, tmp)
+    full, lean = _floors(infos, Profile.NORMAL, find_tools(), out, tmp)
     _pretend_free(monkeypatch, lean // 2)
     with pytest.raises(RuntimeError) as excinfo:
         engine.compress([src], out, Profile.NORMAL, StageContext(temp_dir=tmp))
-    # The number it quotes is the smaller, true minimum.
-    assert f"{lean >> 20} MiB" in str(excinfo.value) or lean < (1 << 20)
+    # (review E3) The refusal is the chosen plan's own: the lean plan's floor
+    # can name a different volume with a figure the job never needed there.
+    assert f"{full >> 20} MiB" in str(excinfo.value), str(excinfo.value)
     assert not out.exists()
-
-
-# -- the recommendation -------------------------------------------------------------
-#
-# A video folder is mostly probe-piped bytes, which `recommend_profile` read as
-# "lots of compressible data" and sent to Extreme, while the table flagged
-# Extreme as no smaller than Normal: Precomp has no video codec (B18 on MP4;
-# B21's MKVs came out 4.530% at Extreme, 4.533% at Normal, 60% slower). An
-# MP3 is the exception: packMP3 takes 15-18% on Extreme.
-
-def _summary(infos):
-    from gui.suggest import strongest_profile, summarize
-    return summarize(infos, plan(infos, Profile.NORMAL, TOOLS), TOOLS,
-                     plan(infos, strongest_profile(TOOLS), TOOLS))
-
-
-def test_a_video_folder_is_not_sent_to_extreme():
-    from gui.suggest import recommend_profile
-    vids = [_media(f"v{i}.mkv", Category.VIDEO, 0.98, size=200_000_000) for i in range(10)]
-    profile, reason = recommend_profile(_summary(vids), cores=2)
-    assert profile is Profile.NORMAL
-    assert "compressible data" not in reason and "video" in reason
-
-
-def test_an_mp3_folder_still_goes_to_extreme():
-    from gui.suggest import recommend_profile
-    songs = [_media(f"s{i}.mp3", Category.AUDIO, 0.98, size=20_000_000) for i in range(10)]
-    profile, _ = recommend_profile(_summary(songs), cores=2)
-    assert profile is Profile.EXTREME
 
 
 # -- the recommendation -------------------------------------------------------------
@@ -240,6 +223,42 @@ def test_the_gain_note_does_not_oversell_video():
     note = gain_note(_summary(vids))
     assert "worth compressing" not in note
     assert "few percent" in note
+
+
+def test_a_mixed_folder_is_not_called_mostly_video():
+    """(review S1) 60 MB of MKV beside 40 MB of text was told "a few percent,
+    no more"; the text alone takes a third off."""
+    from gui.suggest import gain_note
+    infos = ([_media(f"v{i}.mkv", Category.VIDEO, 0.98, size=6_000_000) for i in range(10)]
+             + [_text(f"t{i}.txt", size=4_000_000) for i in range(10)])
+    assert "no more" not in gain_note(_summary(infos))
+
+
+NO_PRECOMP = {"7z": TOOLS["7z"], "precomp": None, "zpaqfranz": None}
+
+
+def test_without_precomp_an_mp3_is_the_probes_too():
+    """(review S2) MP3 is left out of the probe-only bytes because packMP3
+    recodes it, which needs Precomp. Without it, an MP3 folder is a few
+    percent like video."""
+    from gui.suggest import gain_note, summarize
+    songs = [_media(f"s{i}.mp3", Category.AUDIO, 0.98, size=5_000_000) for i in range(10)]
+    s = summarize(songs, plan(songs, Profile.NORMAL, NO_PRECOMP), NO_PRECOMP,
+                  plan(songs, Profile.NORMAL, NO_PRECOMP))
+    assert s.floor_probe_bytes == 50_000_000
+    assert "few percent" in gain_note(s)
+
+
+def test_video_beside_pngs_is_not_told_extreme_adds_nothing():
+    """(review S3) 71% video, 29% PNG: Normal is still the pick under the
+    30% rule, but "Extreme adds only time" is false; it would take a third
+    off the PNGs."""
+    from gui.suggest import recommend_profile
+    infos = ([_media(f"v{i}.mkv", Category.VIDEO, 0.98, size=71_000_000) for i in range(10)]
+             + [FileInfo(path=Path(f"p{i}.png"), size=29_000_000, category=Category.IMAGE,
+                         entropy_bps=7.95, image_format="png") for i in range(10)])
+    _, reason = recommend_profile(_summary(infos), cores=2)
+    assert "only time" not in reason
 
 
 def test_with_room_nothing_changes(tmp_path):

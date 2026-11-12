@@ -210,9 +210,11 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
     # packMP3). The chain gets the same few percent out of it at any profile.
     strongest_piped = {f for r in strongest_plan.routes if r.action == "pipeline"
                        for f in r.files}
+    # An MP3 is packMP3's only where the chain has Precomp (review).
+    recoded = _PRECOMP_MEDIA if "precomp" in strongest_stages else set()
     floor_probe_bytes = sum(
         i.size for i in infos if i.path in strongest_piped and _probe_pipes(i)
-        and i.path.suffix.lower() not in _PRECOMP_MEDIA)
+        and i.path.suffix.lower() not in recoded)
     return AnalysisSummary(
         total_bytes=total,
         file_count=len(infos),
@@ -290,10 +292,11 @@ def gain_note(summary: AnalysisSummary) -> str:
         return (f"{fmt_size(shrinkable)} can shrink; the other "
                 f"{fmt_size(fixed)} is already compressed and gets "
                 "stored losslessly." + suffix)
-    if shrinkable and summary.floor_probe_bytes >= 0.5 * shrinkable:
+    if shrinkable and summary.floor_probe_bytes >= 0.9 * shrinkable:
         # B21b: piped because its probe flags it, which is a few percent
         # (MKV 3.7%, MP4 3.8-9.2%), not "worth compressing" beside a table
-        # that says 3%.
+        # that says 3%. Only when that is nearly all of it (review: 60 MB of
+        # MKV beside 40 MB of text was told "no more").
         return (f"Mostly compressed video/audio ({fmt_size(shrinkable)}): "
                 "recompressing it saves a few percent, no more." + suffix)
     return (f"Nearly all of this ({fmt_size(shrinkable)}) is worth compressing."
@@ -409,9 +412,11 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
         return Profile.EXTREME, (
             "Lots of compressible data and the repack tools are installed — this is "
             "exactly what the full chain is for.")
-    if probe >= 0.3:
+    if probe >= 0.3 and summary.floor_pipeline_fraction - probe < 0.05:
         # B21b: Extreme came out the same size as Normal on MKV and MP4, 60%
-        # slower; Precomp has no video codec.
+        # slower; Precomp has no video codec. Only said when there is little
+        # else for Extreme to do (review: beside 29% PNG it would take a
+        # third off those).
         return Profile.NORMAL, (
             "Mostly compressed video/audio: Normal takes the few percent 7-Zip "
             "finds in it. Extreme adds only time on video.")

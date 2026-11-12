@@ -34,7 +34,8 @@ from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
                        manifest_size_estimate, read_container, write_container)
-from .planner import Plan, Profile, plan as make_plan, precomp_inflation, store_reason
+from .planner import (_NO_ROOM, Plan, Profile, _probe_pipes, plan as make_plan,
+                      precomp_inflation, store_reason)
 from .tempclean import rmtree_force
 from .safepath import UnsafePathError, resolve_within, safe_relpath
 from .slt import classify_failure
@@ -193,14 +194,16 @@ def _plan_that_fits(infos: list[FileInfo], profile: Profile,
     that storing them had always fitted was refused outright. So when the
     plan doesn't fit, the same files with that media stored are tried; if
     they fit, the job runs and says what it stored. Lossless either way.
-    Otherwise the refusal quotes the smaller floor: the true minimum.
+    If neither fits, the refusal is the chosen plan's own (review: the lean
+    plan stores more, so on a separate output volume its floor can be the
+    larger one, and name a volume the job never needed).
     """
     the_plan = make_plan(infos, profile, tools)
     try:
         the_plan.warnings.extend(
             _check_compress_space(out_path, temp_dir, infos, the_plan))
         return the_plan
-    except RuntimeError:
+    except RuntimeError as refusal:
         lean = make_plan(infos, profile, tools, probe_media=False)
 
         def piped(p: Plan) -> set[Path]:
@@ -209,14 +212,21 @@ def _plan_that_fits(infos: list[FileInfo], profile: Profile,
         moved = piped(the_plan) - piped(lean)
         if not moved:
             raise
-    # Raises in turn if even this doesn't fit, with the smaller floor.
-    lean.warnings.extend(_check_compress_space(out_path, temp_dir, infos, lean))
+        try:
+            lean.warnings.extend(
+                _check_compress_space(out_path, temp_dir, infos, lean))
+        except RuntimeError:
+            raise refusal from None
+    # The floor counts piped bytes twice (staging plus the tar), so the gap is
+    # about twice the files' size on real video: quote the gap itself.
+    gap = sum(f for _, f, _ in compress_space_needs(out_path, temp_dir, infos, the_plan)) \
+        - sum(f for _, f, _ in compress_space_needs(out_path, temp_dir, infos, lean))
     size = sum(i.size for i in infos if i.path in moved)
     lean.warnings.insert(0, (
         f"not enough free disk space to also recompress {len(moved)} "
         f"video/audio file(s) ({size >> 20} MiB, which would have shrunk a few "
         f"percent): they were stored as-is, losslessly. Free about "
-        f"{size >> 20} MiB more to have them recompressed"))
+        f"{max(gap, 0) >> 20} MiB more to have them recompressed"))
     return lean
 
 
@@ -1050,14 +1060,19 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 + ("" if len(skipped) <= 5 else f" (and {len(skipped) - 5} more)"))
 
         payload_name = f"payload{_PAYLOAD_EXT.get(chain[-1], '.bin')}" if pipe_route else ""
+        stored_paths = {f for r in the_plan.routes if r.action == "store" for f in r.files}
         manifest = Manifest.new(
             profile=profile.value,
             stages=stage_records,
             inputs=ledger,
             payload_name=payload_name,
             warnings=the_plan.warnings,
+            # B21b (review): a file `_plan_that_fits` stored has no
+            # `store_reason` of its own; give it the plan's, not a joined one.
             store_reasons={relmap[i.path]: reason for i in infos
-                           if (reason := store_reason(i))},
+                           if (reason := store_reason(i) or (
+                               _NO_ROOM if i.path in stored_paths
+                               and _probe_pipes(i) else None))},
             # No `files` list: it repeated every relative path a second time,
             # and the ledger above already records a route per file.
             # `Manifest.new` derives the count from it (K1).

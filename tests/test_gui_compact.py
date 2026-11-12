@@ -61,6 +61,31 @@ def populated(window, qtbot, tmp_path):
 # The intake chip
 # ---------------------------------------------------------------------------
 
+def test_the_chip_shows_the_real_size_once_the_analysis_is_in(populated):
+    """B21b, found rendering: the chip read "1 item · 0 B" after a drop. It
+    takes its total from the summary, and the analysis handler set the
+    summary without refreshing the chip; only a profile change did."""
+    from gui.suggest import fmt_size
+    text = populated.drop_zone.pending_toggle.text()
+    assert fmt_size(populated._summary.total_bytes) in text, text
+    assert "· 0 B" not in text
+
+
+def test_the_chip_follows_a_second_drop(populated, qtbot, tmp_path):
+    """The chip was refreshed only as a side effect of the recommendation
+    moving the selected profile. A second drop that keeps the same
+    recommendation left the first drop's total on the chip."""
+    from gui.suggest import fmt_size
+    extra = tmp_path / "more.txt"
+    extra.write_text("and some more. " * 20_000)
+    with qtbot.waitSignal(populated.analysisFinished, timeout=60_000):
+        populated.add_paths([extra])
+    qtbot.wait(50)
+    text = populated.drop_zone.pending_toggle.text()
+    assert text.startswith("4 items"), text
+    assert fmt_size(populated._summary.total_bytes) in text, text
+
+
 def test_the_drop_zone_collapses_to_a_chip_once_files_are_in(populated, qtbot,
                                                              reference_fonts):
     """A 116px "drop files here" panel is worth its space exactly once. After

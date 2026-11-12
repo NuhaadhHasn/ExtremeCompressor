@@ -147,8 +147,7 @@ def store_reason(info: FileInfo) -> str | None:
             return ("Ogg audio: repacked with balrogg where it can be, which "
                     "restores it byte for byte (measured 4-15% smaller); a "
                     "file it declines is stored as-is")
-    if (info.path.suffix.lower() in _PROBE_DECIDES
-            and info.sample_ratio_max < 1.0):
+    if _probe_pipes(info):
         # B13, measured on 18 real music files: the Ogg files the probe
         # could shrink compressed 1.7-6.0% under 7-Zip, byte-identically, and
         # the ones it could not stayed within 1.24% (the five Opus files at
@@ -343,8 +342,23 @@ def precomp_inflation(infos: list[FileInfo]) -> int:
     return max(_INFLATION_DEFAULT, round(weighted / total))
 
 
+def _probe_pipes(info: FileInfo) -> bool:
+    """Compressed media piped only because its own probe says it shrinks
+    (`_PROBE_DECIDES`): a few percent, at the codec's full cost."""
+    return (info.path.suffix.lower() in _PROBE_DECIDES
+            and info.sample_ratio_max < 1.0)
+
+
+#: B21b: the reason a probe-flagged file is stored when the disk can't hold
+#: the extra temp space piping it would take (`engine._plan_that_fits`).
+_NO_ROOM = ("compressed video/audio: stored as-is because the disk had no "
+            "space to recompress it too (it would have shrunk a few percent)")
+
+
 def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | None],
-         shrink_media: bool = False) -> Plan:
+         shrink_media: bool = False, probe_media: bool = True) -> Plan:
+    """``probe_media=False`` stores what only the probe rule would pipe: the
+    engine's way out when the full plan doesn't fit on the disk (B21b)."""
     stages, warnings = _resolve_chain(profile, tools)
     has_precomp = "precomp" in stages
 
@@ -354,6 +368,10 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
 
     for info in infos:
         reason = store_reason(info)
+        if reason is None and not probe_media and _probe_pipes(info):
+            # B21b. An MP3 on a Precomp chain is still piped below: packMP3's
+            # 15-18% is not the probe's few percent.
+            reason = _NO_ROOM
         # precomp can expand zlib/deflate wrapped data no matter how random it
         # looks on the surface - exactly the shape of game pak files. Media
         # stays stored (its entropy is real), known non-deflate archives

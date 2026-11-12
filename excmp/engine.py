@@ -182,6 +182,44 @@ def _check_compress_space(out_path: Path, temp_dir: Path, infos: list[FileInfo],
     return warnings
 
 
+def _plan_that_fits(infos: list[FileInfo], profile: Profile,
+                    tools: dict[str, ToolInfo | None], out_path: Path,
+                    temp_dir: Path) -> Plan:
+    """The plan, checked against free disk space (J4), with one way out (B21b).
+
+    Piping the media the probe flags (MKV, MP4, MOV, M4A... `_PROBE_DECIDES`)
+    buys a few percent and doubles their bytes in temp. On the owner's laptop
+    that took a 2 GB video folder's floor from 3.85 to 6.97 GiB, and a job
+    that storing them had always fitted was refused outright. So when the
+    plan doesn't fit, the same files with that media stored are tried; if
+    they fit, the job runs and says what it stored. Lossless either way.
+    Otherwise the refusal quotes the smaller floor: the true minimum.
+    """
+    the_plan = make_plan(infos, profile, tools)
+    try:
+        the_plan.warnings.extend(
+            _check_compress_space(out_path, temp_dir, infos, the_plan))
+        return the_plan
+    except RuntimeError:
+        lean = make_plan(infos, profile, tools, probe_media=False)
+
+        def piped(p: Plan) -> set[Path]:
+            return {f for r in p.routes if r.action == "pipeline" for f in r.files}
+
+        moved = piped(the_plan) - piped(lean)
+        if not moved:
+            raise
+    # Raises in turn if even this doesn't fit, with the smaller floor.
+    lean.warnings.extend(_check_compress_space(out_path, temp_dir, infos, lean))
+    size = sum(i.size for i in infos if i.path in moved)
+    lean.warnings.insert(0, (
+        f"not enough free disk space to also recompress {len(moved)} "
+        f"video/audio file(s) ({size >> 20} MiB, which would have shrunk a few "
+        f"percent): they were stored as-is, losslessly. Free about "
+        f"{size >> 20} MiB more to have them recompressed"))
+    return lean
+
+
 def _check_manifest_size(relmap: dict[Path, str], the_plan: Plan,
                          empty_dirs: list[str] | None = None) -> list[str]:
     """K1: refuse a selection whose manifest we could not read back.
@@ -854,11 +892,10 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     infos, relmap, empty_dirs, skipped = _collect([Path(p) for p in inputs])
     if not infos:
         raise ValueError(_nothing_readable(skipped))
-    the_plan: Plan = make_plan(infos, profile, tools)
     # Before copying a single byte: will this fit? (J4 - the compression-side
-    # twin of the check extract() has done since D0.)
-    the_plan.warnings.extend(
-        _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
+    # twin of the check extract() has done since D0.) B21b: if it only fits
+    # with the probe-flagged media stored, it runs that way and says so.
+    the_plan: Plan = _plan_that_fits(infos, profile, tools, out_path, ctx.temp_dir)
     # ...and will the manifest itself be readable? (K1.)
     the_plan.warnings.extend(
         _check_manifest_size(relmap, the_plan, empty_dirs))

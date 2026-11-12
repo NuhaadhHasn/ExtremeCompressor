@@ -19,7 +19,8 @@ from pathlib import Path
 from excmp.analyzer import Category, FileInfo
 from excmp.estimate import (DEFAULT_RATES, Rates, compare_profiles, estimate_time,
                             pack_cost, packable, recode_cost, recoded_seconds)
-from excmp.planner import Plan, Profile, precomp_inflation, store_reason
+from excmp.planner import (_PRECOMP_MEDIA, Plan, Profile, _probe_pipes,
+                           precomp_inflation, store_reason)
 from excmp.planner import plan as make_plan
 from excmp.sample import MeasuredRun, Sample
 from excmp.tools import ToolInfo
@@ -65,6 +66,11 @@ class AnalysisSummary:
     # Bytes that stay stored even under the strongest chain this machine can
     # run. See summarize() for why this is tracked separately.
     floor_store_bytes: int = 0
+    #: B21b: of the bytes the strongest chain pipes, those only the probe
+    #: rule sends (video, M4A, Ogg; not MP3, which packMP3 recodes). Every
+    #: profile gets the same few percent from them, so they are not a reason
+    #: for Extreme.
+    floor_probe_bytes: int = 0
     #: B13: Ogg audio balrogg will pack, and what packing it costs. They sit
     #: inside ``store_bytes`` (the files take the store route) but they are
     #: slow, so the bar and the time estimate have to know. B19: JPEGs lepton
@@ -199,6 +205,14 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
     strongest_stages = next((r.stages for r in strongest_plan.routes
                              if r.action == "pipeline"), [])
     strongest = recoded_seconds(recode_cost(infos, strongest_plan), strongest_stages)
+    # B21b: piped under the strongest chain only because the probe flagged it,
+    # in a format Precomp has no recoder for (video, M4A, Ogg; MP3 has
+    # packMP3). The chain gets the same few percent out of it at any profile.
+    strongest_piped = {f for r in strongest_plan.routes if r.action == "pipeline"
+                       for f in r.files}
+    floor_probe_bytes = sum(
+        i.size for i in infos if i.path in strongest_piped and _probe_pipes(i)
+        and i.path.suffix.lower() not in _PRECOMP_MEDIA)
     return AnalysisSummary(
         total_bytes=total,
         file_count=len(infos),
@@ -211,6 +225,7 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         chain=expected_chain(list(pipeline_stages)),
         tools={name: info is not None for name, info in (tools or {}).items()},
         floor_store_bytes=floor_store_bytes,
+        floor_probe_bytes=floor_probe_bytes,
         pack_bytes=cost.bytes,
         pack_seconds=cost.seconds,
         pack_verify_seconds=cost.verify_seconds,
@@ -275,6 +290,12 @@ def gain_note(summary: AnalysisSummary) -> str:
         return (f"{fmt_size(shrinkable)} can shrink; the other "
                 f"{fmt_size(fixed)} is already compressed and gets "
                 "stored losslessly." + suffix)
+    if shrinkable and summary.floor_probe_bytes >= 0.5 * shrinkable:
+        # B21b: piped because its probe flags it, which is a few percent
+        # (MKV 3.7%, MP4 3.8-9.2%), not "worth compressing" beside a table
+        # that says 3%.
+        return (f"Mostly compressed video/audio ({fmt_size(shrinkable)}): "
+                "recompressing it saves a few percent, no more." + suffix)
     return (f"Nearly all of this ({fmt_size(shrinkable)}) is worth compressing."
             + suffix)
 
@@ -382,10 +403,18 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
             f"{fmt_size(summary.total_bytes)} on {cores} cores — Extreme would run for "
             "hours here. Normal finishes far sooner.")
 
-    if heavy_tools and summary.floor_pipeline_fraction >= 0.3:
+    probe = (summary.floor_probe_bytes / summary.total_bytes
+             if summary.total_bytes else 0.0)
+    if heavy_tools and summary.floor_pipeline_fraction - probe >= 0.3:
         return Profile.EXTREME, (
             "Lots of compressible data and the repack tools are installed — this is "
             "exactly what the full chain is for.")
+    if probe >= 0.3:
+        # B21b: Extreme came out the same size as Normal on MKV and MP4, 60%
+        # slower; Precomp has no video codec.
+        return Profile.NORMAL, (
+            "Mostly compressed video/audio: Normal takes the few percent 7-Zip "
+            "finds in it. Extreme adds only time on video.")
 
     return Profile.NORMAL, "A solid ratio without the long wait."
 

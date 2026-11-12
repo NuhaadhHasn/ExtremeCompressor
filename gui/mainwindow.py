@@ -744,6 +744,10 @@ class MainWindow(QMainWindow):
         self._summary = summary
         self._forget_measurements()
         self.analysis_card.set_summary(summary)
+        # B21b: the chip's total comes from the summary. It was refreshed only
+        # when the recommendation moved the selected profile, so a drop that
+        # kept the same recommendation showed the previous total (or 0 B).
+        self._refresh_pending_view()
 
         # The table's recommendation is the estimate-aware one, so take the badge
         # from there rather than calling recommend_profile() again - otherwise the

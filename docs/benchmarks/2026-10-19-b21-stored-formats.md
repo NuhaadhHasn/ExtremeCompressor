@@ -150,7 +150,86 @@ per-file run; its time is discarded.
 
 ## 3. MKV, WebM and M4A under B18's probe rule
 
-*(pending: `media\*.jsonl`)*
+Every file of the three types on both drives (`find`, then `b21_media.py
+probe`, which drops same-size duplicates by SHA-256): **MKV 16 files,
+2,066,300,589 B** and **M4A 25, 355,699,815 B**, all on `Downloads-1`;
+**WebM 3, 618,713 B** (two drives, 7 copies). The MKVs are 14 programming
+course recordings, a music video and a project video; the M4As a Django
+course (8), a PL/SQL course (14), ringtones and an Android resource.
+
+### Per file
+
+B18's method unchanged (`b18_media.codec`): `7z -mx9 -mmt2` and `zstd -19`
+per file, each restored and compared. **Every file restored.** The MKV run
+was stopped by Claude Code's low-memory reaper after 10 of 16 on
+2026-10-19 and resumed on 2026-11-12 for the other six (same files, same
+sizes).
+
+| type | probe flags it | | probe doesn't | |
+|---|---|---:|---|---:|
+| MKV | 12 files, 1,673,873,517 B | **3.68%** (1.25-27.9%) | 4, 392,427,072 B | **2.23%** (0.42-3.31%) |
+| M4A | 2, 1,059,161 B | **7.37%** (5.1-9.2%) | 23, 354,640,654 B | **1.79%** (0.62-3.47%) |
+| WebM | 1, 163,498 B | **6.97%** | 2, 455,215 B | **0.57%** |
+
+(7-Zip. zstd -19 ran 0.1-0.96 points higher on every MKV and WebM and on
+23 of the M4As; on the two flagged M4As it was 0.07 and 0.78 points lower.)
+For comparison, B18's MP4s split 9.20% / 1.61% and 3.77% / 0.32%.
+
+**MKV separates weakly**: every file shrank, and the four the probe passes
+over still gave 2.23%. But the probe routes 81% of the MKV bytes, and its
+choice takes 61.5 MB of the 70.2 MB that piping all of them would: 88%.
+That is the trade B18 made on MP4 (1.61% left on the table), so ffprobe
+wasn't needed. M4A's flagged files are the two small ones (an Android
+resource and a ringtone); the course audio's head sample compresses (mean
+probe 0.82-0.99) but its worst sample doesn't, and 7-Zip took 0.6-3.5%
+off it. WebM is too small a corpus to stand alone; it is Matroska, like
+MKV, and split the same way.
+
+**The rule is measured but not merged.** `.mkv`, `.webm` and `.m4a` join
+`planner._PROBE_DECIDES` on branch `b21b-media-probe` (`01296b1`), held
+back by the owner's decision on 2026-11-12 after review found a
+regression: piping video raises the disk preflight's floor (`piped × 2 +
+total + out`), so the owner's 16 MKVs (1.92 GiB), which store with a
+3.85 GiB floor, need 6.97 GiB and are **refused at every profile** when C:
+has 3.9-7.0 GiB free. It had 6.37 GiB when the reviewer ran it and 8.7 an
+hour later. MP4 and MOV have done the same since B18/B19. B21b merges with
+a fallback: when only the store-only floor fits, store the probe-piped
+media and say so, rather than refuse a job for 2-4%.
+
+Two more things the same review found, both true of MP4 since B18:
+**the recommendation picks Extreme for a video folder** ("lots of
+compressible data", because 81% of the bytes are piped) while the table
+flags Extreme as no better than Normal; and **Extreme's calibration
+learns from video** that Precomp passes straight through (~3.1 MB/s
+against the 1.41 prior, one run). AVI, WMV, FLV and AAC stay stored until
+measured.
+
+### End to end
+
+`main` against `b21b-media-probe`'s rule (`EXCMP_REPO`), Normal and
+Extreme, every file restored (2026-11-12). M4A and WebM whole; MKV a 201 MB sample of 7 (five
+the probe flags, 5.4-93 MB, the 27.9% outlier among them; the music video
+and one course file it doesn't), not 2 GB of 7-Zip.
+
+| corpus | profile | `main` (stored) | branch | piped |
+|---|---|---:|---:|---:|
+| WebM, 3 files, 618,713 B | Normal | −0.157% | **1.668%** | 1 file |
+| | Extreme | −0.157% | **1.643%** | |
+| M4A, 25 files, 355,699,815 B | Normal | −0.001% | **0.021%** | 2 files, 1.06 MB |
+| | Extreme | −0.001% | **0.021%** | |
+| MKV, 7 files, 201,080,274 B | Normal | −0.001% | **4.533%**, 42.5 s | 5 files, 172 MB |
+| | Extreme | −0.001% | **4.530%**, 68.0 s | |
+
+Extreme buys nothing over Normal on video (Precomp has no video codec, as
+B18 found on MP4) and costs 60% more time; the table flags that row, but
+the recommendation still picks it (above). Against the estimate (with the
+rule): MKV inside the range in size and time at both profiles, WebM inside
+in size. **Outside:** M4A at Normal came in 12.7 KB (0.004%) under the size
+range (a piped file under 3 MiB is one probe sample, so `low` equals
+`expected` and any miss is outside; true of any small flagged MP4 too), and
+the time of the small and store-heavy jobs ran far over (WebM 1.1 s against
+a 0.1-0.4 s high; M4A 36-40 s against 7.8-9.7 s, where `main` storing the
+same files took 14-24 s): the per-job fixed cost B22 is to add.
 
 ---
 
@@ -216,8 +295,9 @@ longer teaches Extreme a chain rate several times too slow.
 - **A store-only job's fixed cost.** Stored GIF folders took 17-20 s at
   Extreme (51 s at Insane) against 0.1-0.6 s estimated: the per-job cost the
   model doesn't have (B22).
-- **The store-only size estimate is 171-245 B high** on 8-64 files, 4-21 B
-  per file; the safe direction.
+- **The store-only size estimate misses by a few bytes, both ways**: 141-245
+  B high on five corpora (3-64 files), but **16-18 B low** on the 25 M4As.
+  Not always the safe direction, though it never moved a decision.
 - **Insane on GIF ran 565 s** for 6 MB against 132 s expected (high 313 s),
   with 2.6-4.5 GB free (no paging) and others at 16-75%. One run, so not a
   pin, but 1.8× over the high end is more than contention explains, and

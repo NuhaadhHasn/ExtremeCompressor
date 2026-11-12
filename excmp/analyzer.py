@@ -145,6 +145,14 @@ class FileInfo:
     #: estimate has to ask the same question: one corpus here held 43 PNGs
     #: named `.jpg`, which a suffix test would have priced as photos.
     is_jpeg: bool = False
+    #: B21: what the first bytes say this image is, for the two formats
+    #: Precomp recodes from inside: ``"png"`` or ``"gif"``, ``""`` for
+    #: anything else. The planner routes on it, as the store route claims a
+    #: JPEG by content: on 2026-10-19 the owner's drives held 10 PNGs named
+    #: `.jpg`, stored at 0%, and 268 JPEGs named `.png`, which went to
+    #: packJPG rather than lepton. ``None`` means nobody read the file (a
+    #: hand-built FileInfo), and then the name speaks for it.
+    image_format: str | None = None
     #: B19(d): UTF-8 length of the name the archive gives this file
     #: (`archive_name`), which a stored file's zip entry carries twice.
     #: ``0`` means unknown (no root was given), and the estimate then falls
@@ -269,6 +277,16 @@ def probe_expandable(path: Path, head: bytes) -> bool:
     return False
 
 
+def _image_format(head: bytes) -> str:
+    """``"png"``, ``"gif"`` or ``""``, by the full signature rather than the
+    category magic, so a text file that happens to start ``GIF8`` isn't one."""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    return ""
+
+
 def _looks_like_zlib(head: bytes) -> bool:
     # zlib header: CMF=0x78 (deflate, 32K window) and (CMF<<8|FLG) % 31 == 0
     return len(head) >= 2 and head[0] == 0x78 and ((head[0] << 8) | head[1]) % 31 == 0
@@ -374,6 +392,7 @@ def analyze_file(path: Path, root: Path | None = None) -> FileInfo:
         # A second open, JPEGs only: the frame can sit far past `head`.
         lepton_refuses=(jpeg.looks_like_jpeg(head) and jpeg.lepton_refuses(path)),
         is_jpeg=jpeg.looks_like_jpeg(head),
+        image_format=_image_format(head),
         arc_name_bytes=_arc_name_bytes(root, path),
     )
 

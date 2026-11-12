@@ -258,6 +258,14 @@ def gain_note(summary: AnalysisSummary) -> str:
         suffix += (f" JPEG photos ({fmt_size(summary.pack_jpeg_bytes)}) are "
                    "repacked losslessly, typically 21–33% smaller.")
     if frac >= 0.99:
+        # B21 (review): what this profile stores is not what the bytes are. A
+        # stronger profile opens PNG, GIF, EPUB and the JPEGs lepton refuses,
+        # so "already compressed, ~0%" was false beside its own Extreme row.
+        unlocked = summary.store_bytes - summary.floor_store_bytes
+        if unlocked >= 0.01 * summary.total_bytes:
+            return ("Everything here is stored as-is on this profile — lossless "
+                    f"gain is ~0%. A stronger profile can shrink {fmt_size(unlocked)} "
+                    "of it losslessly.")
         return ("Every byte here is already compressed — lossless gain is ~0%. "
                 "The archive will be about the same size as the input.")
     if frac >= MOSTLY_INCOMPRESSIBLE:
@@ -367,9 +375,12 @@ def recommend_profile(summary: AnalysisSummary, cores: int | None = None) -> tup
             "Small enough that the full chain costs seconds, so take the best ratio.")
 
     if summary.total_bytes >= BIG_JOB_BYTES and cores <= 4:
+        # B21 (review): no claim about Normal's ratio. On PNG, GIF and the
+        # containers only Precomp opens, Normal's own row reads 0%, and "most
+        # of the win" sat beside it.
         return Profile.NORMAL, (
             f"{fmt_size(summary.total_bytes)} on {cores} cores — Extreme would run for "
-            "hours here. Normal gets most of the win quickly.")
+            "hours here. Normal finishes far sooner.")
 
     if heavy_tools and summary.floor_pipeline_fraction >= 0.3:
         return Profile.EXTREME, (

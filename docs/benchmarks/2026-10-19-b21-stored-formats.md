@@ -318,8 +318,14 @@ longer teaches Extreme a chain rate several times too slow.
 - **Store instead of refuse.** `engine._plan_that_fits`: when the plan
   doesn't fit the disk, the same files with the probe-flagged media stored
   (`planner.plan(probe_media=False)`) are tried; if they fit, the job runs
-  and its warnings say how many files and MiB were stored and why.
-  Otherwise the refusal quotes the smaller floor. With the owner's 16 MKVs
+  and its warnings say how many files and MiB were stored, why, and how
+  much more space would recompress them (the floor counts piped bytes
+  twice, so that is about twice their size); each stored file's reason in
+  the manifest says it was the disk. If that doesn't fit either, the
+  refusal is the chosen plan's own (review: on a separate output volume
+  the lean plan's floor can be the larger one, and would name a volume the
+  job never needed). Full suite at the merge (`d78ec62`): **1,769 passed,
+  1 skipped, 4 xfailed**, corpus guard clean. With the owner's 16 MKVs
   and free space between the two floors, every profile now stores them
   instead of refusing; an MP3 on a Precomp chain stays piped (packMP3).
 - **No Extreme for a video folder.** `AnalysisSummary.floor_probe_bytes`

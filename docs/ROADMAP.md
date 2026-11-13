@@ -1,5 +1,12 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-11-13**. **B21b merged** (`d78ec62`): MKV, WebM
+> and M4A join the probe rule, and a job whose piped media don't fit the
+> disk stores them instead of refusing; a mostly-video folder is
+> recommended Normal. Tests: **1,769 passed, 1 skipped, 4 xfailed**, corpus
+> guard clean; CI green on the branch. **Next: B22**, Insane's rate on
+> recoded media and a per-job cost.
+>
 > Status date: **2026-11-12**. **B21 merged**: GIFs go through Precomp on
 > Extreme/Insane (25.78% and 6.98% where they were stored), PNG and GIF are
 > recognised by their first bytes (268 JPEGs named `.png` reach lepton now),
@@ -595,28 +602,35 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
-- [ ] B21b. **MKV, WebM and M4A join the probe rule, with a disk fallback**
-      (next). The rule is written and measured on branch
-      `b21b-media-probe` (`01296b1`, local, in the `..\ExtremeCompressor-b21`
-      worktree): probe-flagged against not, under 7-Zip, every file
-      restored, **MKV 3.68% / 2.23%** (16 files, 2.07 GB), **M4A 7.37% /
-      1.79%** (25, 356 MB), **WebM 6.97% / 0.57%** (3); end to end MKV
-      sample 4.53%, WebM 1.67%, M4A 0.02%. **Held back by the owner on
-      2026-11-12** because review found the disk preflight then refuses the
-      owner's 2 GB MKV folder at every profile when C: has ~4-7 GB free
-      (floor `piped × 2 + total + out`: 3.85 → 6.97 GiB); MP4/MOV have done
-      the same since B18. To merge: (1) when only the store-only floor fits,
-      store the probe-piped media and say so instead of refusing; (2) the
-      recommendation stops picking Extreme for a video folder the table
-      flags as no better than Normal; (3) consider keeping pass-through
-      video out of Extreme's calibration (one run: 3.1 MB/s against 1.41).
-      Record: [benchmarks/2026-10-19](benchmarks/2026-10-19-b21-stored-formats.md) §3.
-- [ ] B22. **Insane's rate on recoded media, and a per-job cost.** Insane on
+- [ ] B22. **Insane's rate on recoded media, and a per-job cost** (next).
+      Insane on
       packJPG/packMP3 output is estimated 2-3× **high** (two strict xfails);
       **Insane on GIF ran 564.7 s against a 333 s high** (one run, no
       paging; strict xfail), the other way, and Insane on PNG (~50× Precomp
       expansion) is unmeasured. Store-only and small jobs carry 10-50 s the
       model doesn't have (B21: stored GIF folders 17-20 s against 0.1-0.6 s).
+      Corpora and harness: handoff §3.
+- [x] B21b. ✅ **MERGED 2026-11-13** (`d78ec62`; full suite on the branch:
+      **1,769 passed, 1 skipped, 4 xfailed**, corpus guard clean; CI green
+      on the branch) — **MKV, WebM and M4A join the probe rule, with a disk
+      fallback.** (1) `.mkv/.webm/.m4a` are in `_PROBE_DECIDES`: probe-flagged
+      against not, under 7-Zip, every file restored, **MKV 3.68% / 2.23%**
+      (16 files, 2.07 GB), **M4A 7.37% / 1.79%** (25, 356 MB), **WebM 6.97%
+      / 0.57%** (3). (2) Piping them raised the disk floor (`piped × 2 +
+      total + out`) from 3.85 to 6.97 GiB on the owner's MKV folder, which
+      was then refused at every profile with 4-7 GB free (MP4/MOV since
+      B18). Now `engine._plan_that_fits` stores the probe-flagged media
+      when only that fits, says how many files and MiB and how much more
+      space would recompress them, and records the reason per file; if
+      nothing fits, the refusal is the chosen plan's own. (3) A mostly-video
+      folder is recommended Normal ("Extreme adds only time on video"),
+      and its gain note says "a few percent, no more". (4) An older GUI bug:
+      the intake chip showed the previous drop's total or "0 B"; it
+      refreshes on every analysis now. Review found six more (gap quoted 2×
+      low, per-file reason, refusal floor, mixed folders, MP3 without
+      Precomp, PNG beside video), each fixed test-first. Not done: keeping
+      pass-through video out of Extreme's calibration (one run learned
+      3.1 MB/s against 1.41). [Record](benchmarks/2026-10-19-b21-stored-formats.md) §3, §5.
 - [x] B21. ✅ **MERGED 2026-11-12** (`9ac2d4e`; full suite on the branch: **1,741
       passed, 1 skipped, 4 xfailed**, corpus guard clean; CI green on the
       branch) — **GIF through Precomp, PNG and GIF by content.** (1) GIFs

@@ -18,6 +18,13 @@
 > went to the Recycle Bin on 2026-11-12; list in
 > `C:\excmp-bench\cleanup-2026-11-12.tsv`).
 >
+> **The owner is cleaning up the machine** (log: `C:\DevCache\CLEANUP-LOG.md`;
+> read it before touching disk space, installed software or caches). On
+> 2026-11-13 that cleanup asked whether `C:\Program Files\precomp` and
+> `C:\Program Files\srep` were orphans: **they are the app's only copies**
+> (`excmp/tools.py` `CANDIDATES`; nothing in `tools\bin`), so the answer was
+> keep. `C:\Program Files\wkhtmltopdf` is not ours.
+>
 > **Target machine:** Dell Inspiron 15-3567, i5-7200U (2 cores / 4 threads),
 > 15.9 GB. Run `Get-CimInstance Win32_Processor` before quoting a speed.
 
@@ -157,6 +164,7 @@ Then the full suite (`suite_parts.py`), review, push, CI, merge.
 | **B13** | the owner's *Celeste* FMOD download never arrived |
 | **B6** | only with an owner-provided Oodle sample; it also settles `-intense` |
 | **D6b, I5, I10** | fuzz targets; Explorer menu (**ask first**, HKCU); settings search / drag-out / jump list |
+| **Tools** | Precomp (files dated 2019) and SREP (legacy restore only) are found only under `C:\Program Files\`, unpinned and unhashed, unlike zpaqfranz/flac/balrogg/qpdf in `tools\bin`; a machine cleanup nearly removed them on 2026-11-13. Consider pinning Precomp through `toolfetch` (ask the owner first: it is a download) |
 | **B15, D4b, C, H, E3–E5** | too early / elevated session / lossy phase / installer phase / release-only |
 | **I7** | ❌ won't do |
 

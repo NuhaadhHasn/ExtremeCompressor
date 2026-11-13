@@ -188,6 +188,41 @@ def test_the_time_range_holds_the_measured_median(corpus):
     assert TIME_E2E[corpus] / 2.5 <= t.expected <= TIME_E2E[corpus] * 2.5
 
 
+# -- (3) MKV, WebM, M4A: B18's probe rule ----------------------------------------
+#
+# Per file, 7-Zip -mx9 and zstd -19, every file restored (b18_media.codec,
+# 2026-10-19 and 2026-11-12), split by the analyzer's probe as B18 split
+# MP3/MP4:
+#
+#     corpus                       probe flags it         probe doesn't
+#     MKV, 16 files, 2.07 GB       12 files, 7z 3.68%     4 files, 2.23%
+#     M4A, 25 files, 356 MB         2 files,    7.37%    23 files, 1.79%
+#     WebM, 3 files, 0.6 MB         1 file,     6.97%     2 files, 0.57%
+#
+# Weaker on MKV than B18's MP4 (9.20% / 1.61%), but the probe routes 81% of
+# the MKV bytes and 88% of what 7-Zip can take. B18 left the unflagged
+# MP4s' 1.61% on the table for the same trade.
+
+@pytest.mark.parametrize("name, category", [
+    ("lesson.mkv", Category.VIDEO), ("clip.webm", Category.VIDEO),
+    ("talk.m4a", Category.AUDIO), ("TALK.M4A", Category.AUDIO)])
+def test_a_container_the_probe_says_shrinks_is_piped(name, category):
+    info = FileInfo(path=Path(name), size=50_000_000, category=category,
+                    entropy_bps=7.97, sample_ratio=0.97, sample_ratio_max=0.98)
+    for profile in Profile:
+        assert _actions(info, profile) == ["pipeline"], profile
+
+
+@pytest.mark.parametrize("name, category", [
+    ("lesson.mkv", Category.VIDEO), ("clip.webm", Category.VIDEO),
+    ("talk.m4a", Category.AUDIO)])
+def test_a_container_the_probe_cannot_shrink_stays_stored(name, category):
+    info = FileInfo(path=Path(name), size=50_000_000, category=category,
+                    entropy_bps=7.99, sample_ratio=0.99, sample_ratio_max=1.0)
+    for profile in Profile:
+        assert _actions(info, profile) == ["store"], profile
+
+
 # -- the analyzer ------------------------------------------------------------------
 
 def _png() -> bytes:

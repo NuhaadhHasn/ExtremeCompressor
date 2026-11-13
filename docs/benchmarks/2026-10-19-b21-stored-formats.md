@@ -185,10 +185,9 @@ probe 0.82-0.99) but its worst sample doesn't, and 7-Zip took 0.6-3.5%
 off it. WebM is too small a corpus to stand alone; it is Matroska, like
 MKV, and split the same way.
 
-**The rule is measured but not merged.** `.mkv`, `.webm` and `.m4a` join
-`planner._PROBE_DECIDES` on branch `b21b-media-probe` (`01296b1`), held
-back by the owner's decision on 2026-11-12 after review found a
-regression: piping video raises the disk preflight's floor (`piped × 2 +
+**The rule was held back from B21's merge** and merged with B21b (§5):
+`.mkv`, `.webm` and `.m4a` join `planner._PROBE_DECIDES`. The owner held
+it on 2026-11-12 after review found a regression: piping video raises the disk preflight's floor (`piped × 2 +
 total + out`), so the owner's 16 MKVs (1.92 GiB), which store with a
 3.85 GiB floor, need 6.97 GiB and are **refused at every profile** when C:
 has 3.9-7.0 GiB free. It had 6.37 GiB when the reviewer ran it and 8.7 an
@@ -308,3 +307,34 @@ longer teaches Extreme a chain rate several times too slow.
   direction from Insane on packJPG/packMP3 output (estimated 2-3× high).**
   A strict xfail pins the run (`test_insane_on_gifs_holds_the_one_measured_run`);
   B22 takes PNG and GIF on Insane.
+
+---
+
+## 5. B21b (2026-11-12): the probe rule merges, with a way out
+
+§3's rule merged with three fixes the review asked for, all test-first
+(`tests/test_b21b_media_fallback.py`):
+
+- **Store instead of refuse.** `engine._plan_that_fits`: when the plan
+  doesn't fit the disk, the same files with the probe-flagged media stored
+  (`planner.plan(probe_media=False)`) are tried; if they fit, the job runs
+  and its warnings say how many files and MiB were stored and why.
+  Otherwise the refusal quotes the smaller floor. With the owner's 16 MKVs
+  and free space between the two floors, every profile now stores them
+  instead of refusing; an MP3 on a Precomp chain stays piped (packMP3).
+- **No Extreme for a video folder.** `AnalysisSummary.floor_probe_bytes`
+  (bytes piped only by the probe, in formats Precomp can't recode) no
+  longer count as a reason for Extreme. The 201 MB MKV sample now
+  pre-selects Normal ("Extreme adds only time on video"); an MP3 folder
+  still gets Extreme.
+- **The gain note** on a mostly-video folder says "a few percent, no more"
+  instead of "worth compressing".
+
+**A GUI bug found rendering it**, older than B21: the intake chip took its
+total from the summary but was refreshed only when the recommendation moved
+the selected profile, so a drop that kept the same recommendation showed
+the previous total ("4 items · 228.5 KB" for 521.5 KB) or "0 B". It
+refreshes on every analysis now (`tests/test_gui_compact.py`).
+
+Not done: keeping pass-through video out of Extreme's calibration (one
+run learned 3.1 MB/s against the 1.41 prior). Recorded for later.

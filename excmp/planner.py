@@ -147,8 +147,7 @@ def store_reason(info: FileInfo) -> str | None:
             return ("Ogg audio: repacked with balrogg where it can be, which "
                     "restores it byte for byte (measured 4-15% smaller); a "
                     "file it declines is stored as-is")
-    if (info.path.suffix.lower() in _PROBE_DECIDES
-            and info.sample_ratio_max < 1.0):
+    if _probe_pipes(info):
         # B13, measured on 18 real music files: the Ogg files the probe
         # could shrink compressed 1.7-6.0% under 7-Zip, byte-identically, and
         # the ones it could not stayed within 1.24% (the five Opus files at
@@ -278,10 +277,10 @@ _UNCOMPRESSED_AUDIO = {".wav", ".aiff", ".aif", ".w64", ".rf64"}
 from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers)
 
 #: Compressed media whose own probe decides whether it is piped: B13a's Ogg,
-#: plus MP3 and MP4 since B18, and MOV since B19. Measured under 7-Zip,
-#: every file restored, the files the probe flagged against the ones it did
-#: not (group totals; per file the groups overlap, 0.17% flagged to 5.81%
-#: not):
+#: plus MP3 and MP4 since B18, MOV since B19, and MKV, WebM and M4A since
+#: B21. Measured under 7-Zip, every file restored, the files the probe
+#: flagged against the ones it did not (group totals; per file the groups
+#: overlap, 0.17% flagged to 5.81% not):
 #:
 #:     MP3, music (5)              4.17% saved    0.35%
 #:     MP3, misc (16)              5.24%          0.45%
@@ -289,13 +288,19 @@ from .oggpack import SUFFIXES as _OGG_AUDIO  # noqa: E402  (one set, two readers
 #:     downloaded video, MP4 (9)   3.77%          0.32%
 #:     Takeout MOV (64)            1.01%          0.046%   (B19)
 #:     Downloads-1 MOV (2)         none flagged   0.015%   (B19)
+#:     MKV, course videos etc (16) 3.68%          2.23%    (B21)
+#:     M4A, course audio etc (25)  7.37%          1.79%    (B21)
+#:     WebM (3)                    6.97%          0.57%    (B21)
 #:
+#: MKV separates weakly: every one shrank 0.4-28%, and the four the probe
+#: passes over still gave 2.23%. But the probe routes 81% of the MKV bytes
+#: and 88% of what 7-Zip can take, the same trade as MP4's 1.61%.
 #: An MP3 on a chain with Precomp is piped regardless (`_PRECOMP_MEDIA`).
-#: Every other container (MKV, WebM, M4A...) keeps "stored as-is" until it
-#: is measured too: sharing a codec with MP4 is not the same as having been
-#: looked at. With balrogg installed an Ogg file never reaches this rule
-#: (`store_reason` packs it first).
-_PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4", ".mov"}
+#: Every other container (AVI, WMV, FLV, AAC...) keeps "stored as-is" until
+#: it is measured too: sharing a codec with MP4 is not the same as having
+#: been looked at. With balrogg installed an Ogg file never reaches this
+#: rule (`store_reason` packs it first).
+_PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4", ".mov", ".mkv", ".webm", ".m4a"}
 
 #: How far Precomp inflates its output mid-pipeline, per data type. The
 #: generic figure is 5x (research/10 C-3), but **PNG measured ~50x** — 15 PNGs
@@ -337,8 +342,23 @@ def precomp_inflation(infos: list[FileInfo]) -> int:
     return max(_INFLATION_DEFAULT, round(weighted / total))
 
 
+def _probe_pipes(info: FileInfo) -> bool:
+    """Compressed media piped only because its own probe says it shrinks
+    (`_PROBE_DECIDES`): a few percent, at the codec's full cost."""
+    return (info.path.suffix.lower() in _PROBE_DECIDES
+            and info.sample_ratio_max < 1.0)
+
+
+#: B21b: the reason a probe-flagged file is stored when the disk can't hold
+#: the extra temp space piping it would take (`engine._plan_that_fits`).
+_NO_ROOM = ("compressed video/audio: stored as-is because the disk had no "
+            "space to recompress it too (it would have shrunk a few percent)")
+
+
 def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | None],
-         shrink_media: bool = False) -> Plan:
+         shrink_media: bool = False, probe_media: bool = True) -> Plan:
+    """``probe_media=False`` stores what only the probe rule would pipe: the
+    engine's way out when the full plan doesn't fit on the disk (B21b)."""
     stages, warnings = _resolve_chain(profile, tools)
     has_precomp = "precomp" in stages
 
@@ -348,6 +368,10 @@ def plan(infos: list[FileInfo], profile: Profile, tools: dict[str, ToolInfo | No
 
     for info in infos:
         reason = store_reason(info)
+        if reason is None and not probe_media and _probe_pipes(info):
+            # B21b. An MP3 on a Precomp chain is still piped below: packMP3's
+            # 15-18% is not the probe's few percent.
+            reason = _NO_ROOM
         # precomp can expand zlib/deflate wrapped data no matter how random it
         # looks on the surface - exactly the shape of game pak files. Media
         # stays stored (its entropy is real), known non-deflate archives

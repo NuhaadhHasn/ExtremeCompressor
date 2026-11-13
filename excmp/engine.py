@@ -34,7 +34,8 @@ from .estimate import estimate_size
 from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
                        _read_manifest, declared_total, extract_stored,
                        manifest_size_estimate, read_container, write_container)
-from .planner import Plan, Profile, plan as make_plan, precomp_inflation, store_reason
+from .planner import (_NO_ROOM, Plan, Profile, _probe_pipes, plan as make_plan,
+                      precomp_inflation, store_reason)
 from .tempclean import rmtree_force
 from .safepath import UnsafePathError, resolve_within, safe_relpath
 from .slt import classify_failure
@@ -180,6 +181,53 @@ def _check_compress_space(out_path: Path, temp_dir: Path, infos: list[FileInfo],
                 f"the worst case is {peak >> 20} MiB - point the temp folder at a "
                 f"roomier drive if it fails")
     return warnings
+
+
+def _plan_that_fits(infos: list[FileInfo], profile: Profile,
+                    tools: dict[str, ToolInfo | None], out_path: Path,
+                    temp_dir: Path) -> Plan:
+    """The plan, checked against free disk space (J4), with one way out (B21b).
+
+    Piping the media the probe flags (MKV, MP4, MOV, M4A... `_PROBE_DECIDES`)
+    buys a few percent and doubles their bytes in temp. On the owner's laptop
+    that took a 2 GB video folder's floor from 3.85 to 6.97 GiB, and a job
+    that storing them had always fitted was refused outright. So when the
+    plan doesn't fit, the same files with that media stored are tried; if
+    they fit, the job runs and says what it stored. Lossless either way.
+    If neither fits, the refusal is the chosen plan's own (review: the lean
+    plan stores more, so on a separate output volume its floor can be the
+    larger one, and name a volume the job never needed).
+    """
+    the_plan = make_plan(infos, profile, tools)
+    try:
+        the_plan.warnings.extend(
+            _check_compress_space(out_path, temp_dir, infos, the_plan))
+        return the_plan
+    except RuntimeError as refusal:
+        lean = make_plan(infos, profile, tools, probe_media=False)
+
+        def piped(p: Plan) -> set[Path]:
+            return {f for r in p.routes if r.action == "pipeline" for f in r.files}
+
+        moved = piped(the_plan) - piped(lean)
+        if not moved:
+            raise
+        try:
+            lean.warnings.extend(
+                _check_compress_space(out_path, temp_dir, infos, lean))
+        except RuntimeError:
+            raise refusal from None
+    # The floor counts piped bytes twice (staging plus the tar), so the gap is
+    # about twice the files' size on real video: quote the gap itself.
+    gap = sum(f for _, f, _ in compress_space_needs(out_path, temp_dir, infos, the_plan)) \
+        - sum(f for _, f, _ in compress_space_needs(out_path, temp_dir, infos, lean))
+    size = sum(i.size for i in infos if i.path in moved)
+    lean.warnings.insert(0, (
+        f"not enough free disk space to also recompress {len(moved)} "
+        f"video/audio file(s) ({size >> 20} MiB, which would have shrunk a few "
+        f"percent): they were stored as-is, losslessly. Free about "
+        f"{max(gap, 0) >> 20} MiB more to have them recompressed"))
+    return lean
 
 
 def _check_manifest_size(relmap: dict[Path, str], the_plan: Plan,
@@ -854,11 +902,10 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     infos, relmap, empty_dirs, skipped = _collect([Path(p) for p in inputs])
     if not infos:
         raise ValueError(_nothing_readable(skipped))
-    the_plan: Plan = make_plan(infos, profile, tools)
     # Before copying a single byte: will this fit? (J4 - the compression-side
-    # twin of the check extract() has done since D0.)
-    the_plan.warnings.extend(
-        _check_compress_space(out_path, ctx.temp_dir, infos, the_plan))
+    # twin of the check extract() has done since D0.) B21b: if it only fits
+    # with the probe-flagged media stored, it runs that way and says so.
+    the_plan: Plan = _plan_that_fits(infos, profile, tools, out_path, ctx.temp_dir)
     # ...and will the manifest itself be readable? (K1.)
     the_plan.warnings.extend(
         _check_manifest_size(relmap, the_plan, empty_dirs))
@@ -1013,14 +1060,19 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 + ("" if len(skipped) <= 5 else f" (and {len(skipped) - 5} more)"))
 
         payload_name = f"payload{_PAYLOAD_EXT.get(chain[-1], '.bin')}" if pipe_route else ""
+        stored_paths = {f for r in the_plan.routes if r.action == "store" for f in r.files}
         manifest = Manifest.new(
             profile=profile.value,
             stages=stage_records,
             inputs=ledger,
             payload_name=payload_name,
             warnings=the_plan.warnings,
+            # B21b (review): a file `_plan_that_fits` stored has no
+            # `store_reason` of its own; give it the plan's, not a joined one.
             store_reasons={relmap[i.path]: reason for i in infos
-                           if (reason := store_reason(i))},
+                           if (reason := store_reason(i) or (
+                               _NO_ROOM if i.path in stored_paths
+                               and _probe_pipes(i) else None))},
             # No `files` list: it repeated every relative path a second time,
             # and the ledger above already records a route per file.
             # `Manifest.new` derives the count from it (K1).

@@ -822,7 +822,7 @@ _RECODE_BASE_VERIFY_RATE = 6.5e6    # _VERIFY_RATE["precomp+sevenzip"]
 # packJPG output than on Silesia) and MP3 (~2x), and 2.3-2.7x too low on PNG
 # (Precomp expands ~50x into pixels, and zpaqfranz pays for every one).
 # Eight corpora through engine.compress and engine.extract, every file
-# restored, 21 valid rows (2026-11-16/17; docs/benchmarks/
+# restored, 24 valid rows (3 rounds each) (2026-11-16/17; docs/benchmarks/
 # 2026-11-16-b22-insane-recoded.md). Each rate is the least-contended row of
 # each corpus (others about 15% of the CPU or less, 4+ GB free), bytes over
 # (compress incl. D9 - extract) and bytes over extract, byte-weighted over the
@@ -831,16 +831,19 @@ _RECODE_BASE_VERIFY_RATE = 6.5e6    # _VERIFY_RATE["precomp+sevenzip"]
 #     jpeg  CMYK 8 MB and design 135 MB: 0.2795 and 0.2767 -> 0.277;
 #           self-test 0.3165 and 0.3118 -> 0.312
 #     mp3   0.208 and 0.159 MB/s -> 0.171; self-test 0.228 and 0.219 -> 0.221
-#     gif   0.120 and 0.079 MB/s -> 0.084; self-test 0.158 and 0.138 -> 0.141
+#     gif   0.1203 and 0.1209 MB/s -> 0.121; self-test 0.158 and 0.146 -> 0.148
+#           (B24: round 3 of the 30 MB corpus ran 454 s on a quiet machine, others
+#           5%; its earlier "quiet" row, 596 s at 6%, was not. The two corpora
+#           agreed on the compress rate to 0.5% once it was in.)
 #     png   total 0.0156 MB/s over both corpora, split 54:46 by the one corpus
 #           whose self-test ran separate from its compress (png-dl1's extract
 #           was as long as its whole compress+D9, so its split is unusable)
 #
 # Only these four kinds: the B20 containers are unmeasured at Insane and keep
 # the chain's rate and the extra above.
-_INSANE_RECODE_RATE = {"jpeg": 0.277e6, "mp3": 0.171e6, "gif": 0.0841e6,
+_INSANE_RECODE_RATE = {"jpeg": 0.277e6, "mp3": 0.171e6, "gif": 0.121e6,
                        "png": 0.0289e6}
-_INSANE_RECODE_VERIFY_RATE = {"jpeg": 0.312e6, "mp3": 0.221e6, "gif": 0.141e6,
+_INSANE_RECODE_VERIFY_RATE = {"jpeg": 0.312e6, "mp3": 0.221e6, "gif": 0.148e6,
                               "png": 0.0339e6}
 
 

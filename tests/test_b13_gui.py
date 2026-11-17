@@ -248,7 +248,8 @@ def test_calibration_leaves_the_pack_phase_out_of_the_codec_rate(tmp_path, monke
                              routes=[{"action": "pipeline", "stages": ["sevenzip"]}])
     worker._calibrate(result)
     (_args, kwargs), = recorded
-    assert kwargs["elapsed_s"] == pytest.approx(800.0 - 600.0)
+    # B22: and the job's setup second, which the estimate bills on its own.
+    assert kwargs["elapsed_s"] == pytest.approx(800.0 - 600.0 - 1.0)
 
 
 # -- review findings whose skeptic checks were lost to an API outage, re-checked here ----

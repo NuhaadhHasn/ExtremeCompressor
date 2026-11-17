@@ -710,7 +710,8 @@ def test_a_little_recoded_media_is_subtracted_not_learned(tmp_path, monkeypatch)
     worker = _calibrating_worker(tmp_path, summary)
     worker._calibrate(_result(102_000_000, 300.0))
     (kwargs,) = recorded
-    assert kwargs["elapsed_s"] == pytest.approx(300.0 - summary.recode_seconds)
+    # B22: less the setup second, which the estimate bills on its own.
+    assert kwargs["elapsed_s"] == pytest.approx(300.0 - summary.recode_seconds - 1.0)
     assert "achieved_factor" not in kwargs
 
 

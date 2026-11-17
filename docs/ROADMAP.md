@@ -1,5 +1,14 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-11-17**. **B22 merged** (merge commit in the git log):
+> Insane prices **JPEG, MP3, GIF and PNG at their own measured rates**
+> (JPEG 0.147, MP3 0.097, GIF 0.053, PNG 0.0156 MB/s, compress plus
+> self-test; the old single chain rate was 3x high on JPEG, 2x on MP3 and
+> 2.5x LOW on PNG), and every job carries a **setup cost** (1 s, 2 s at
+> Insane). The handoff's "10-50 s a job" did not reproduce. Tests: see the
+> handoff; the two strict xfails flipped, the GIF one's premise (one 564.7 s
+> run) did not reproduce. **Next: B23**, calibration and the open list.
+>
 > Status date: **2026-11-13**. **B21b merged** (`d78ec62`): MKV, WebM
 > and M4A join the probe rule, and a job whose piped media don't fit the
 > disk stores them instead of refusing; a mostly-video folder is
@@ -602,14 +611,35 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
-- [ ] B22. **Insane's rate on recoded media, and a per-job cost** (next).
-      Insane on
-      packJPG/packMP3 output is estimated 2-3× **high** (two strict xfails);
-      **Insane on GIF ran 564.7 s against a 333 s high** (one run, no
-      paging; strict xfail), the other way, and Insane on PNG (~50× Precomp
-      expansion) is unmeasured. Store-only and small jobs carry 10-50 s the
-      model doesn't have (B21: stored GIF folders 17-20 s against 0.1-0.6 s).
-      Corpora and harness: handoff §3.
+- [x] B22. ✅ **MERGED 2026-11-17** - **Insane's rate on recoded media, and a
+      per-job cost.** Eight corpora through `engine.compress` and
+      `engine.extract` at Insane, **21 valid rows, every file restored
+      (0 mismatches)**, on a machine that was not quiet (a runaway `find`
+      held ~24% of the CPU for two rounds; free memory fell to 0.5 GB in
+      four rows; the low-memory reaper stopped the batch three times; the
+      machine slept 15.6 h through one row, which was rerun). Per kind, from
+      each corpus's least-contended row: **JPEG 0.277 / 0.312 MB/s**
+      (compress / self-test; CMYK 8 MB and design 135 MB agree within 1%),
+      **MP3 0.171 / 0.221**, **GIF 0.084 / 0.141**, **PNG 0.029 / 0.034**.
+      The old chain rate (0.091 / 0.107) was 3.1x slow on JPEG, 2x on MP3,
+      1.2x on GIF and 2.5x fast on PNG. The two JPEG/MP3 strict xfails flip;
+      the GIF xfail's premise (one 564.7 s run) did not reproduce: three
+      runs gave 87.7, 107.0 and 180.1 s. **A job costs about 1 s, and 2 s at
+      Insane** (3 runs per cell, four profiles; the stored 6 MB GIF folder
+      takes 0.8-1.1 s): the handoff's "10-50 s" and "stored GIF folders
+      17-20 s" did not reproduce. A first version put the extras relative
+      to the calibrated chain rate and made the progress bar go negative
+      (caught by a test through `queue_manager._time_split`); review found
+      calibration folding the new second into the learned rate (fixed) and
+      six wrong figures in the record. Not done: round 3 of the three big
+      corpora, the B20 containers at Insane, a quieter MP3 row.
+      [Record](benchmarks/2026-11-16-b22-insane-recoded.md).
+- [ ] B23. **Calibration and the open list** (next). One MKV run taught
+      Extreme 3.1 MB/s against the 1.41 prior (pass-through video is not the
+      chain); `calibrate.record` reads an elapsed time that holds Precomp's
+      per-pixel work (PNG, GIF) only approximately; plus the small open
+      items in the handoff §4 (the single-block treemap,
+      `tests/test_edge_cases.py:1`'s `SyntaxWarning`, Insane's bar freezing).
 - [x] B21b. ✅ **MERGED 2026-11-13** (`d78ec62`; full suite on the branch:
       **1,769 passed, 1 skipped, 4 xfailed**, corpus guard clean; CI green
       on the branch) — **MKV, WebM and M4A join the probe rule, with a disk

@@ -368,13 +368,16 @@ def test_the_range_holds_the_gifs_that_grew(name, tmp_path):
 
 
 @pytest.mark.skipif(not (BENCH / "gif-dl1").is_dir(), reason="B21's corpora are not here")
-@pytest.mark.xfail(strict=True, reason=(
-    "B22: Insane on 6 MB of GIFs ran 564.7 s (one run, others at 16-75%, no "
-    "paging) against a high of ~333 s. The opposite direction from Insane on "
-    "packJPG/packMP3 output, which is estimated 2-3x high."))
-def test_insane_on_gifs_holds_the_one_measured_run():
+def test_insane_on_gifs_holds_the_measured_runs():
+    """Was a strict xfail on one run of 564.7 s (B21, 2026-10-19, 16-75% of
+    the CPU beside it) against a high of ~333 s. B22 ran the corpus three more
+    times at Insane (2026-11-16/17): 87.7, 107.0 and 180.1 s, 0 mismatches. So
+    564.7 s was 6.4x the quiet time, not a rate the model missed, and it stays
+    outside the range, which is 4x on the slow side; the three reproduced
+    rows are inside it (tests/test_b22_insane_recoded.py has them on a
+    synthetic corpus of the same size)."""
     from excmp.analyzer import analyze_tree
     from excmp.estimate import estimate_time
     infos = analyze_tree(BENCH / "gif-dl1")
     t = estimate_time(infos, plan(infos, Profile.INSANE, TOOLS))
-    assert t.high >= 564.7
+    assert t.low <= 87.7 and t.high >= 180.1, (t.low, t.expected, t.high)

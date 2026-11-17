@@ -204,7 +204,8 @@ def _time_split(summary: AnalysisSummary | None) -> tuple[float | None, float | 
         pack = PackCost(bytes=summary.pack_bytes, seconds=summary.pack_seconds,
                         verify_seconds=summary.pack_verify_seconds)
         recode = RecodeCost(compress_seconds=summary.recode_seconds,
-                            verify_seconds=summary.recode_verify_seconds)
+                            verify_seconds=summary.recode_verify_seconds,
+                            own_bytes=summary.recode_own_bytes)
         return time_split(summary.store_bytes, summary.pipeline_bytes,
                           summary.chain, blended_rates(), pack=pack,
                           recode=recode)
@@ -456,7 +457,12 @@ class CompressWorker(_EngineWorker):
         # taught the estimator a rate several times too slow for the chain.
         pack_s = (self._pack_end - self._pack_t0
                   if self._pack_t0 is not None else 0.0)
-        codec_s = result.elapsed_s - self._verify_elapsed - pack_s - self._recode_s
+        # B22: nor the job's setup second, which the estimate bills on its own
+        # (`estimate.job_fixed_seconds`); folded into the rate it was counted
+        # twice, and it is a large share of a small job.
+        from excmp.estimate import job_fixed_seconds
+        codec_s = (result.elapsed_s - self._verify_elapsed - pack_s - self._recode_s
+                   - job_fixed_seconds(stages))
         # No `achieved_factor` (B19): a whole-job ratio is not the slope the
         # estimator's factor became in B8 (see `calibrate.record`).
         record(stages, piped_bytes=piped, elapsed_s=codec_s)

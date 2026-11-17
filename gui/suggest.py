@@ -84,6 +84,9 @@ class AnalysisSummary:
     recode_seconds: float = 0.0
     recode_verify_seconds: float = 0.0
     recode_bytes: int = 0
+    #: B22: the part of ``recode_bytes`` Insane prices at its own measured
+    #: rates; the bar needs it to take them out of the chain's term.
+    recode_own_bytes: int = 0
     #: Under the strongest available chain, which the recommendation reasons
     #: about: the whole job's expected seconds (it says whether "seconds" is
     #: true), and the recoded files' share of them (compress and self-test,
@@ -235,6 +238,7 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         recode_seconds=recode.compress_seconds,
         recode_verify_seconds=recode.verify_seconds,
         recode_bytes=recode.bytes,
+        recode_own_bytes=recode.own_bytes,
         strongest_seconds=estimate_time(infos, strongest_plan).expected,
         strongest_recode_seconds=sum(strongest),
     )

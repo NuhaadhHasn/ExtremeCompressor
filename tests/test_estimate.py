@@ -214,12 +214,16 @@ def test_stored_bytes_are_io_bound_and_piped_bytes_are_codec_bound():
     # Both jobs pay the D9 self-test, each at its own chain's restore speed:
     # a store-only archive verifies as a copy + hash (io-bound), a 7-Zip one
     # replays LZMA2 decode.
+    # B22: and every job pays about a second before it moves a byte
+    # (tests/test_b22_insane_recoded.py has the measurements).
     io_expected = (400_000_000 / DEFAULT_RATES.io_rate          # copy in
-                   + 400_000_000 / DEFAULT_RATES.io_rate)       # verify back
+                   + 400_000_000 / DEFAULT_RATES.io_rate        # verify back
+                   + 1.0)                                       # setup
     codec_expected = (400_000_000 / DEFAULT_RATES.rate_for(SEVENZIP)
-                      + 400_000_000 / DEFAULT_RATES.verify_rate_for(SEVENZIP))
+                      + 400_000_000 / DEFAULT_RATES.verify_rate_for(SEVENZIP)
+                      + 1.0)
     assert io_time.expected == pytest.approx(io_expected, rel=0.01)
-    assert codec_time.expected == pytest.approx(codec_expected, rel=0.01)
+    assert codec_time.expected == pytest.approx(codec_expected, rel=0.003)
     assert codec_time.expected > io_time.expected * 5
 
 

@@ -113,13 +113,12 @@ def test_insane_s_range_holds_a_contended_recoded_run():
     assert t.low <= measured <= t.high, (t.low, t.expected, t.high)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Insane bills recoded media at precomp+zpaqfranz's Silesia rate (0.091 MB/s), "
-    "and zpaqfranz runs about 3x faster on packJPG/packMP3 output, so a quiet run "
-    "finishes under the low end; one run per media type is too thin to pin a "
-    "rate (2026-10-17)"))
 @pytest.mark.parametrize("label", ["mp3-quiet", "design-quiet"])
 def test_insane_s_estimate_fits_a_quiet_recoded_run(label):
+    """Was a strict xfail (2026-10-17): Insane billed recoded media at
+    zpaqfranz's Silesia rate and a quiet run finished under the low end. B22
+    (2026-11-17) measured Insane per kind, JPEG and MP3 among them, and
+    tests/test_b22_insane_recoded.py holds the new rows."""
     make, measured = INSANE[label]
     infos = make()
     t = estimate_time(infos, plan(infos, Profile.INSANE, TOOLS), JPEG)

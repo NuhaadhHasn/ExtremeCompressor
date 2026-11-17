@@ -43,8 +43,9 @@ def test_time_split_is_compress_then_verify():
     rates = DEFAULT_RATES
     stored, piped = 10_000_000, 2_000_000
     compress_s, verify_s = time_split(stored, piped, INSANE, rates)
+    # B22: and the 2 s every Insane job costs before it moves a byte.
     assert compress_s == pytest.approx(stored / rates.io_rate
-                                       + piped / rates.rate_for(INSANE))
+                                       + piped / rates.rate_for(INSANE) + 2.0)
     # Stored files restore by a zip copy, piped ones through the chain (B17).
     assert verify_s == pytest.approx(stored / rates.io_rate
                                      + piped / rates.verify_rate_for(INSANE))
@@ -422,7 +423,8 @@ def test_calibration_learns_the_codec_rate_without_the_self_test(
                              routes=[{"action": "pipeline", "stages": INSANE}])
     worker._calibrate(result)
     (_args, kwargs), = recorded
-    assert kwargs["elapsed_s"] == pytest.approx(3810.0 - 1556.0)
+    # B22: less the job's 2 s setup, which the estimate bills on its own.
+    assert kwargs["elapsed_s"] == pytest.approx(3810.0 - 1556.0 - 2.0)
 
 
 def test_a_job_with_no_analysis_runs_its_self_test_without_a_countdown(tmp_path):

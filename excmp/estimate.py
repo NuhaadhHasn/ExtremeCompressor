@@ -816,14 +816,92 @@ _RECODE_SPREAD = 4.0
 _RECODE_BASE_RATE = 1.41e6          # _CODEC_RATE["precomp+sevenzip"]
 _RECODE_BASE_VERIFY_RATE = 6.5e6    # _VERIFY_RATE["precomp+sevenzip"]
 
+# B22: Insane (`precomp -cn -intense`, then zpaqfranz -m58) on the same kinds.
+# Priced at the chain's one rate (0.091 MB/s compress, 0.107 self-test) plus the
+# recoder's extra, it was 2-3x too high on JPEG (zpaqfranz runs ~3x faster on
+# packJPG output than on Silesia) and MP3 (~2x), and 2.3-2.7x too low on PNG
+# (Precomp expands ~50x into pixels, and zpaqfranz pays for every one).
+# Eight corpora through engine.compress and engine.extract, every file
+# restored, 21 valid rows (2026-11-16/17; docs/benchmarks/
+# 2026-11-16-b22-insane-recoded.md). Each rate is the least-contended row of
+# each corpus (others about 15% of the CPU or less, 4+ GB free), bytes over
+# (compress incl. D9 - extract) and bytes over extract, byte-weighted over the
+# two corpora of each kind (the unmodified figures, nothing taken out):
+#
+#     jpeg  CMYK 8 MB and design 135 MB: 0.2795 and 0.2767 -> 0.277;
+#           self-test 0.3165 and 0.3118 -> 0.312
+#     mp3   0.208 and 0.159 MB/s -> 0.171; self-test 0.228 and 0.219 -> 0.221
+#     gif   0.120 and 0.079 MB/s -> 0.084; self-test 0.158 and 0.138 -> 0.141
+#     png   total 0.0156 MB/s over both corpora, split 54:46 by the one corpus
+#           whose self-test ran separate from its compress (png-dl1's extract
+#           was as long as its whole compress+D9, so its split is unusable)
+#
+# Only these four kinds: the B20 containers are unmeasured at Insane and keep
+# the chain's rate and the extra above.
+_INSANE_RECODE_RATE = {"jpeg": 0.277e6, "mp3": 0.171e6, "gif": 0.0841e6,
+                       "png": 0.0289e6}
+_INSANE_RECODE_VERIFY_RATE = {"jpeg": 0.312e6, "mp3": 0.221e6, "gif": 0.141e6,
+                              "png": 0.0339e6}
+
+
+# The signed extras are measured against these fixed constants, never against
+# the machine's calibrated rates: the summary builds them with the defaults and
+# the progress bar adds them to the calibrated chain's time, so a rate-relative
+# extra went negative (10 MB of CMYK after a text job taught Insane 0.16 MB/s:
+# -11.5 s compress, -11.6 s self-test, against 67.7 s in the table).
+# ``time_split`` takes the own-rated bytes out of the chain's term and puts
+# them back at these constants.
+_INSANE_BASE_RATE = _CODEC_RATE["precomp+zpaqfranz"]
+_INSANE_BASE_VERIFY_RATE = _VERIFY_RATE["precomp+zpaqfranz"]
+
+
+def _insane_chain(stages: Sequence[str]) -> bool:
+    return "precomp" in stages and "zpaqfranz" in stages
+
+
+# B22: what a job costs before it moves a byte. Medians of three runs of a
+# 2 KB file and of twenty 4 KB files through engine.compress (D9 included),
+# 2026-11-17, 0 mismatches in 30 runs (the contention log covers only the
+# first run, others 9%; the logger was reaped after it, so the rest are
+# unlogged, on a machine that had 6.5 GB free at the start):
+#
+#     Fast 0.5/1.0 s, Normal 0.7/1.0, Extreme 1.3/1.2, Insane 3.8/2.7
+#     the B21 6 MB GIF folder stored (nothing to pipe): Fast 1.0, Normal 0.8
+#
+# so about a second, and two at Insane (zpaqfranz allocates before it
+# starts). Insane's two cells disagree (3.8 s and 2.7 s) and the second holds
+# ~1.7 s that the chain's own rates already bill for its 80 KB, so 2.0 s is
+# the figure that keeps all six Insane runs (1.1-5.2 s) inside the range. The
+# first run after idle is the slow one (2.4 s at Fast, 5.2 at Insane against
+# 0.5 and 1.1 for the next two), which the 3x high margin holds.
+# Not a 10-50 s cost: the handoff's stored-GIF folders at 17-20 s did not
+# reproduce (1.0 s here), so whatever made those runs slow was not the job.
+_JOB_FIXED_SECONDS = 1.0
+_JOB_FIXED_SECONDS_INSANE = 2.0
+_JOB_FIXED_RANGE = (0.3, 3.0)           # of the figure: low and high margins
+
+
+def job_fixed_seconds(stages: Sequence[str]) -> float:
+    return _JOB_FIXED_SECONDS_INSANE if "zpaqfranz" in stages else _JOB_FIXED_SECONDS
+
 
 @dataclass(frozen=True)
 class RecodeCost:
-    """Seconds a Precomp chain spends recoding media, beyond its own rate."""
+    """Seconds a Precomp chain spends recoding media, beyond its own rate.
+
+    The extras are signed: at Insane the recoder can be faster than the chain
+    (packJPG output under zpaqfranz), and ``time_split`` adds them to the
+    chain's own time for the same bytes, so the sum is the measured time.
+    ``own_*`` is the part billed at Insane's per-kind rates in full (B22): its
+    bytes, and the seconds they take, compress and self-test.
+    """
 
     bytes: int = 0
     compress_seconds: float = 0.0
     verify_seconds: float = 0.0
+    own_bytes: int = 0
+    own_compress_seconds: float = 0.0
+    own_verify_seconds: float = 0.0
 
 
 def _recode_kind(info: FileInfo) -> str | None:
@@ -846,18 +924,32 @@ def recode_cost(infos: list[FileInfo], the_plan: Plan,
     if "precomp" not in stages:
         return RecodeCost()
     _, piped = _split(infos, the_plan)
-    total = 0
-    compress = verify = 0.0
+    insane = _insane_chain(stages)
+    total = own_bytes = 0
+    compress = verify = own_c = own_v = 0.0
     for info in piped:
         kind = _recode_kind(info)
         if kind is None:
             continue
         total += info.size
+        if insane and kind in _INSANE_RECODE_RATE:
+            # B22: billed at its own measured rate, in place of the chain's.
+            c = info.size / _INSANE_RECODE_RATE[kind]
+            v = info.size / _INSANE_RECODE_VERIFY_RATE[kind]
+            own_bytes += info.size
+            own_c += c
+            own_v += v
+            compress += c - info.size / _INSANE_BASE_RATE
+            verify += v - info.size / _INSANE_BASE_VERIFY_RATE
+            continue
         compress += info.size * (1 / _RECODE_RATE[kind] - 1 / _RECODE_BASE_RATE)
         verify += info.size * (1 / _RECODE_VERIFY_RATE[kind]
                                - 1 / _RECODE_BASE_VERIFY_RATE)
-    return RecodeCost(bytes=total, compress_seconds=max(0.0, compress),
-                      verify_seconds=max(0.0, verify))
+    if not own_bytes:           # nothing here can be negative: the old floor
+        compress, verify = max(0.0, compress), max(0.0, verify)
+    return RecodeCost(bytes=total, compress_seconds=compress, verify_seconds=verify,
+                      own_bytes=own_bytes, own_compress_seconds=own_c,
+                      own_verify_seconds=own_v)
 
 
 def recoded_seconds(recode: RecodeCost, stages: Sequence[str],
@@ -876,10 +968,18 @@ def recoded_seconds(recode: RecodeCost, stages: Sequence[str],
     recoder's (review: 95% of an Insane "recode" was zpaqfranz).
     """
     rate, verify_rate = rates.rate_for(stages), rates.verify_rate_for(stages)
-    compress = recode.bytes / max(rate, _RECODE_BASE_RATE) if rate else 0.0
-    verify = (recode.bytes / max(verify_rate, _RECODE_BASE_VERIFY_RATE)
-              if verify_rate else 0.0)
-    return compress + recode.compress_seconds, verify + recode.verify_seconds
+    # B22: the bytes billed at Insane's own per-kind rates are those files'
+    # whole time, so the chain's share and the signed extras that were
+    # computed against it come out and the own seconds go in.
+    rest = recode.bytes - recode.own_bytes
+    chain_c = recode.own_bytes / _INSANE_BASE_RATE
+    chain_v = recode.own_bytes / _INSANE_BASE_VERIFY_RATE
+    compress = rest / max(rate, _RECODE_BASE_RATE) if rate else 0.0
+    verify = rest / max(verify_rate, _RECODE_BASE_VERIFY_RATE) if verify_rate else 0.0
+    return (compress + (recode.compress_seconds - (recode.own_compress_seconds - chain_c))
+            + recode.own_compress_seconds,
+            verify + (recode.verify_seconds - (recode.own_verify_seconds - chain_v))
+            + recode.own_verify_seconds)
 
 
 @dataclass(frozen=True)
@@ -1090,7 +1190,11 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     compress_seconds, verify_seconds = time_split(stored_bytes, piped_bytes,
                                                   stages, rates, pack=cost,
                                                   recode=recode)
-    codec_seconds = compress_seconds - io_seconds - cost.seconds
+    # B22: the setup cost is not throughput, so it stays out of the codec
+    # term the spread multiplies and gets its own, smaller margins.
+    in_split = job_fixed_seconds(stages)
+    codec_seconds = compress_seconds - io_seconds - cost.seconds - in_split
+    fixed = in_split if infos else 0.0          # no files, no job: nothing to wait for
     spread = max(1.0, rates.spread_for(stages))
 
     base = io_seconds + verify_seconds
@@ -1101,11 +1205,12 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     # folder's low at 71.5 s, its fastest run took 279 s).
     paced_compress, paced_verify = recoded_seconds(recode, stages, rates)
     return TimeEstimate(
-        low=base + codec_seconds / spread + cost.seconds / _PACK_SPREAD,
-        expected=base + codec_seconds + cost.seconds,
+        low=(base + codec_seconds / spread + cost.seconds / _PACK_SPREAD
+             + fixed * _JOB_FIXED_RANGE[0]),
+        expected=base + codec_seconds + cost.seconds + fixed,
         high=(base - paced_verify + (codec_seconds - paced_compress) * spread
               + (paced_compress + paced_verify) * _RECODE_SPREAD
-              + cost.seconds * _PACK_SPREAD),
+              + cost.seconds * _PACK_SPREAD + fixed * _JOB_FIXED_RANGE[1]),
     )
 
 
@@ -1127,17 +1232,23 @@ def time_split(stored_bytes: int, piped_bytes: int, stages: Sequence[str],
     """
     io_seconds = stored_bytes / rates.io_rate if rates.io_rate else 0.0
     rate = rates.rate_for(stages)
-    codec_seconds = piped_bytes / rate if rate else 0.0
+    # B22: bytes Insane prices at their own measured rates leave the chain's
+    # term and come back at the fixed constants the signed extras were made
+    # against, so a learned chain rate moves everything but them.
+    own = recode.own_bytes if recode is not None else 0
+    codec_seconds = (piped_bytes - own) / rate if rate else 0.0
     verify_rate = rates.verify_rate_for(stages)
     # B17: stored files are restored by a zip copy (`extract_stored`), not
     # through the chain, so only piped bytes pay the chain's restore rate.
     # Billing them all at the chain rate cost little at 7-Zip's 21 MB/s, but
     # at Insane's measured ~0.1 MB/s a 2 GB stored video beside 20 MB of text
     # was estimated at over four hours.
-    verify_seconds = io_seconds + (piped_bytes / verify_rate if verify_rate else 0.0)
+    verify_seconds = io_seconds + ((piped_bytes - own) / verify_rate
+                                   if verify_rate else 0.0)
     if recode is not None:
-        codec_seconds += recode.compress_seconds
-        verify_seconds += recode.verify_seconds
+        codec_seconds += recode.compress_seconds + own / _INSANE_BASE_RATE
+        verify_seconds += recode.verify_seconds + own / _INSANE_BASE_VERIFY_RATE
+    codec_seconds += job_fixed_seconds(stages)
     if pack is not None:
         return (io_seconds + codec_seconds + pack.seconds,
                 verify_seconds + pack.verify_seconds)

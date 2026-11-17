@@ -36,11 +36,11 @@ was rerun from scratch. **Quiet row** = the least contended of a corpus
 | corpus | bytes | r1 | r2 | r3 |
 |---|---|---|---|---|
 | CMYK JPEG `jpg-cmyk2` (2) | 8,386,049 | 86.0 / 30.0 (32%, 4.6 GB) | 94.4 / 49.5 (35%, 5.4 GB) | **56.5 / 26.5 \*** (4%, 5.0 GB) |
-| design JPEG `jpg-design` (14 refused + 24 lepton) | 151,290,870 | 1,670.3 / 750.6 (39%, 3.6 GB) | **924.3 / 434.6 \*** (5%, 5.1 GB) | not run |
+| design JPEG `jpg-design` (14 refused + 24 lepton) | 151,290,870 | 1,670.3 / 750.6 (39%, 3.6 GB) | **924.3 / 434.6 \*** (5%, 5.1 GB) | 1,115.6 / 554.3 (17%, 5.1 GB) |
 | MP3 `mp3-music` (5) | 33,922,849 | 489.0 / 796.2 (38%, **0.5 GB**) | 1,118.2 / 460.7 (40%, **0.6 GB**) | **312.1 / 148.9 \*** (5%, 4.8 GB) |
-| MP3 `mp3-misc` (16) | 80,307,437 | 1,641.5 / 504.9 (41%, 2.6 GB) | **871.8 / 367.4 \*** (10%, 5.8 GB) | not run |
+| MP3 `mp3-misc` (16) | 80,307,437 | 1,641.5 / 504.9 (41%, 2.6 GB) | 871.8 / 367.4 (10%, 5.8 GB) | **836.2 / 593.2 \*** (17%, peak 48%, 4.5 GB) |
 | GIF `gif-dl1` (24) | 5,990,579 | 107.0 / 47.2 (35%, 3.4 GB) | 180.1 / 60.0 (47%, 5.5 GB) | **87.7 / 37.9 \*** (14-16%, 4.9 GB) |
-| GIF `gif-dl` (64) | 30,035,992 | 836.0 / 459.9 (37%, **0.5 GB**) | **595.7 / 217.3 \*** (6%, 4.2 GB) | not run |
+| GIF `gif-dl` (64) | 30,035,992 | 836.0 / 459.9 (37%, **0.5 GB**) | 595.7 / 217.3 (6%, 4.2 GB) | **454.0 / 205.5 \*** (5%, 5.1 GB) |
 | PNG `png-dl` (70) | 8,192,542 | 780.6 / 307.7 (35%, 3.0 GB) | 1,621.5 / 1,602.5 (38%, **0.6 GB**) | **565.4 / 260.2 \*** (8%, 4.1 GB) |
 | PNG `png-dl1` (80) | 8,181,831 | 753.4 / 436.9 (40%, 3.7 GB) | 2,096.1 / 670.6 (24%, 1.3 GB) | **484.5 / 491.8 \*** (15%, 3.7 GB) |
 
@@ -63,16 +63,17 @@ method), from the quiet rows; byte-weighted where two corpora disagree:
 |---|---|---|---|---|
 | **JPEG lepton refuses** (CMYK 8 MB, design 135 MB) | 0.2795, 0.2767: **0.277** | 0.3165, 0.3118: **0.312** | **0.147** | 0.047 (3.1x slow) |
 | **MP3** (music, misc) | 0.208, 0.159: **0.171** | 0.228, 0.219: **0.221** | **0.0965** | 0.048 (2.0x slow) |
-| **GIF** (`gif-dl1`, `gif-dl`) | 0.120, 0.079: **0.0841** | 0.158, 0.138: **0.141** | **0.0527** | 0.044 (1.2x slow) |
+| **GIF** (`gif-dl1`, `gif-dl`) | 0.1203, 0.1209: **0.121** | 0.158, 0.146: **0.148** | **0.0665** | 0.044 (1.5x slow) |
 | **PNG** (`png-dl`, `png-dl1`) | **0.0289** | **0.0339** | **0.0156** | 0.039 (2.5x fast) |
 
 - Two JPEG corpora 18x apart in size give compress rates within 1% of each
   other and self-test rates within 1.5%. The design folder's figures are raw:
   its 24 lepton-packed photos add a few seconds each way, which the model also
   bills through its pack term (about 1% of that folder's time).
-- GIF: the two corpora differ 1.5x, so the byte-weighted rate sits 30% from the
-  6 MB corpus and 5.9% from the 30 MB one on compress (4.5% on the total
-  rate).
+- GIF (refit in B24, section 9): with `gif-dl` round 3 at 454.0 s the two
+  corpora agree on the compress rate to 0.5% (0.1203 and 0.1209 MB/s) and on
+  the total rate to 3% (0.0683 and 0.0662). B22 shipped 0.084 / 0.141 (total
+  0.0527), from a `gif-dl` row, 595.7 s at 6% contention, that was not quiet.
 - **PNG's split is one corpus's.** `png-dl1`'s extract (491.8 s in r3, 436.9,
   670.6) is as long as its whole compress+D9 (484.5 s), and `png-dl`'s r2
   extract is 1,602.5 s against 1,621.5 s of compress+D9; compress minus
@@ -152,8 +153,8 @@ high):
 | MP3 music | 312.1 | 453 / 712 / 1,634 | 216 / 354 / 1,414 |
 | MP3 misc | 871.8 | 1,071 / 1,686 / 3,868 | 511 / 835 / 3,338 |
 | design | 924.3 | 1,860 / 2,913 / 6,785 | 593 / 935 / 3,724 |
-| GIF 6 MB | 87.7 | 82 / 137 / 333 | 65 / 116 / 461 |
-| GIF 30 MB | 595.7 | 413 / 686 / 1,668 | 325 / 572 / 2,287 |
+| GIF 6 MB | 87.7 | 82 / 137 / 333 | 65 / 116 / 461 (B24: 57 / 92 / 366) |
+| GIF 30 MB | 454.0 | 413 / 686 / 1,668 | 325 / 572 / 2,287 (B24: 281 / 453 / 1,811) |
 | PNG 8 MB (`png-dl`) | 565.4 | 125 / 209 / 544 | 331 / 527 / 2,107 |
 | PNG 8 MB (`png-dl1`) | 484.5 | 124 / 209 / 543 | 330 / 526 / 2,104 |
 
@@ -166,13 +167,43 @@ section 6. Its tiny-job ranges, low / expected / high: 1 x 2 KB at Extreme
 
 ## 8. Not done
 
-- Round 3 for the design, MP3 misc and `gif-dl` corpora (the reaper stopped
-  them three times); their quiet row is the single least-contended run, so
-  their rates carry less weight than the five corpora with three rounds.
+- (Done in B24, section 9: round 3 for the design, MP3 misc and `gif-dl`
+  corpora.)
 - The B20 containers at Insane (unmeasured): they keep the chain's rate, and
   their share of a job's calibration subtraction follows the old extras.
   Insane on a pass-through mix.
-- A quieter MP3 rate: `mp3-misc` r2 is the only quiet row of its corpus and
-  ran beside another session's `find`/`du` for its first minutes.
+- A quieter MP3 rate: `mp3-misc` r3 (836.2 s, others 17%, peak 48%) is the
+  fastest of its three rows but not a quiet one.
 - The tiny-job rows beyond the first are unlogged for contention.
 - Why B21's stored-GIF folders took 17-20 s.
+
+## 9. Round 3 of the three large corpora (B24, 2026-11-17)
+
+The reaper had stopped round 3 of these three corpora three times, so each
+rested on one least-contended row. Run later the same day (the logger on; the
+reaper stopped the batch once more after the first row, and the dead staging
+dir, 19 files, 228,265,325 B, went to the trash folder; the rest ran
+unattended). Every file restored, 0 mismatches.
+
+| corpus | round 3 compress / extract | others mean / peak | free | the row it replaces as fastest |
+|---|---|---|---|---|
+| GIF `gif-dl` (30 MB) | **454.0 / 205.5 s** | 5% / 17% | 5.1 GB | 595.7 s (6%) |
+| MP3 `mp3-misc` (80 MB) | 836.2 / 593.2 s | 17% / 48% | 4.5 GB | 871.8 s (10%) |
+| design JPEG (151 MB) | 1,115.6 / 554.3 s | 17% / 60% | 5.1 GB | none: 924.3 s stays the fastest |
+
+- **GIF moved: the 595.7 s row was not quiet.** The model's GIF rate (0.0527
+  MB/s total) was 26% under the two corpora's agreed 0.0665. Refitted:
+  compress **0.121**, self-test **0.148** MB/s (`_INSANE_RECODE_RATE` /
+  `_INSANE_RECODE_VERIFY_RATE`). Against the quiet rows: `gif-dl` 453 s modelled
+  for 454.0, `gif-dl1` 92 s for 87.7 (it was 0.77x and 1.04x).
+- **MP3 holds**: round 3 is 4% under the old quiet row; byte-weighted over the
+  fastest rows (312.1 and 836.2 s) the total is 0.0995 MB/s against the 0.0965
+  the model uses, 3% apart. Left alone.
+- **JPEG holds**: the design folder's round 3 was slower than its quiet row.
+- **24 valid rows now (3 rounds x 8 corpora), 0 mismatches.** The contended
+  rows of every corpus are inside the range: MP3 misc 1,641.5 and 871.8 s,
+  design 1,670.3 and 1,115.6 s, `gif-dl` 836.0 and 595.7 s.
+- **A "quiet" row at 6% contention was 31% slow.** What the others' CPU share
+  and free memory do not show (cache, thermal state, the other session's I/O)
+  is not in the protocol. The fastest row of three is a floor, not a
+  measurement of a quiet machine, and a corpus with one row is a guess.

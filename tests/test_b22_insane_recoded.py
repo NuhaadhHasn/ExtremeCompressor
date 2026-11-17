@@ -90,10 +90,10 @@ CORPORA = {
 MEASURED = {
     "cmyk2": (56.5, [86.0, 94.4]),
     "mp3-music": (312.1, [489.0, 1_118.2]),
-    "mp3-misc": (871.8, [1_641.5]),
-    "design": (924.3, [1_670.3]),
+    "mp3-misc": (836.2, [1_641.5, 871.8]),
+    "design": (924.3, [1_670.3, 1_115.6]),
     "gif-dl1": (87.7, [107.0, 180.1]),
-    "gif-dl": (595.7, [836.0]),
+    "gif-dl": (454.0, [836.0, 595.7]),
     "png-dl": (565.4, [780.6, 1_621.5]),
     "png-dl1": (484.5, [753.4, 2_096.1]),
 }
@@ -115,13 +115,12 @@ def test_a_quiet_insane_run_sits_in_the_range(corpus):
 def test_the_expected_figure_is_close_to_a_quiet_insane_run(corpus):
     """Before: CMYK 3.2x high, MP3 1.9-2.3x, design 3.2x, PNG 2.3-2.7x LOW.
     One rate per kind, byte-weighted over two corpora each, so the corpora
-    themselves differ from it: GIF by up to 33% (the 6 MB corpus ran at 0.068
-    MB/s against the weighted 0.0527, the 30 MB one at 0.050), the rest by 13%
-    or less."""
+    themselves differ from it by 13% or less. (GIF differed by up to 33% until
+    B24: the 30 MB corpus's "quiet" row was contended; its third round, 454 s
+    on a quiet machine, put both corpora within 5% of one rate.)"""
     _, t = _insane(corpus)
     quiet = MEASURED[corpus][0]
-    margin = 1.35 if corpus.startswith("gif") else 1.25
-    assert quiet / margin <= t.expected <= quiet * margin, (corpus, t.expected, quiet)
+    assert quiet / 1.25 <= t.expected <= quiet * 1.25, (corpus, t.expected, quiet)
 
 
 @pytest.mark.parametrize("corpus", sorted(CORPORA))
@@ -146,7 +145,7 @@ def test_the_low_end_stays_informative(corpus):
 def test_insane_prices_recoded_media_by_what_it_is_not_one_chain_rate():
     """The same bytes, five kinds: Insane is fastest on packJPG output and
     slowest on PNG, which Precomp expands ~50x. Quiet seconds per MB,
-    compress plus self-test: JPEG 6.8, MP3 10.4, GIF 19.0, PNG 64."""
+    compress plus self-test: JPEG 6.8, MP3 10.4, GIF 15.0, PNG 64."""
     per_mb = {}
     for kind, make in (("jpeg", lambda: _even(_jpeg, "c", ".jpg", 10_000_000, 4, refuses=True)),
                        ("mp3", lambda: _even(_mp3, "m", ".mp3", 10_000_000, 4)),
@@ -157,7 +156,7 @@ def test_insane_prices_recoded_media_by_what_it_is_not_one_chain_rate():
     assert per_mb["jpeg"] < per_mb["mp3"] < per_mb["gif"] < per_mb["png"], per_mb
     # Seconds per MB, 10 MB of each, with the job's fixed 2 s (0.2 s/MB) in.
     assert 5.5 <= per_mb["jpeg"] <= 8.5 and 50 <= per_mb["png"] <= 80, per_mb
-    assert 9.5 <= per_mb["mp3"] <= 12.0 and 17.5 <= per_mb["gif"] <= 21.5, per_mb
+    assert 9.5 <= per_mb["mp3"] <= 12.0 and 14.0 <= per_mb["gif"] <= 17.0, per_mb
 
 
 def test_the_pre_b22_chain_rate_still_prices_everything_else_at_insane():

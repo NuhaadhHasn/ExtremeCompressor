@@ -1,9 +1,9 @@
 # 🚦 START HERE — handoff (written 2026-11-17)
 
-> **B22 is merged**: Insane prices **JPEG, MP3, GIF and PNG at their own
+> **B22 is merged** (`ba84077`): Insane prices **JPEG, MP3, GIF and PNG at their own
 > measured rates**, and every job carries a **setup cost** (1 s; 2 s at
 > Insane). Tests: **1,826 passed, 2 skipped, 1 xfailed** locally, corpus
-> guard clean (it covers `Programs` only now, see §2); CI on the branch: pending.
+> guard clean (it covers `Programs` only now, see §2); CI green on the branch.
 >
 > **Next: B23** (§3): calibration and the open list. **There is no owner
 > agenda.** One defect found by rendering is waiting for the owner's pick (§3).

@@ -1,6 +1,6 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-11-17**. **B22 merged** (merge commit in the git log):
+> Status date: **2026-11-17**. **B22 merged** (`ba84077`; CI green on the branch):
 > Insane prices **JPEG, MP3, GIF and PNG at their own measured rates**
 > (JPEG 0.147, MP3 0.097, GIF 0.053, PNG 0.0156 MB/s, compress plus
 > self-test; the old single chain rate was 3x high on JPEG, 2x on MP3 and
@@ -611,7 +611,8 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
-- [x] B22. ✅ **MERGED 2026-11-17** - **Insane's rate on recoded media, and a
+- [x] B22. ✅ **MERGED 2026-11-17** (`ba84077`; full suite **1,826 passed, 2 skipped,
+      1 xfailed**, corpus guard clean; CI green on the branch) - **Insane's rate on recoded media, and a
       per-job cost.** Eight corpora through `engine.compress` and
       `engine.extract` at Insane, **21 valid rows, every file restored
       (0 mismatches)**, on a machine that was not quiet (a runaway `find`

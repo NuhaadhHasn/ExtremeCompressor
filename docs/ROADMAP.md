@@ -1,13 +1,14 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-11-17**. **B22 merged** (`ba84077`; CI green on the branch):
-> Insane prices **JPEG, MP3, GIF and PNG at their own measured rates**
-> (JPEG 0.147, MP3 0.097, GIF 0.053, PNG 0.0156 MB/s, compress plus
-> self-test; the old single chain rate was 3x high on JPEG, 2x on MP3 and
-> 2.5x LOW on PNG), and every job carries a **setup cost** (1 s, 2 s at
-> Insane). The handoff's "10-50 s a job" did not reproduce. Tests: see the
-> handoff; the two strict xfails flipped, the GIF one's premise (one 564.7 s
-> run) did not reproduce. **Next: B23**, calibration and the open list.
+> Status date: **2026-11-17**. **B22, B23 and B24 merged** (`ba84077`,
+> `524881c`, `65e6d9c`; full suite **1,854 passed, 2 skipped, 1 xfailed**,
+> corpus guard clean; CI green on every branch). Insane prices **JPEG, MP3,
+> GIF and PNG at their own measured rates** (the old single chain rate was
+> 3x high on JPEG, 2x on MP3, 2.5x LOW on PNG, 1.5x high on GIF) and every
+> job carries a **setup cost**; the Compress page's **column headers now sit
+> over their columns**; calibration **skips pass-through video**; Insane's
+> **bar moves** through zpaqfranz's silent compress. **No phase is queued**:
+> the handoff lists what the owner can pick.
 >
 > Status date: **2026-11-13**. **B21b merged** (`d78ec62`): MKV, WebM
 > and M4A join the probe rule, and a job whose piped media don't fit the
@@ -614,14 +615,15 @@ OSI rule comes back before anything ships.
 - [x] B22. ✅ **MERGED 2026-11-17** (`ba84077`; full suite **1,826 passed, 2 skipped,
       1 xfailed**, corpus guard clean; CI green on the branch) - **Insane's rate on recoded media, and a
       per-job cost.** Eight corpora through `engine.compress` and
-      `engine.extract` at Insane, **21 valid rows, every file restored
-      (0 mismatches)**, on a machine that was not quiet (a runaway `find`
+      `engine.extract` at Insane, **24 valid rows (3 rounds each, after
+      B24), every file restored (0 mismatches)**, on a machine that was not quiet (a runaway `find`
       held ~24% of the CPU for two rounds; free memory fell to 0.5 GB in
       four rows; the low-memory reaper stopped the batch three times; the
       machine slept 15.6 h through one row, which was rerun). Per kind, from
       each corpus's least-contended row: **JPEG 0.277 / 0.312 MB/s**
       (compress / self-test; CMYK 8 MB and design 135 MB agree within 1%),
-      **MP3 0.171 / 0.221**, **GIF 0.084 / 0.141**, **PNG 0.029 / 0.034**.
+      **MP3 0.171 / 0.221**, **GIF 0.121 / 0.148** (B24; 0.084 / 0.141 in B22),
+      **PNG 0.029 / 0.034**.
       The old chain rate (0.091 / 0.107) was 3.1x slow on JPEG, 2x on MP3,
       1.2x on GIF and 2.5x fast on PNG. The two JPEG/MP3 strict xfails flip;
       the GIF xfail's premise (one 564.7 s run) did not reproduce: three
@@ -632,15 +634,39 @@ OSI rule comes back before anything ships.
       to the calibrated chain rate and made the progress bar go negative
       (caught by a test through `queue_manager._time_split`); review found
       calibration folding the new second into the learned rate (fixed) and
-      six wrong figures in the record. Not done: round 3 of the three big
-      corpora, the B20 containers at Insane, a quieter MP3 row.
+      six wrong figures in the record. Not done: the B20 containers at
+      Insane, a quieter MP3 row.
       [Record](benchmarks/2026-11-16-b22-insane-recoded.md).
-- [ ] B23. **Calibration and the open list** (next). One MKV run taught
-      Extreme 3.1 MB/s against the 1.41 prior (pass-through video is not the
-      chain); `calibrate.record` reads an elapsed time that holds Precomp's
-      per-pixel work (PNG, GIF) only approximately; plus the small open
-      items in the handoff §4 (the single-block treemap,
-      `tests/test_edge_cases.py:1`'s `SyntaxWarning`, Insane's bar freezing).
+- [x] B24. ✅ **MERGED 2026-11-17** (`65e6d9c`; suite 1,854 / 2 / 1, corpus
+      guard clean; CI green on the branch) - **GIF's Insane rate refitted on
+      round 3 of the large corpora.** `gif-dl` ran **454.0 s** at 5% of the
+      CPU against 595.7 s at 6%: the "quiet" row was 31% slow. With it the
+      two GIF corpora agree on the compress rate to 0.5% (0.1203, 0.1209
+      MB/s); GIF is **0.121 / 0.148** (was 0.084 / 0.141); modelled 453 s
+      for 454.0 and 92 s for 87.7. MP3 (3% apart) and JPEG (the design
+      folder's round 3 was slower) hold. 24 valid rows now. Not reviewed by a
+      separate agent (a constant and its tests, from the data).
+      [Record](benchmarks/2026-11-16-b22-insane-recoded.md) section 9.
+- [x] B23. ✅ **MERGED 2026-11-17** (`524881c`; suite 1,854 / 2 / 1, corpus
+      guard clean; CI green on the branch) - **Headers over their columns,
+      calibration and Insane's bar.** (1) The comparison table's headers sat
+      left of their values, more so to the right (older than B22): the
+      fixed-width "How these are measured" button shared the header strip
+      and made it narrower than every row. The toggle takes the first header
+      cell now ("How measured", the sentence as its tooltip); a test
+      measures column edges at 900, 1180 and 1500 px. (2) `_calibrate`
+      skips jobs mostly made of recoded plus probe-piped media together
+      (`AnalysisSummary.probe_piped_bytes`): one MKV job taught Extreme 3.1
+      MB/s against 1.41. (3) zpaqfranz prints one `100%` scan line with
+      nothing written, then nothing for the whole compress (82.5 s on 14 MB
+      at -m58, one line): the stage took it as progress and the bar sat at
+      the top of the chain's band. The scan line is not progress; a stage
+      that prints nothing moves the bar by elapsed time against the estimate
+      (capped at 90%, not while paused, serialised with the engine's
+      reports); and **a stage the engine skips now reports its end** (review:
+      Precomp finding nothing left the creep off on that path). (4) The
+      Details treemap is hidden for one block or a dominant one;
+      `test_edge_cases.py`'s `SyntaxWarning` is gone.
 - [x] B21b. ✅ **MERGED 2026-11-13** (`d78ec62`; full suite on the branch:
       **1,769 passed, 1 skipped, 4 xfailed**, corpus guard clean; CI green
       on the branch) — **MKV, WebM and M4A join the probe rule, with a disk

@@ -1,4 +1,4 @@
-"""D2 — the awkward-but-legitimate file matrix.
+r"""D2 — the awkward-but-legitimate file matrix.
 
 `test_safepath.py` and `test_malicious_archive.py` already pin what we
 **refuse**. This file pins the opposite and equally important half: a file

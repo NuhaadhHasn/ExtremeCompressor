@@ -21,6 +21,7 @@ minutes of LZMA2".
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -248,15 +249,32 @@ class _EngineWorker(QRunnable):
         # must not learn as the chain's own speed either.
         self._recode_s = job.summary.recode_seconds if job.summary else 0.0
         self._recode_bytes = job.summary.recode_bytes if job.summary else 0
+        # B23: and media piped only because the probe flagged it, which Precomp
+        # passes straight through.
+        self._probe_piped_bytes = job.summary.probe_piped_bytes if job.summary else 0
         # B13: the pack phase's span, which calibration must also leave out.
         self._pack_t0: float | None = None
         self._pack_end = 0.0
         self._verify_last = 0.0
         self._verify_run = 0.0
         self._verify_elapsed = 0.0
+        # B23: the stage the heartbeat is creeping the bar through, and when it
+        # started (a stage that prints nothing sends no event at its start).
+        self._silent_stage: str | None = None
+        self._silent_t0 = 0.0
+        self._beat_last: float | None = None
+        self._heartbeat_stopped = False
+        # The engine thread reports and the heartbeat thread creeps: one lock
+        # around both, so the bar never goes back and a beat cannot land after
+        # the job has ended.
+        self._emit_lock = threading.RLock()
 
     # -- callbacks, running on the worker thread ---------------------------
     def _on_progress(self, stage: str, pct: float) -> None:
+        with self._emit_lock:
+            self._on_progress_locked(stage, pct)
+
+    def _on_progress_locked(self, stage: str, pct: float) -> None:
         now = self._clock()
         if stage == VERIFY_STAGE:
             self._on_verify(pct, now)
@@ -281,6 +299,60 @@ class _EngineWorker(QRunnable):
         self._last_emit = now
         eta = self._eta.update(overall / 100.0, now - self._t0)
         self.signals.progress.emit(self.job_id, stage, overall, eta)
+
+    def _heartbeat_once(self) -> None:
+        """B23: while a stage that prints nothing runs (zpaqfranz: one scan
+        line, then silence for the whole compress), move the bar through that
+        stage's band by elapsed time against the estimate. The stage reports
+        nothing at its start, so its clock starts when the one before it is
+        seen to finish. The stage's own 100% closes the band and ends this."""
+        with self._emit_lock:
+            if self._heartbeat_stopped:
+                return
+            now = self._clock()
+            last, self._beat_last = self._beat_last, now
+            stage = self._chain.silent_stage()
+            if stage is None:
+                self._silent_stage = None
+                return
+            if stage != self._silent_stage:
+                self._silent_stage, self._silent_t0 = stage, now
+            if self.ctx.pause.is_set():
+                # Pause holds the engine between stages, so the stage that is
+                # "silent" next may not have started: its clock does not run,
+                # and on resume it goes on from where it was, not from the
+                # pause's length.
+                if last is not None:
+                    self._silent_t0 += now - last
+                return
+            overall = self._chain.creep(now - self._silent_t0)
+            if overall <= self._last_pct:
+                return
+            self._last_stage, self._last_pct, self._last_emit = stage, overall, now
+            eta = self._eta.update(overall / 100.0, now - self._t0)
+            self.signals.progress.emit(self.job_id, stage, overall, eta)
+
+    def _stop_heartbeat(self, stop: threading.Event) -> None:
+        """End the beat for good: a beat already in flight, or one that wakes
+        after the job is over, draws nothing (it would overwrite the finished
+        job's bar)."""
+        with self._emit_lock:
+            self._heartbeat_stopped = True
+        stop.set()
+
+    def _start_heartbeat(self) -> threading.Event:
+        """Beat once a second until the returned event is set."""
+        stop = threading.Event()
+
+        def beat() -> None:
+            while not stop.wait(1.0):
+                try:
+                    self._heartbeat_once()
+                except Exception:           # noqa: BLE001 - a bar is never worth a job
+                    pass
+
+        threading.Thread(target=beat, daemon=True).start()
+        return stop
 
     def _on_verify(self, pct: float, now: float) -> None:
         """The D9 self-test: timed against the estimate, never parsed.
@@ -363,6 +435,7 @@ class CompressWorker(_EngineWorker):
         self.signals.started.emit(self.job_id)
         self._note(f"profile '{self.profile.value}' → chain: "
                    f"{' → '.join(self._chain.chain)}")
+        heartbeat = self._start_heartbeat()
         try:
             if self.archive_format != "excmp":
                 # G4: a plain .7z/.zip has no container and no ledger, so it
@@ -411,8 +484,10 @@ class CompressWorker(_EngineWorker):
                     self._note(f"warning: the archive is written and verified "
                                f"at {result.archive}, but {step} failed: {exc}")
         except BaseException as exc:  # noqa: BLE001 - reported, never swallowed
+            self._stop_heartbeat(heartbeat)
             self._fail(exc)
             return
+        self._stop_heartbeat(heartbeat)
         for warning in result.warnings:
             self._note(f"warning: {warning}")
         self._calibrate(result)
@@ -446,7 +521,13 @@ class CompressWorker(_EngineWorker):
         # rate by -23% (review). Those are timed by `recode_cost` instead.
         # Below a quarter of the piped bytes, their modelled share of the time
         # is taken out and the rest is learned.
-        if self._recode_bytes * 4 >= piped:
+        # B23: and media piped only because the probe flagged it (MKV, MP4,
+        # ...): Precomp finds nothing in it and streams it through, the chain's
+        # no-op regime, which taught Extreme 3.1 MB/s against its 1.41 prior
+        # from one MKV job. The next job with streams Precomp can open then ran
+        # 2-3x over its estimate. Not modelled, so not learned; the two kinds
+        # count together (they are disjoint: the probe set has no recoded type).
+        if (self._recode_bytes + self._probe_piped_bytes) * 4 >= piped:
             return
         # I11: the self-test is estimated separately (`_VERIFY_RATE`), so it
         # must not also be learned as part of the codec's rate. Counting it in

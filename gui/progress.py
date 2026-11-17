@@ -26,6 +26,8 @@ restore, and never with a made-up remaining time once the estimate is spent.
 
 from __future__ import annotations
 
+import threading
+
 # Relative cost of each stage. Rough by nature - they only have to be right
 # about each other's *order of magnitude*.
 STAGE_WEIGHTS: dict[str, float] = {
@@ -72,6 +74,14 @@ VERIFY_GAP_LIMIT_S = 3.0
 #: How far elapsed time alone may carry the bar through the self-test's band.
 #: The rest is closed only by the engine saying the restore matched.
 VERIFY_TIME_CAP = 0.9
+#: B23: stages that report nothing while they work. zpaqfranz prints one `100%`
+#: scan line at 0.1 s and then nothing for the whole compress (measured: 14 MB
+#: at -m58, 82.5 s, 24 lines in all), and it is 400 of an Insane chain's 440
+#: weight, so the bar sat still for hours. Such a stage moves the bar through its
+#: own band by elapsed time against the estimate, as the self-test does, and
+#: never all the way: the stage ending is what closes the band.
+SILENT_STAGES = frozenset({"zpaqfranz"})
+SILENT_TIME_CAP = 0.9
 
 
 def eta_is_absent(stage: str, eta: object) -> bool:
@@ -105,6 +115,13 @@ class ChainProgress:
                  verify_s: float | None = None,
                  pack_s: float | None = None) -> None:
         self.chain: list[str] = list(chain) or ["zstd"]
+        # B23: the engine thread reports, a heartbeat thread creeps a silent
+        # stage; both move the same peak.
+        self._lock = threading.RLock()
+        #: How many stages are known to be finished (a stage's own 100%, or a
+        #: later stage reporting, which banks the ones before it).
+        self._finished = 0
+        self._compress_s = float(compress_s) if compress_s and compress_s > 0 else None
         self.ceiling = ceiling
         self._weights = [STAGE_WEIGHTS.get(s, DEFAULT_WEIGHT) for s in self.chain]
         self._index = 0
@@ -136,6 +153,10 @@ class ChainProgress:
 
     def update(self, stage_id: str, pct: float) -> float:
         """Feed one ``progress_cb`` call; get the overall percentage back."""
+        with self._lock:
+            return self._update(stage_id, pct)
+
+    def _update(self, stage_id: str, pct: float) -> float:
         if stage_id == VERIFY_STAGE:
             # Not a stage of the chain: appending it would rescale every
             # weight. The self-test is timed through `verify()` instead.
@@ -165,6 +186,7 @@ class ChainProgress:
         # Jumping forward means the stages in between were skipped
         # (StageSkip) - their weight is simply banked as complete.
         self._index = index
+        self._finished = max(self._finished, index + (1 if pct >= 100.0 else 0))
 
         total = sum(self._weights) or 1.0
         done = sum(self._weights[:index])
@@ -173,23 +195,53 @@ class ChainProgress:
         self._peak = max(self._peak, overall)
         return self._peak
 
+    def silent_stage(self) -> str | None:
+        """The stage that should be running now, if it is one that prints
+        nothing while it works (the stage after the last finished one)."""
+        with self._lock:
+            if self._finished < len(self.chain) and self.chain[self._finished] in SILENT_STAGES:
+                return self.chain[self._finished]
+            return None
+
+    def creep(self, stage_elapsed_s: float) -> float:
+        """The bar ``stage_elapsed_s`` into the silent stage, by the estimate.
+
+        The stage's own seconds are the chain's estimated compress time shared
+        out by weight. Without an estimate there is nothing to time it against
+        and the bar waits where it is."""
+        with self._lock:
+            if self.silent_stage() is None or self._compress_s is None:
+                return self._peak
+            index = self._finished
+            total = sum(self._weights) or 1.0
+            start = sum(self._weights[:index]) / total * self._chain_top
+            end = sum(self._weights[:index + 1]) / total * self._chain_top
+            expected = self._compress_s * self._weights[index] / total
+            if expected <= 0:
+                return self._peak
+            fraction = min(max(0.0, stage_elapsed_s) / expected, SILENT_TIME_CAP)
+            self._peak = max(self._peak, start + (end - start) * fraction)
+            return self._peak
+
     def verify(self, elapsed_s: float) -> float:
         """The bar ``elapsed_s`` into the self-test.
 
         Reaching the self-test means every stage of the chain finished, so
         the chain's band is banked whatever its last report said.
         """
-        self._peak = max(self._peak, self._verify_start)
-        if self.verify_s is not None:
-            fraction = min(max(0.0, elapsed_s) / self.verify_s, VERIFY_TIME_CAP)
-            band = self.ceiling - self._verify_start
-            self._peak = max(self._peak, self._verify_start + band * fraction)
-        return self._peak
+        with self._lock:
+            self._peak = max(self._peak, self._verify_start)
+            if self.verify_s is not None:
+                fraction = min(max(0.0, elapsed_s) / self.verify_s, VERIFY_TIME_CAP)
+                band = self.ceiling - self._verify_start
+                self._peak = max(self._peak, self._verify_start + band * fraction)
+            return self._peak
 
     def verify_done(self) -> float:
         """The engine says the restore matched: the self-test's band is full."""
-        self._peak = max(self._peak, self.ceiling)
-        return self._peak
+        with self._lock:
+            self._peak = max(self._peak, self.ceiling)
+            return self._peak
 
     def verify_remaining(self, elapsed_s: float) -> float | None:
         """Seconds left by the estimate, or ``None`` once it is spent."""
@@ -199,8 +251,9 @@ class ChainProgress:
         return left if left > 0 else None
 
     def finish(self) -> float:
-        self._peak = 100.0
-        return self._peak
+        with self._lock:
+            self._peak = 100.0
+            return self._peak
 
     @property
     def value(self) -> float:

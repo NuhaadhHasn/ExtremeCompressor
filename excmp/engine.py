@@ -1030,6 +1030,10 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     current = stage.compress(current, nxt, ctx)
                 except StageSkip as skip:
                     skip_notes.append(str(skip))
+                    # B23: a skipped stage is over, so say so: without it the
+                    # GUI never saw Precomp finish and, when zpaqfranz (which
+                    # prints nothing) came next, the bar sat still all of it.
+                    ctx.progress_cb(sid, 100.0)
                     continue  # pass data through; stage stays out of manifest
                 tool_name = getattr(stage, "tool_name", sid)
                 tool = tools.get(tool_name) if tools else None

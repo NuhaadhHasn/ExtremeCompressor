@@ -194,3 +194,40 @@ def test_clearing_the_input_reverts_the_chooser_to_placeholders(window, qtbot, t
     # Still visible, still pickable - it is the only profile chooser now.
     assert window.compare_table.isVisibleTo(window)
     assert len(window.compare_table.cards) == 4
+
+
+# -- the column headers sit over their columns (B23) -------------------------------
+
+def _column_lefts(widget, table):
+    """Left edge, in the table's coordinates, of each column of `widget`'s
+    horizontal layout."""
+    from PySide6.QtCore import QPoint
+    origin = widget.mapTo(table, QPoint(0, 0)).x()
+    layout = widget.layout()
+    return [origin + layout.itemAt(i).geometry().x() for i in range(layout.count())]
+
+
+@pytest.mark.parametrize("width", [900, 1180, 1500])
+def test_the_column_headers_sit_over_their_columns(qtbot, width):
+    """The header strip put the stretching labels beside the fixed-width
+    "How these are measured" button, so it was narrower than every row by the
+    button's width and each label sat left of its values, more so to the right:
+    "Saved" over the size column, "Peak RAM" 165 px short of the RAM figures.
+    Found by rendering the page (tools/qa_sweep.py); older than B22, identical
+    on main, and not a window-width artefact."""
+    table = CompareTable()
+    qtbot.addWidget(table)
+    table.resize(width, 600)
+    table.show()
+    table.set_rows([_row(p, ram_text="15 MB") for p in
+                    (Profile.FAST, Profile.NORMAL, Profile.EXTREME, Profile.INSANE)])
+    qtbot.waitExposed(table)
+    qtbot.wait(100)                     # let the rows lay out
+    heads = _column_lefts(table._head, table)
+    row = table.rows()[0]
+    values = row.layout().itemAt(0).widget()
+    cells = _column_lefts(values, table)
+    assert len(heads) == len(cells) == 6
+    for h, c, name in zip(heads, cells, ("Profile", "What runs", "Estimated size",
+                                         "Saved", "Estimated time", "Peak RAM")):
+        assert abs(h - c) <= 3, (name, h, c, heads, cells)

@@ -355,9 +355,17 @@ class CompareTable(QFrame):
         # W1-13 specified the disclosure as "click-to-toggle, not a tooltip -
         # keyboard users and screenshots lose tooltips". It shipped as a
         # permanently visible 68px paragraph instead; this is the missing half.
-        self.info_toggle = QPushButton(self.tr("ⓘ  How these are measured"), self)
+        #
+        # B23: the toggle takes the first header cell (the rows' first column is
+        # self-evidently the profiles), because beside the header it made the
+        # header narrower than every row by its own width, and each label sat
+        # left of its values, more so toward the right. Its text is short enough
+        # for a column; the sentence is its tooltip and accessible name.
+        self.info_toggle = QPushButton(self.tr("ⓘ  How measured"), self)
         self.info_toggle.setObjectName("SectionToggle")
         self.info_toggle.setCheckable(True)
+        self.info_toggle.setToolTip(self.tr("How these are measured"))
+        self.info_toggle.setAccessibleName(self.tr("How these are measured"))
         self.info_toggle.toggled.connect(self._set_info_open)
 
         self._caption = QLabel("", self)
@@ -370,22 +378,24 @@ class CompareTable(QFrame):
         head_line = QHBoxLayout(self._head)
         head_line.setContentsMargins(12, 0, 12, 0)
         head_line.setSpacing(14)
-        self._head_labels: list[QLabel] = []
-        for header, stretch in _COLUMNS:
+        self._head_labels: list[QLabel] = []     # the columns after the first
+        for position, (header, stretch) in enumerate(_COLUMNS):
+            if position == 0:
+                # The disclosure rides in the first cell; the header spans the
+                # rows' whole width, with the same column stretches, so the
+                # labels stay over their values.
+                self.info_toggle.setParent(self._head)
+                self.info_toggle.setMinimumWidth(1)     # clip, never widen the column
+                self.info_toggle.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                               QSizePolicy.Policy.Minimum)
+                head_line.addWidget(self.info_toggle, stretch)
+                continue
             label = QLabel(self.tr(header), self._head)
             label.setObjectName("Muted")
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
             head_line.addWidget(label, stretch)
             self._head_labels.append(label)
-        # The header strip carries the column labels and the disclosure on one
-        # line; _head keeps its own column stretches so the labels stay aligned
-        # with the rows beneath.
-        header_strip = QHBoxLayout()
-        header_strip.setContentsMargins(0, 0, 0, 0)
-        header_strip.setSpacing(GAP_INTRA)
-        header_strip.addWidget(self._head, 1)
-        header_strip.addWidget(self.info_toggle)
-        self._column.addLayout(header_strip)
+        self._column.addWidget(self._head)
 
         self._rows: list[ProfileRow] = []
         self._footnote = QLabel(
@@ -401,8 +411,10 @@ class CompareTable(QFrame):
         self._show_placeholders()
 
     def _set_info_open(self, open_: bool) -> None:
-        self.info_toggle.setText(self.tr("ⓘ  How these are measured") if not open_
-                                 else self.tr("ⓘ  Hide how these are measured"))
+        self.info_toggle.setText(self.tr("ⓘ  How measured") if not open_
+                                 else self.tr("ⓘ  Hide"))
+        self.info_toggle.setToolTip(self.tr("How these are measured") if not open_
+                                    else self.tr("Hide how these are measured"))
         self._footnote.setVisible(open_ and self._estimated)
 
     # -- selection API (was PresetSelector) -----------------------------------
@@ -500,7 +512,7 @@ class CompareTable(QFrame):
         stays honest because time is never measured here - a sample's
         stopwatch says nothing about the whole job's duration.
         """
-        for label, (header, _stretch) in zip(self._head_labels, _COLUMNS):
+        for label, (header, _stretch) in zip(self._head_labels, _COLUMNS[1:]):
             if header == "Estimated size" and measured:
                 label.setText(self.tr("Size"))
             else:

@@ -71,6 +71,10 @@ class AnalysisSummary:
     #: profile gets the same few percent from them, so they are not a reason
     #: for Extreme.
     floor_probe_bytes: int = 0
+    #: B23: bytes THIS job's plan pipes only because the probe flagged them
+    #: (video, M4A, Ogg; not what Precomp recodes). Calibration leaves a job
+    #: made mostly of these out, as it does one made of recoded media.
+    probe_piped_bytes: int = 0
     #: B13: Ogg audio balrogg will pack, and what packing it costs. They sit
     #: inside ``store_bytes`` (the files take the store route) but they are
     #: slow, so the bar and the time estimate have to know. B19: JPEGs lepton
@@ -218,6 +222,14 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
     floor_probe_bytes = sum(
         i.size for i in infos if i.path in strongest_piped and _probe_pipes(i)
         and i.path.suffix.lower() not in recoded)
+    # B23: the same under THIS job's own plan, for calibration: Precomp passes
+    # such files straight through, which is the chain's no-op regime and not
+    # its rate (one MKV job taught Extreme 3.1 MB/s against 1.41).
+    job_piped = {f for r in the_plan.routes if r.action == "pipeline" for f in r.files}
+    job_recoded = _PRECOMP_MEDIA if "precomp" in pipeline_stages else set()
+    probe_piped_bytes = sum(
+        i.size for i in infos if i.path in job_piped and _probe_pipes(i)
+        and i.path.suffix.lower() not in job_recoded)
     return AnalysisSummary(
         total_bytes=total,
         file_count=len(infos),
@@ -231,6 +243,7 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         tools={name: info is not None for name, info in (tools or {}).items()},
         floor_store_bytes=floor_store_bytes,
         floor_probe_bytes=floor_probe_bytes,
+        probe_piped_bytes=probe_piped_bytes,
         pack_bytes=cost.bytes,
         pack_seconds=cost.seconds,
         pack_verify_seconds=cost.verify_seconds,

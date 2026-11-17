@@ -93,7 +93,16 @@ _PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
 DEFAULT_METHOD = 58
 
 
+#: The one line zpaqfranz prints with a `%` while it compresses is its scan
+#: line, `100.00% 00:00:00 (13.35 MB)=>(0.00 B)`, at 0.1 s: 100% of the scan and
+#: nothing written. Taken as progress it told the GUI the stage was finished
+#: and the bar jumped to the top of the chain's band (B23; measured 2026-11-17).
+_NOTHING_WRITTEN = re.compile(r"=>\(\s*0(?:\.0+)?\s*B\)")
+
+
 def _parse_percent(line: str) -> float | None:
+    if _NOTHING_WRITTEN.search(line):
+        return None
     m = _PCT.search(line)
     return float(m.group(1)) if m else None
 

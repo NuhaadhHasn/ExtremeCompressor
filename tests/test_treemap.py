@@ -104,3 +104,28 @@ def test_a_single_category_is_fine(treemap, qtbot):
 def test_zero_sized_categories_are_ignored(treemap):
     treemap.set_breakdown({Category.VIDEO: 0, Category.TEXT: 100})
     assert [r[0] for r in treemap.legend_rows()] == ["text"]
+
+
+# -- B23: one block says nothing ---------------------------------------------------
+
+def test_a_single_category_is_not_drawn_as_one_huge_block(treemap, qtbot):
+    """With one category the treemap was a box filling the Details panel and
+    saying "text 100%", which the headline and the legend already say. It stays
+    hidden; its legend rows and its sentence are still there."""
+    treemap.set_breakdown({Category.TEXT: 500})
+    assert not treemap.isVisibleTo(treemap.parent() or treemap)
+    assert treemap.minimumHeight() == 0
+    assert treemap.legend_rows()[0][:2] == ("text", "100%")
+    assert "text 100%" in treemap.summary()
+
+
+def test_a_folder_that_is_all_one_thing_bar_slivers_is_not_drawn_either(treemap):
+    treemap.set_breakdown({Category.TEXT: 990_000, Category.IMAGE: 10_000})
+    assert not treemap.isVisibleTo(treemap.parent() or treemap)
+    assert len(treemap.legend_rows()) == 2
+
+
+def test_two_real_categories_are_still_drawn(treemap):
+    treemap.set_breakdown({Category.VIDEO: 600, Category.TEXT: 400})
+    assert treemap.isVisibleTo(treemap.parent() or treemap)
+    assert treemap.minimumHeight() == 120

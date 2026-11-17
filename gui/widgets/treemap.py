@@ -72,6 +72,16 @@ class Treemap(QWidget):
 
         self._rows = [(name, value, _PALETTE[i % len(_PALETTE)])
                       for i, (name, value) in enumerate(big)]
+        self.setAccessibleDescription(self.summary())
+        # B23: one block is a box saying "text 100%", which the headline and the
+        # legend already say, filling the Details panel. A folder that is all one
+        # thing bar slivers is the same box. The rows stay, for the legend and the
+        # sentence; only the picture goes.
+        if len(self._rows) <= 1 or self._rows[0][1] / total >= 1 - MIN_SHARE:
+            self.setMinimumHeight(0)
+            self.setVisible(False)
+            self.updateGeometry()
+            return
         self.setMinimumHeight(120)
         self.setVisible(True)
         self.updateGeometry()

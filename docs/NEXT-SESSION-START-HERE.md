@@ -40,7 +40,14 @@
 > read it before touching disk space, installed software or caches). This
 > session moved 673,626,040 B + 228,265,325 B of dead bench staging to
 > `C:\DevCache\_trash\2026-11-17-excmp-b22-staging\` (the log has the first
-> entry). **`C:\excmp-bench\b19` and `b21` are read by the tests: keep.**
+> entry). **2026-11-18: 20 more finished bench folders (~2.4 GB: xtool,
+> silesia, lolz, b14, i11, the big MOV/M4A/MKV/video sets, old QA renders) went
+> to `C:\DevCache\_trash\2026-11-18-excmp-bench-done\`** (`MOVED.txt` lists
+> them). If a later phase needs one back (the MOV/M4A/MKV sets would be the
+> corpora for "Insane on pass-through media"), restore it from there; do not
+> re-download. **Kept because tests read them: `b12\programs`, `b13\music`,
+> `b18` (samples, mp3-*), `b19\jpg-*`, `b21` (gif-dl*, png-dl*, `media\mkv.jsonl`,
+> `suite_parts.py`)**, plus `b20`, `b22` and `corpora`.
 > `C:\Program Files\precomp` is now only the fallback (the pinned copy is in
 > `tools\bin`, byte-identical); do not delete it from a fresh clone's reach.
 >

@@ -1,11 +1,28 @@
-# 🚦 START HERE — handoff (written 2026-11-17, end of the B22-B24 stretch)
+# 🚦 START HERE — handoff (written 2026-11-18, after B25; B22-B24 before it)
 
-> **B22, B23 and B24 are merged** (`ba84077`, `524881c`, `65e6d9c`). Tests:
-> **1,854 passed, 2 skipped, 1 xfailed** locally, corpus guard clean (it
-> covers `Programs` only now, see §2); CI green on every branch.
+> **B22-B25 are merged** (`ba84077`, `524881c`, `65e6d9c`, `d9a8965`). Tests:
+> **1,861 passed, 1 skipped, 1 xfailed** locally, corpus guard clean over 154
+> files (`Programs` + the corpus copy below); CI green on every branch.
+>
+> **B25 (2026-11-18, owner-approved):** Precomp v0.4.7 is **pinned** in
+> `excmp/toolfetch.py` (zip sha256 + size, the four files of `windows/` as the
+> directory digest). Fetched with the project's own `fetch_tool`; it lives in
+> `tools\bin\precomp\0.4.7\` (gitignored; **a fresh checkout or CI has none and
+> falls back to Program Files**: run `toolfetch.fetch_tool(TOOL_MANIFEST
+> ["precomp"])` once). `find_tools` asks for the verified pinned copy **first**
+> now, so the pin is what runs. **SREP is still unpinned** (it stays out of the
+> engine anyway).
+>
+> **Test corpus copy (temporary, the owner asked for it):**
+> `C:\excmp-bench\corpora\My Graphical Projects`, 123 files, 666,560,229 B,
+> hash-identical to the original in `C:\DevCache\_trash\2026-11-16-graphical-
+> projects-done`. `tests/test_audit_regressions.py` and `tools/corpus_guard.py`
+> read it. **When the owner says the work is done, remove it**: inventory, move
+> it to `C:\DevCache\_trash\<date>\`, log it in `CLEANUP-LOG.md`, and delete the
+> two fallback paths (each is commented with the date). Do not remove it before.
 >
 > **There is no queued phase and no owner agenda.** §3 lists what can be
-> picked, with a recommendation. **Read §2 first**: most of this stretch's cost
+> picked, with a recommendation. **Read §2 first**: most of the B22-B24 cost
 > was the machine, not the code.
 >
 > **The machine is shared and tight on memory.** Claude Code's low-memory
@@ -24,7 +41,8 @@
 > session moved 673,626,040 B + 228,265,325 B of dead bench staging to
 > `C:\DevCache\_trash\2026-11-17-excmp-b22-staging\` (the log has the first
 > entry). **`C:\excmp-bench\b19` and `b21` are read by the tests: keep.**
-> `C:\Program Files\precomp` and `srep` are still the app's only copies.
+> `C:\Program Files\precomp` is now only the fallback (the pinned copy is in
+> `tools\bin`, byte-identical); do not delete it from a fresh clone's reach.
 >
 > **Target machine:** Dell Inspiron 15-3567, i5-7200U (2 cores / 4 threads),
 > 15.9 GB. Run `Get-CimInstance Win32_Processor` before quoting a speed.
@@ -62,6 +80,8 @@
 | **B23 calibration** | skips jobs mostly made of recoded plus probe-piped media (`AnalysisSummary.probe_piped_bytes`): one MKV job had taught Extreme 3.1 MB/s against 1.41 | `tests/test_b23_calibration.py` |
 | **B23 Insane's bar** | zpaqfranz prints one `100%` scan line (nothing written), then nothing for the whole compress; the bar sat at the top of the chain's band. Fixed three ways: the scan line is not progress; a silent stage creeps by elapsed time against the estimate (90% cap, not while paused, locked against the engine's reports); **a stage the engine skips reports its end** | `tests/test_b23_silent_stage.py` |
 | **B23 small** | the Details treemap is hidden for one block (or a dominant one); `test_edge_cases.py`'s `SyntaxWarning` is gone | `tests/test_treemap.py` |
+| **B25 Precomp pin** | v0.4.7 pinned; GitHub publishes no digest and winget has no manifest, so the second party is the 2019 Program Files install, whose `precomp.exe` equals the asset's (`aabca1ee...515d`). Discovery prefers the verified copy; one `find_tools` call costs ~31 ms more | `tests/test_b25_precomp_pin.py` |
+| **B25 corpus** | the test and the guard read the bench copy of `My Graphical Projects` (the audit test no longer skips) | commit `5efdacc` |
 | **Reviews** | two on B22 (estimator consistency, evidence) and one with a shell on B23; each found real bugs (calibration folding the setup second, the unweighted JPEG rate, Precomp-skip leaving the creep off, the creep running while paused); B24 was a constant refit and had no separate reviewer | the records |
 
 Tests added: **55** (`test_b22_insane_recoded.py`), **28** (`test_b23_*`, the
@@ -100,9 +120,9 @@ header and treemap tests); four exact-number assertions moved by the setup term.
   copy of the input). Regenerable; the owner wants them in the trash folder.
 - **`My Graphical Projects` is gone** from `...\0No Need To Check\` (moved to
   `C:\DevCache\_trash\2026-11-16-graphical-projects-done`, not by this
-  session): the guard says "skipped, not present" and covers 31 files in
-  `Programs`; `tests/test_audit_regressions.py` reads one JPEG from it and now
-  **skips** (the second skip in the count).
+  session). The guard still prints "skipped, not present" for the original
+  path; that is expected now that the bench copy (top of this file) is watched
+  too. **The one remaining skip** is the opt-in 57k-file corpus walk.
 
 ### Estimator and GUI facts
 
@@ -153,10 +173,10 @@ header and treemap tests); four exact-number assertions moved by the setup term.
 The roadmap has nothing left that is both unblocked and in the code's lane.
 Recommended order, each one branch and one merge:
 
-1. **Ask the owner for the Precomp pin.** Precomp (files dated 2019) and SREP
-   exist only under `C:\Program Files\`, unpinned and unhashed; a machine
-   cleanup nearly removed them on 2026-11-13. Pinning Precomp through
-   `excmp/toolfetch.py` is a **download: ask first** (the owner pays for data).
+1. ~~The Precomp pin~~ **done (B25).** Left over from it: a missing pinned
+   copy falls back to Program Files **silently** (a log line would help), and
+   `main.py`, the superseded Tkinter prototype, still hardcodes the old path
+   (leave it).
 2. **The B20 containers at Insane** (AAB, NuGet, APPX, AAR, ODT, EPUB): the one
    recoded kind Insane still prices at the chain rate plus an old extra. Three
    corpora already exist (`C:\excmp-bench\b20`); about 2-3 hours on a quiet
@@ -182,7 +202,7 @@ Recommended order, each one branch and one merge:
 | **B13** | the owner's *Celeste* FMOD download never arrived |
 | **B6** | only with an owner-provided Oodle sample; it also settles `-intense` |
 | **D6b, I5, I10** | fuzz targets; Explorer menu (**ask first**, HKCU); settings search / drag-out / jump list |
-| **Tools** | the Precomp/SREP pin (§3) |
+| **Tools** | SREP unpinned (not used by the engine); the pinned Precomp exists only where it was fetched (per checkout) |
 | **B15, D4b, C, H, E3–E5** | too early / elevated session / lossy phase / installer phase / release-only |
 | **I7** | ❌ won't do |
 
@@ -190,6 +210,8 @@ Recommended order, each one branch and one merge:
 
 ## 5. Things not to re-litigate
 
+- **Precomp is pinned and preferred over Program Files** (B25); a pinned tool
+  that fails its directory digest is not used, and discovery falls through.
 - **Insane prices JPEG (lepton-refused), MP3, GIF and PNG at their own
   rates** (B22, B24); the B20 containers keep the chain's.
 - **A job has a setup cost: 1 s, 2 s at Insane**; flat in the range, zero for

@@ -1,8 +1,8 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
-> Status date: **2026-11-17**. **B22, B23 and B24 merged** (`ba84077`,
-> `524881c`, `65e6d9c`; full suite **1,854 passed, 2 skipped, 1 xfailed**,
-> corpus guard clean; CI green on every branch). Insane prices **JPEG, MP3,
+> Status date: **2026-11-18**. **B22-B25 merged** (`ba84077`, `524881c`,
+> `65e6d9c`, `d9a8965`; full suite **1,861 passed, 1 skipped, 1 xfailed**,
+> corpus guard clean; CI green on every branch). B25 pinned Precomp. Insane prices **JPEG, MP3,
 > GIF and PNG at their own measured rates** (the old single chain rate was
 > 3x high on JPEG, 2x on MP3, 2.5x LOW on PNG, 1.5x high on GIF) and every
 > job carries a **setup cost**; the Compress page's **column headers now sit
@@ -647,6 +647,17 @@ OSI rule comes back before anything ships.
       folder's round 3 was slower) hold. 24 valid rows now. Not reviewed by a
       separate agent (a constant and its tests, from the data).
       [Record](benchmarks/2026-11-16-b22-insane-recoded.md) section 9.
+- [x] B25. ✅ **MERGED 2026-11-18** (`d9a8965`; suite 1,861 / 1 / 1, corpus
+      guard clean over 154 files; CI green on the branch; one adversarial
+      review, nothing blocking) - **Precomp v0.4.7 pinned.** Zip sha256 + size
+      and the four `windows/` files as the directory digest, fetched with
+      `toolfetch.fetch_tool` and verified on the real bytes. GitHub publishes
+      no digest and winget has no manifest, so the second party is the 2019
+      Program Files install, whose `precomp.exe` is byte-identical to the
+      asset's. `find_tools` asks for the verified pinned copy before the
+      well-known path (which stays as the fallback). The audit test and the
+      corpus guard read a hash-identical bench copy of `My Graphical Projects`
+      (temporary; the original was trashed 2026-11-16). SREP stays unpinned.
 - [x] B23. ✅ **MERGED 2026-11-17** (`524881c`; suite 1,854 / 2 / 1, corpus
       guard clean; CI green on the branch) - **Headers over their columns,
       calibration and Insane's bar.** (1) The comparison table's headers sat

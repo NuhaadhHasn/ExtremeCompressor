@@ -1,9 +1,10 @@
 """Discovery of the external CLI tools the engine can orchestrate.
 
-Tools are looked up in well-known install locations first, then in the flat
-``tools/bin`` directory, then in E1's nested
-``tools/bin/<name>/<version>/`` layout (via `toolfetch.installed_path`, so a
-hash-pinned tool is only reported when it still matches its pin), then on
+Tools are looked up in E1's nested ``tools/bin/<name>/<version>/`` layout
+first (via `toolfetch.installed_path`, so a hash-pinned tool is only reported
+when it still matches its pin; B25 moved this ahead of the well-known paths so
+a pinned Precomp is the one that runs), then in well-known install locations,
+then in the flat ``tools/bin`` directory, then on
 PATH. A missing tool is not an
 error at discovery time — profiles degrade gracefully; stages that need a
 missing tool raise :class:`ToolMissingError` when actually used.

@@ -168,27 +168,29 @@ def find_tools(with_versions: bool = False) -> dict[str, ToolInfo | None]:
     names = dict.fromkeys([*CANDIDATES, *toolfetch.TOOL_MANIFEST])
     for name in names:
         paths = CANDIDATES.get(name, ())
-        located: str | None = None
-        for p in paths:
-            if Path(p).is_file():
-                located = p
-                break
+        # E1's own layout, which is nested rather than a flat
+        # `tools/bin/<name>.exe`: `<root>/<name>/<version>/<exe_relpath>`.
+        # An audit pointed out that this docstring promised to look "in the
+        # app-managed tools/bin directory" while never looking at the shape E1
+        # actually installs into - so a hash-pinned tool was invisible to
+        # normal discovery and only reachable by asking `toolfetch` directly.
+        #
+        # Routed through `installed_path`, so a fetched tool is only reported
+        # when it still hashes to what was pinned. B25: asked **first**. A
+        # tool that is both pinned and listed in CANDIDATES (Precomp) would
+        # otherwise always resolve to the unverified well-known path and the
+        # pin would never run; the well-known path stays as the fallback for a
+        # machine that has not fetched the pinned copy yet.
+        located: str | None = _pinned_tool(name)
+        if located is None:
+            for p in paths:
+                if Path(p).is_file():
+                    located = p
+                    break
         if located is None:
             app_exe = APP_BIN / f"{name}.exe"
             if app_exe.is_file():
                 located = str(app_exe)
-        if located is None:
-            # E1's own layout, which is nested rather than a flat
-            # `tools/bin/<name>.exe`: `<root>/<name>/<version>/<exe_relpath>`.
-            # An audit pointed out that this docstring promised to look "in
-            # the app-managed tools/bin directory" while never looking at the
-            # shape E1 actually installs into - so a hash-pinned tool was
-            # invisible to normal discovery and only reachable by asking
-            # `toolfetch` directly, which is what `flacaudio` happens to do.
-            #
-            # Routed through `installed_path`, so a fetched tool is only
-            # reported when it still hashes to what was pinned.
-            located = _pinned_tool(name)
         if located is None:
             located = shutil.which(name)
         if located is None:

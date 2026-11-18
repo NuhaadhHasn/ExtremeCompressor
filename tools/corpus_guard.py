@@ -32,6 +32,9 @@ WATCHED = [
          r"\0No Need To Check\Programs"),
     Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD"
          r"\0No Need To Check\My Graphical Projects"),
+    # 2026-11-18: the folder above was moved to the trash; this is the
+    # hash-identical copy the tests now read. Skipped when absent.
+    Path(r"C:\excmp-bench\corpora\My Graphical Projects"),
 ]
 
 STORE = Path(__file__).resolve().parent.parent / ".corpus-snapshot.json"

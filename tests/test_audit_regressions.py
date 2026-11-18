@@ -242,9 +242,15 @@ def _packable_jpeg() -> bytes | None:
 
     if not jpeg.available():
         return None
-    root = Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD"
-                r"\0No Need To Check\My Graphical Projects")
-    if not root.exists():
+    # The original folder was moved to C:\DevCache\_trash on 2026-11-16, so the
+    # test skipped silently. A byte-identical copy (123 files, 666,560,229 B,
+    # hash-compared) sits in the bench folder for exactly this; remove it and
+    # this line together when the corpus is no longer needed.
+    roots = (Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD"
+                  r"\0No Need To Check\My Graphical Projects"),
+             Path(r"C:\excmp-bench\corpora\My Graphical Projects"))
+    root = next((r for r in roots if r.exists()), None)
+    if root is None:
         return None
     for candidate in root.rglob("*.jpg"):
         try:

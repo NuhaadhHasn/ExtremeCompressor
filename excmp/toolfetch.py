@@ -285,6 +285,42 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
         ),
         raw=True,
     ),
+    # B25: Precomp, which Extreme and Insane both run and which used to be
+    # found only under `C:\Program Files\precomp` - unhashed, unversioned, and
+    # one tidy-up of that folder from gone. v0.4.7 (2019-02-22) is the last
+    # upstream release, "ALPHA - use for testing only" by its own banner, and
+    # the lossless gate is what makes that acceptable: every Precomp output is
+    # restored and SHA-256 compared before an archive is kept.
+    #
+    # GitHub's per-asset `digest` is null for this release and winget has no
+    # Precomp manifest, so the second party is the copy that has been in
+    # Program Files since 2019 and was not downloaded by this project: its
+    # `precomp.exe` matches the asset's `windows/precomp.exe` byte for byte
+    # (aabca1ee...515d). Fetched and hashed on this machine 2026-11-18.
+    #
+    # Precomp's licence is its own ("free for non-commercial use", Christian
+    # Schneider); it is driven as a subprocess and never linked, and this repo
+    # is private with no distribution. If that changes, this needs revisiting
+    # first, like flac above.
+    "precomp": ToolSpec(
+        name="precomp",
+        version="0.4.7",
+        url=("https://github.com/schnaader/precomp-cpp/releases/download/"
+             "v0.4.7/precomp.zip"),
+        sha256="fcd308310135cdc1ae25b45288bcc5201f9cabf5a9e707cfb33b0f99c548de0b",
+        size=2300841,
+        exe_relpath="windows/precomp.exe",
+        license="Free for non-commercial use (Christian Schneider)",
+        min_version="0.4.7",
+        source=("github.com/schnaader/precomp-cpp v0.4.7 asset (no digest "
+                "published); exe matches the 2019 Program Files install"),
+        exe_dir_sha256=(
+            ("precomf.exe", "725dbe8d138a10cdbb25ac3e3ad8b72b2517647d733e9138ceedffe374f3b6e8"),
+            ("precomf32.exe", "677075cbf90037d3f07f7dda0281d544b97d6ccec159a83f48186cd9ecc4832c"),
+            ("precomp.exe", "aabca1ee4eebc1e6ddcee5cb0b654c1c82c26daa1dbcb63f6e5279852826515d"),
+            ("precomp32.exe", "427f9982197d72e95c26daeb403ddf1d70c62d13ce930ce26c443989ecd1f775"),
+        ),
+    ),
 }
 
 

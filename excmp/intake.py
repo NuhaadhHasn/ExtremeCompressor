@@ -38,9 +38,11 @@ MAX_PATH_CHARS = 32_767          # the longest path Windows has
 MAX_WIRE_BYTES = 1 << 20
 
 #: Qt's own options that take a value: skipped together with it, so ``-platform offscreen`` never
-#: reads "offscreen" as a path. Any other ``-flag`` is skipped alone.
-_QT_OPTIONS_WITH_VALUE = frozenset({"-platform", "-style", "-stylesheet", "-geometry", "-title",
-                                    "-display", "-platformtheme", "-plugin"})
+#: reads "offscreen" as a path. Qt accepts one dash or two (``--platform``). Any other ``-flag``
+#: is skipped alone. Compared without the dashes.
+_QT_OPTIONS_WITH_VALUE = frozenset({"platform", "style", "stylesheet", "geometry", "title",
+                                    "display", "platformtheme", "plugin", "qwindowtitle",
+                                    "qwindowicon", "qwindowgeometry", "session"})
 
 
 @dataclass(frozen=True)
@@ -97,7 +99,7 @@ def parse_intake(argv: Sequence[str]) -> Intake | None:
             skip = False
             continue
         if arg.startswith("-"):
-            skip = arg.lower() in _QT_OPTIONS_WITH_VALUE
+            skip = arg.lstrip("-").lower() in _QT_OPTIONS_WITH_VALUE
             continue
         words.append(arg)
     if not words:

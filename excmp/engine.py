@@ -1812,6 +1812,30 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
             password: str | None = None,
             digests_out: dict[str, str] | None = None,
             keyfile: Path | None = None) -> ExtractResult:
+    """Restore an ``.excmp`` and hash-verify every file against its ledger (see `_extract`).
+
+    A destination folder THIS call created is taken away again if the restore fails: a
+    password-protected or unreadable archive used to leave an empty ``junk/`` beside it (found by
+    the I5 review, where "Extract here" makes it one right-click). A folder that was already there
+    stays, and so does one the restore had started to fill - ``rmdir`` refuses a non-empty one.
+    """
+    out_dir = Path(out_dir)
+    created = not out_dir.exists()
+    try:
+        return _extract(archive, out_dir, ctx, password, digests_out, keyfile)
+    except BaseException:
+        if created:
+            try:
+                out_dir.rmdir()
+            except OSError:
+                pass
+        raise
+
+
+def _extract(archive: Path, out_dir: Path, ctx: StageContext,
+             password: str | None = None,
+             digests_out: dict[str, str] | None = None,
+             keyfile: Path | None = None) -> ExtractResult:
     """Restore an ``.excmp`` and hash-verify every file against its ledger.
 
     ``digests_out`` (D5) is handed straight to

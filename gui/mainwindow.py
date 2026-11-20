@@ -705,9 +705,18 @@ class MainWindow(QMainWindow):
         tab.set_archive(archive)
         self.tabs.setCurrentWidget(tab)
         if intake.action == "extract-here":
-            tab.request_extract()
+            # No destination is shown before this runs, so it never goes anywhere it could
+            # replace something (see ExtractTab.safe_here_destination).
+            tab.dest_edit.setText(str(tab.safe_here_destination(archive)))
+            if not tab.request_extract():
+                self.banner.show_message(
+                    self.tr("%s cannot be extracted from here.") % archive.name, tone="warn")
         elif intake.action == "verify":
-            tab.request_verify()
+            if not tab.request_verify():
+                self.banner.show_message(
+                    self.tr("%s cannot be verified: only ExtremeCompressor archives carry the "
+                            "SHA-256 ledger a verification compares against.") % archive.name,
+                    tone="warn")
 
     def _bring_to_front(self) -> None:
         if self.isMinimized():

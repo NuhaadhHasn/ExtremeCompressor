@@ -320,8 +320,7 @@ def test_extract_without_here_only_opens_the_tab(qtbot, win, tmp_path):
 
 
 def test_verify_asks_for_the_restore_check(qtbot, win, tmp_path):
-    archive = tmp_path / "a.excmp"
-    archive.write_bytes(b"x")
+    archive = _make_archive(tmp_path)          # a real one: the Verify button refuses a fake
     seen = []
     win.extract_tab.verifyRequested.connect(lambda a: seen.append(Path(a)))
     win.start_verification = lambda a: None
@@ -364,3 +363,171 @@ def test_main_without_arguments_just_opens_the_window(qtbot, monkeypatch, name):
     QTimer.singleShot(0, QCoreApplication.quit)
     assert app_mod.main(["run_gui.py"]) == 0
     assert seen == []
+
+
+# -- the review of 854a203 (GUI half): each of these failed before the fix ------
+
+def _make_archive(tmp_path, folder="dl", name="one"):
+    """A real archive of ``src/proj/a.txt`` placed in ``tmp_path/<folder>``: one top-level folder,
+    which is the case where "Extract here" suggests the archive's OWN folder."""
+    from excmp import engine
+    from excmp.planner import Profile
+    from excmp.stages.base import StageContext
+    src = tmp_path / "src" / "proj"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "a.txt").write_text("hello")
+    dl = tmp_path / folder
+    dl.mkdir(exist_ok=True)
+    arch = dl / f"{name}.excmp"
+    engine.compress([src], arch, Profile("fast"), StageContext(temp_dir=tmp_path / "tmp"))
+    return arch
+
+
+def _extract_requests(win):
+    seen = []
+    win.extract_tab.extractRequested.connect(lambda a, d: seen.append((Path(a), Path(d))))
+    win.queue.add_extract = lambda a, d: None                       # no real job
+    return seen
+
+
+def test_extract_here_never_overwrites_a_file_that_is_already_there(qtbot, win, tmp_path):
+    """Review: one right-click on a downloaded archive put the user's edited a.txt back to its
+    archived text - no prompt, no visible destination. Now a collision means a fresh folder."""
+    archive = _make_archive(tmp_path)
+    mine = archive.parent / "proj" / "a.txt"
+    mine.parent.mkdir()
+    mine.write_text("USER EDIT")
+    seen = _extract_requests(win)
+    win.handle_intake(I.Intake("extract-here", (archive,)))
+    assert len(seen) == 1
+    _, dest = seen[0]
+    assert dest != archive.parent and not (dest / "proj" / "a.txt").exists()
+    assert mine.read_text() == "USER EDIT"
+
+
+def test_extract_here_uses_the_archives_own_folder_when_nothing_would_collide(qtbot, win, tmp_path):
+    archive = _make_archive(tmp_path)
+    seen = _extract_requests(win)
+    win.handle_intake(I.Intake("extract-here", (archive,)))
+    assert seen == [(archive, archive.parent)]
+
+
+def test_extract_here_takes_the_next_free_folder_name(qtbot, win, tmp_path):
+    archive = _make_archive(tmp_path)
+    (archive.parent / "proj").mkdir()
+    (archive.parent / "proj" / "a.txt").write_text("x")
+    (archive.parent / "one").mkdir()
+    (archive.parent / "one (2)").mkdir()
+    seen = _extract_requests(win)
+    win.handle_intake(I.Intake("extract-here", (archive,)))
+    assert seen[0][1] == archive.parent / "one (3)"
+
+
+def test_extract_here_on_an_unreadable_archive_still_does_not_write_into_the_folder(qtbot, win, tmp_path):
+    junk = tmp_path / "junk.excmp"
+    junk.write_bytes(b"not an archive")
+    (tmp_path / "junk").mkdir()
+    seen = _extract_requests(win)
+    win.handle_intake(I.Intake("extract-here", (junk,)))
+    assert all(dest != tmp_path for _, dest in seen)
+
+
+def test_verify_asks_the_button_s_question_first(qtbot, win, tmp_path):
+    """The Verify button is off for an archive with no SHA-256 ledger; the verb must not be able
+    to queue a job the button would refuse."""
+    import zipfile
+    foreign = tmp_path / "x.zip"
+    with zipfile.ZipFile(foreign, "w") as z:
+        z.writestr("a.txt", "x")
+    seen = []
+    win.extract_tab.verifyRequested.connect(lambda a: seen.append(a))
+    win.handle_intake(I.Intake("verify", (foreign,)))
+    assert seen == []
+    assert "verif" in win.banner._text.text().lower()
+
+
+def test_extract_here_asks_the_buttons_question_first(qtbot, win, tmp_path):
+    seen = _extract_requests(win)
+    folder = tmp_path / "f.excmp"
+    folder.write_bytes(b"x")
+    win.extract_tab.dest_edit.setText("")
+    win.extract_tab.set_archive(folder)
+    win.extract_tab.dest_edit.setText("")                  # no destination: the button is off
+    win.extract_tab.request_extract()
+    assert seen == []
+
+
+def test_a_failed_extract_does_not_leave_the_folder_it_made(tmp_path):
+    """Review: junk.excmp -> a `junk/` folder appeared beside it, empty, and stayed."""
+    from excmp import engine
+    from excmp.stages.base import StageContext
+    junk = tmp_path / "junk.excmp"
+    junk.write_bytes(b"not an archive")
+    out = tmp_path / "junk"
+    with pytest.raises(Exception):
+        engine.extract(junk, out, StageContext(temp_dir=tmp_path / "tmp"))
+    assert not out.exists()
+
+
+def test_a_failed_extract_leaves_a_folder_that_was_already_there(tmp_path):
+    from excmp import engine
+    from excmp.stages.base import StageContext
+    junk = tmp_path / "junk.excmp"
+    junk.write_bytes(b"not an archive")
+    out = tmp_path / "junk"
+    out.mkdir()
+    with pytest.raises(Exception):
+        engine.extract(junk, out, StageContext(temp_dir=tmp_path / "tmp"))
+    assert out.is_dir()
+
+
+# -- the mutations the first tests did not catch --------------------------------
+
+def test_main_passes_a_forwarded_intake_on_to_the_window(qtbot, monkeypatch, name):
+    """Delete `server.received.connect(batcher.push)` in main() and every other test still passed."""
+    import gui.app as app_mod
+    import gui.singleinstance as si
+    from PySide6.QtCore import QTimer
+    monkeypatch.setattr(si, "default_name", lambda: name)
+    seen = []
+    monkeypatch.setattr(MainWindow, "handle_intake", lambda self, i: seen.append(i))
+    QTimer.singleShot(300, lambda: _spawn("acquire", name, r"C:\late.txt"))   # a second process
+    poll = QTimer()
+    poll.timeout.connect(lambda: QCoreApplication.quit() if seen else None)
+    poll.start(100)
+    QTimer.singleShot(30_000, QCoreApplication.quit)                           # never hang
+    assert app_mod.main(["run_gui.py"]) == 0
+    assert seen == [I.Intake("compress", (Path(r"C:\late.txt"),))]
+
+
+def test_acquire_takes_the_lock_when_the_running_window_goes_away(qtbot, monkeypatch, name):
+    import gui.singleinstance as si
+    handle = object()
+    locks = iter([None, handle])
+    monkeypatch.setattr(si, "_try_lock", lambda n: next(locks))
+    monkeypatch.setattr(si, "forward", lambda *a, **k: False)
+    srv = IntakeServer(name)
+    try:
+        assert acquire(srv, I.Intake("compress", (Path(r"C:\a"),)), deadline_s=2, step_ms=10) is True
+        assert srv._lock is handle
+    finally:
+        srv.close()
+
+
+def test_a_secondary_waits_long_enough_for_a_busy_window():
+    """Review: a window busy for 6 s (a big archive, a slow start on 2 cores) made every waiting
+    secondary give up after 4 s and open its own window - five windows for five files."""
+    import inspect
+    assert inspect.signature(acquire).parameters["deadline_s"].default >= 20
+
+
+def test_the_window_is_brought_back_when_it_was_minimised(qtbot, win, tmp_path, monkeypatch):
+    f = tmp_path / "a.txt"
+    f.write_text("x")
+    monkeypatch.setattr(win, "add_paths", lambda p: None)
+    win.show()
+    win.showMinimized()
+    if not win.isMinimized():
+        pytest.skip("this Qt platform does not minimise")
+    win.handle_intake(I.Intake("compress", (f,)))
+    assert not win.isMinimized()

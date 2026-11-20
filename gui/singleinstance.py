@@ -151,10 +151,15 @@ def forward(name: str, intake: Intake, timeout_ms: int = 400) -> bool:
     return bool(ok)
 
 
-def acquire(server: IntakeServer, intake: Intake | None, *, deadline_s: float = 4.0,
+def acquire(server: IntakeServer, intake: Intake | None, *, deadline_s: float = 30.0,
             step_ms: int = 80) -> bool:
     """True: this process is the window (or runs alone). False: its files were handed to the
-    running window and it should exit."""
+    running window and it should exit.
+
+    ``deadline_s`` is generous on purpose: a window that cannot take a message (a big archive
+    being opened, a slow start on two cores, a 100-file selection) is BUSY, not gone, and a
+    secondary that gave up after 4 s opened a window of its own - five windows for five files in
+    the I5 review. A crashed window frees its lock at once and is taken over without waiting."""
     def become_the_window(lock) -> bool:
         server.hold(lock)
         server.listen()           # if the pipe is somehow unavailable we are still the window

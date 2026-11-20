@@ -470,3 +470,11 @@ def test_the_cli_no_associate_leaves_excmp_alone(root, monkeypatch, tmp_path):
     assert _cli("install", "--no-associate") == 0
     assert not _exists(root, ".excmp")
     assert _exists(root, r"*\shell\ExtremeCompressor.Compress")
+
+
+@pytest.mark.parametrize("opt", ["--platform", "--style", "--stylesheet", "--qwindowtitle",
+                                 "-qwindowtitle", "--session", "-session", "--geometry"])
+def test_qt_options_are_skipped_with_their_value_in_either_dash_form(opt):
+    """Review: `--platform offscreen` produced "Not found: offscreen"."""
+    got = I.parse_intake([opt, "something", "compress", r"C:\a.txt"])
+    assert got == I.Intake("compress", (Path(r"C:\a.txt"),))

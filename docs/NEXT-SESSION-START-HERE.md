@@ -278,6 +278,7 @@ Recommended order, each one branch and one merge:
 | **D6b, I10** | fuzz targets; settings search / drag-out / jump list |
 | **Tools** | SREP unpinned (not used by the engine); the pinned Precomp exists only where it was fetched (per checkout) |
 | **B15, D4b, C, H, E4-E5** | too early / elevated session / lossy phase / installer phase / signing and auto-update |
+| **I5 pipe squatting** | an automated review of the push noted that the intake pipe/mutex names are per user but guessable (`ExtremeCompressor-intake-v1-<user>`): on a **multi-user machine** another local user could create the pipe first and receive the file *paths* a second launch forwards (paths only, nothing is executed from them; the pipe is `UserAccessOption`, the strict wire validation stands). Not exploitable on the single-user target; fixes if it ever matters: put the user SID in the name, treat a failed `listen()` as fatal, and check the server's owner with `GetNamedPipeServerProcessId` before forwarding |
 | **E3 leftovers** | the installer is unsigned (SmartScreen warns); the external tools are not bundled (the downloader fetches them beside the app); `PrivilegesRequired=lowest` means per-user only |
 | **I7** | ❌ won't do |
 

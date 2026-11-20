@@ -901,6 +901,15 @@ _INSANE_ZIP_VERIFY_RATE = 0.360e6
 # least expanding PNG container measured, ran at 1/1.6 of it.
 _ZIP_PNG_VERIFY_LOW = 1.6
 
+# B28: a member that is itself an archive (a `.jar` inside a `.war`) is a deflate container whose OWN
+# streams Precomp expands again, so a nested byte costs several plain deflated ones. B27's `.war`
+# corpus (3 files, 16.9 MB, 99% nested jars) took 511.6 s compress+D9 against a model that said 100 s,
+# past even its high (398 s): 511.6 s over 18.03 MB of nested members, at the plain rate's 5.38 s/MB
+# (compress + self-test), is 5.3x. PROVISIONAL: one corpus; a second (B27's `.zip`, 35% nested) fits
+# it when its row lands (record: docs/benchmarks/2026-11-21-b27-b5-types.md). Not applied to anything
+# but containers priced by their counts (zip kind).
+_NESTED_FACTOR = 5.3
+
 
 # The signed extras are measured against these fixed constants, never against
 # the machine's calibrated rates: the summary builds them with the defaults and
@@ -980,8 +989,10 @@ def _insane_own_seconds(kind: str, info: FileInfo) -> tuple[float, float] | None
     if kind == "zip":
         deflated, png, jpeg, other = (info.zip_deflated_bytes, info.zip_png_bytes,
                                       info.zip_jpeg_bytes, info.zip_other_bytes)
-        if not (deflated or png or jpeg or other):
+        if not (deflated or png or jpeg or other or info.zip_nested_bytes):
             return None
+        # B28: archives inside the archive count as several plain deflated bytes each.
+        deflated += _NESTED_FACTOR * info.zip_nested_bytes
         return (deflated / _INSANE_ZIP_RATE + png / _INSANE_RECODE_RATE["png"]
                 + jpeg / _INSANE_RECODE_RATE["jpeg"] + other / _INSANE_BASE_RATE,
                 deflated / _INSANE_ZIP_VERIFY_RATE

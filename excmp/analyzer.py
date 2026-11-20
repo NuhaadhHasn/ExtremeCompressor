@@ -163,9 +163,14 @@ class FileInfo:
     #: directory the probe already opens, member by member.
     #:
     #: * ``zip_deflated_bytes``: the uncompressed size of its deflated members
-    #:   that are not images. For plain deflate content that *is* the `.pcf`
-    #:   (0.94-1.00 of it on 13 of 14 real NuGet, APPX, AAR and AAB files; the
-    #:   14th, an AAR holding a nested jar, was 0.50).
+    #:   that are not images or archives. For plain deflate content that *is*
+    #:   the `.pcf` (0.94-1.00 of it on 13 of 14 real NuGet, APPX, AAR and AAB
+    #:   files; the 14th, an AAR holding a nested jar, was 0.50).
+    #: * ``zip_nested_bytes`` (B28): what its members that are themselves
+    #:   archives (``.jar .zip .war .aar .apk .nupkg .ear .whl .vsix``, by name)
+    #:   hold, deflated or stored. Precomp expands such a member's OWN deflate
+    #:   streams again, so a nested byte costs several plain ones: B27's `.war`
+    #:   corpus (99% nested jars) took 511.6 s against a model that said 100 s.
     #: * ``zip_png_bytes``: its PNG members' size, by name. Precomp expands each
     #:   one's own deflate into pixels (6-106x per byte, which a directory
     #:   cannot show), so they are priced as PNGs.
@@ -185,6 +190,7 @@ class FileInfo:
     zip_png_bytes: int = 0
     zip_jpeg_bytes: int = 0
     zip_other_bytes: int = 0
+    zip_nested_bytes: int = 0
 
 
 #: Containers built out of a zip: their members are individually deflated, so
@@ -247,6 +253,9 @@ def _zip_cd_size(path: Path) -> int | None:
 _ZIP_PNG_MEMBERS = (".png",)
 _ZIP_JPEG_MEMBERS = (".jpg", ".jpeg")
 _ZIP_OTHER_IMAGE_MEMBERS = _ZIP_JPEG_MEMBERS + (".gif",)
+#: B28: members that are archives themselves, by name (lower-cased). Not ``.gz``/``.tar``: no
+#: corpus has measured them, and Precomp's cost on them is unknown.
+_ZIP_NESTED_MEMBERS = (".jar", ".zip", ".war", ".aar", ".apk", ".nupkg", ".ear", ".whl", ".vsix")
 
 
 class ContainerProfile(NamedTuple):
@@ -257,6 +266,8 @@ class ContainerProfile(NamedTuple):
     png: int = 0
     jpeg: int = 0
     other: int = 0
+    nested: int = 0
+
 
 #: Deflate cannot expand more than 1032:1 (zlib's documented bound). A central
 #: directory that claims more is lying, and the claim drives a time estimate.
@@ -307,7 +318,7 @@ def _zip_profile(path: Path) -> ContainerProfile:
                      and info.compress_size < 0.95 * info.file_size))
     if useful < _ZIP_MIN_DEFLATE_SHARE * size:
         return none
-    deflated = png = jpeg = other = 0
+    deflated = png = jpeg = other = nested = 0
     for info in members:
         name = info.filename.lower()
         if info.compress_type == zipfile.ZIP_DEFLATED:
@@ -317,6 +328,8 @@ def _zip_profile(path: Path) -> ContainerProfile:
             held = min(info.file_size, info.compress_size)      # stored: its own bytes
         if name.endswith(_ZIP_PNG_MEMBERS):
             png += held
+        elif name.endswith(_ZIP_NESTED_MEMBERS):
+            nested += held                    # deflated or stored: its inner streams are expanded too
         elif name.endswith(_ZIP_JPEG_MEMBERS):
             jpeg += min(info.compress_size, info.file_size)     # what it occupies
         elif (info.compress_type == zipfile.ZIP_DEFLATED
@@ -324,7 +337,7 @@ def _zip_profile(path: Path) -> ContainerProfile:
             deflated += held
         else:
             other += min(info.compress_size, info.file_size)    # what it occupies
-    return ContainerProfile(True, deflated, png, jpeg, other)
+    return ContainerProfile(True, deflated, png, jpeg, other, nested)
 
 
 def _pdf_is_expandable(head: bytes) -> bool:
@@ -477,6 +490,7 @@ def analyze_file(path: Path, root: Path | None = None) -> FileInfo:
         zip_png_bytes=container.png,
         zip_jpeg_bytes=container.jpeg,
         zip_other_bytes=container.other,
+        zip_nested_bytes=container.nested,
         # A second open, JPEGs only: the frame can sit far past `head`.
         lepton_refuses=(jpeg.looks_like_jpeg(head) and jpeg.lepton_refuses(path)),
         is_jpeg=jpeg.looks_like_jpeg(head),

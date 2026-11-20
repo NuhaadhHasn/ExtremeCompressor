@@ -25,17 +25,19 @@
 >   alive, and the disk space only comes back if the owner asks for real copies.
 >   **A real copy of the ODT is at `C:\excmp-bench\b26\own\odt-big-01.odt`**
 >   (36,764,796 B, SHA-256 `836270c8...ddae8`), made for another session.
-> - **What is lost for good: the 2026-11-18 finished bench folders**
+> - **The owner said on 2026-11-20 that everything in the trash is backed up**
+>   (where was not stated). So nothing below is lost, but **the trash is no
+>   restore path for a session**: if a phase needs one of these, ask the owner for
+>   the backup, don't look in `_trash`. The 2026-11-18 finished bench folders
 >   (`_trash\2026-11-18-excmp-bench-done`, `MOVED.txt`: xtool, silesia, lolz, b14,
 >   i11, b13\music2, b18\video-phone, b19\mov-takeout, b19\mov-dl1, b21\m4a,
->   b21\mkv, ...). The MOV/M4A/MKV sets were the corpora for "Insane on
->   pass-through media"; **that phase needs new samples now**, not a restore.
-> - **`My Graphical Projects`: the bench copy is about to be the only copy.**
->   `C:\excmp-bench\corpora\My Graphical Projects` (123 files, 666,560,229 B,
->   hash-identical to `_trash\2026-11-16-graphical-projects-done`, which goes).
->   The tests and the guard read it. The old instruction "remove the copy when the
->   owner says the work is done" would then delete the last copy of the owner's
->   design work: **ask before removing it**, and say so.
+>   b21\mkv, ...) include the MOV/M4A/MKV sets, the corpora for "Insane on
+>   pass-through media".
+> - **`My Graphical Projects`**: `C:\excmp-bench\corpora\My Graphical Projects`
+>   (123 files, 666,560,229 B, hash-identical to
+>   `_trash\2026-11-16-graphical-projects-done`) is what the tests and the guard
+>   read. It is backed up too (owner, above), but it is the owner's design work:
+>   **still ask before removing the copy**.
 > - Nothing in the repo reads `_trash` (one comment in
 >   `tests/test_audit_regressions.py`).
 >

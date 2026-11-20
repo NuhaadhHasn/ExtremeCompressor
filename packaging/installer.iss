@@ -15,7 +15,11 @@ DefaultDirName={autopf}\ExtremeCompressor
 DefaultGroupName=ExtremeCompressor
 ; Per user, no administrator: the Explorer menu is per user too (HKCU), and nothing here needs more.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+; No "install for all users" override: an elevating account would run `shell install` into ITS OWN HKCU, and
+; Program Files is not writable by the tool downloader (toolfetch keeps its tools beside the app).
+; Close a running window (Restart Manager) before replacing or removing its files.
+CloseApplications=yes
+RestartApplications=no
 OutputDir=..\dist
 OutputBaseFilename=ExtremeCompressor-{#AppVersion}-setup
 Compression=lzma2

@@ -144,6 +144,13 @@ def _iss() -> str:
 def test_the_installer_needs_no_administrator():
     assert re.search(r"^PrivilegesRequired=lowest$", _iss(), re.M)
     assert "{autopf}" in _iss()
+    # Review: `dialog` let an elevating account install for all users, so `shell install` wrote ITS HKCU
+    # and Program Files was not writable by the tool downloader.
+    assert "PrivilegesRequiredOverridesAllowed" not in _iss()
+
+
+def test_the_installer_closes_a_running_window_before_replacing_files():
+    assert re.search(r"^CloseApplications=yes$", _iss(), re.M)
 
 
 def test_the_installer_has_a_stable_app_id():
@@ -181,3 +188,48 @@ def test_the_console_entry_point_runs_the_cli():
     out = subprocess.run([sys.executable, str(PKG / "entry_cli.py"), "--help"], capture_output=True,
                          text=True, timeout=60, cwd=str(ROOT))
     assert out.returncode == 0 and "shell" in out.stdout and "compress" in out.stdout
+
+
+# -- PAR2 in the frozen build (review) --------------------------------------------------------
+
+def _no_site_par2(monkeypatch, tmp_path):
+    """Point the venv lookups at an empty folder, as in a frozen build."""
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "none"))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "none"))
+
+
+def test_the_frozen_build_finds_par2_in_its_own_folder(tmp_path, monkeypatch):
+    """The review found `excmp.exe compress --recovery` dying with `argument should be a str or an
+    os.PathLike ... not 'NoneType'` in the frozen build: `par2` is a namespace package, so its
+    `__file__` is None, and the binary was never collected either."""
+    from excmp import recovery
+    exe = tmp_path / "bundle" / "par2" / "binaries" / "par2.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    _no_site_par2(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+    assert recovery._exe() == exe
+
+
+def test_a_namespace_par2_with_no_binary_is_unavailable_not_an_error(tmp_path, monkeypatch):
+    import types
+    from excmp import recovery
+    _no_site_par2(monkeypatch, tmp_path)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    ns = types.ModuleType("par2")
+    ns.__file__ = None
+    ns.__path__ = []
+    monkeypatch.setitem(sys.modules, "par2", ns)
+    assert recovery._exe() is None
+    assert recovery.available() is False
+
+
+def test_the_spec_collects_the_par2_binary_into_the_layout_recovery_reads():
+    text = SPEC.read_text(encoding="utf-8")
+    assert "par2" in text and "binaries" in text and "par2.exe" in text
+
+
+def test_the_smoke_test_always_removes_what_it_installed_and_never_runs_over_a_real_menu():
+    text = (PKG / "smoke_test.py").read_text(encoding="utf-8")
+    assert "finally:" in text and "unins000.exe" in text
+    assert "already installed" in text

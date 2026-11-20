@@ -97,20 +97,44 @@ def installer_round_trip(work: Path) -> None:
         check("a setup program exists", False, "run packaging\\build.cmd first")
         return
     target = work / "installed"
-    check("no menu before", not key_exists(VERB))
-    r = subprocess.run([str(setups[-1]), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
-                        "/CURRENTUSER", f"/DIR={target}", "/TASKS=contextmenu"], timeout=300)
-    check("silent per-user install", r.returncode == 0)
-    names = {p.name for p in target.iterdir()} if target.exists() else set()
-    check("the programs are there", {"ExtremeCompressor.exe", "excmp.exe", "unins000.exe"} <= names)
-    cmd = value(VERB + r"\command") or ""
-    check("the verb runs the window, in the install folder",
-          str(target / "ExtremeCompressor.exe") in cmd and "excmp.exe" not in cmd, cmd)
-    check("an uninstall entry exists", key_exists(UNINST_KEY))
-    u = subprocess.run([str(target / "unins000.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-                       timeout=300)
-    time.sleep(3)
-    check("silent uninstall", u.returncode == 0)
+    if key_exists(VERB):
+        # The product writes these keys, and so does this test: never run over somebody's real menu
+        # (the uninstall at the end would remove it).
+        check("no menu before", False, "the Explorer menu is already installed here; remove it first")
+        return
+    check("no menu before", True)
+    try:
+        r = subprocess.run([str(setups[-1]), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                            "/CURRENTUSER", f"/DIR={target}", "/TASKS=contextmenu"], timeout=300)
+        check("silent per-user install", r.returncode == 0)
+        names = {p.name for p in target.iterdir()} if target.exists() else set()
+        check("the programs are there", {"ExtremeCompressor.exe", "excmp.exe", "unins000.exe"} <= names)
+        cmd = value(VERB + r"\command") or ""
+        check("the verb runs the window, in the install folder",
+              str(target / "ExtremeCompressor.exe") in cmd and "excmp.exe" not in cmd, cmd)
+        check("an uninstall entry exists", key_exists(UNINST_KEY))
+        par2 = list(target.rglob("par2.exe"))
+        check("par2.exe is bundled (recovery records work)", bool(par2))
+    finally:
+        # Always remove what was installed, even when a check above raised or timed out.
+        uninstaller = target / "unins000.exe"
+        if uninstaller.exists():
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+            running = subprocess.Popen([str(target / "ExtremeCompressor.exe")], env=env,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+            time.sleep(8)       # the uninstaller has to cope with the window being open
+            try:
+                u = subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                                   timeout=300)
+                check("silent uninstall (window open)", u.returncode == 0)
+            finally:
+                if running.poll() is None:
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(running.pid)], capture_output=True)
+            for _ in range(30):             # the uninstaller finishes in a helper process
+                if not target.exists() or not any(target.iterdir()):
+                    break
+                time.sleep(1)
     check("no file left", not target.exists() or not any(target.iterdir()))
     check("no menu or association key left",
           not any(key_exists(k) for k in (VERB, r"Software\Classes\Directory\shell\ExtremeCompressor.Compress",

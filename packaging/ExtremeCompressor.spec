@@ -23,6 +23,19 @@ EXCLUDES = [
     "tkinter",          # only the superseded main.py prototype uses it
 ]
 
+def _par2_binaries():
+    """par2.exe (par2cmdline-turbo's wheel) is a plain executable, not an import, so PyInstaller does
+    not find it. excmp/recovery.py looks for it at <bundle>/par2/binaries/par2.exe."""
+    import importlib.util
+    spec = importlib.util.find_spec("par2")
+    folders = list(spec.submodule_search_locations or ()) if spec else []
+    found = [(str(Path(f) / "binaries" / "par2.exe"), "par2/binaries")
+             for f in folders if (Path(f) / "binaries" / "par2.exe").exists()]
+    if not found:
+        raise SystemExit("par2.exe not found: pip install -r requirements.txt first")
+    return found
+
+
 #: Big or useless files PyInstaller's Qt hook collects anyway (measured 122 MB -> 71 MB on disk).
 DROP_FILES = ["opengl32sw.dll", "qdirect2d.dll"]
 
@@ -35,6 +48,7 @@ def _keep(entry):
 def _analysis(script):
     a = Analysis(  # noqa: F821
         [str(script)], pathex=[str(ROOT)],
+        binaries=_par2_binaries(),
         datas=[(str(ROOT / "assets"), "assets")],
         hiddenimports=[], excludes=EXCLUDES, noarchive=False)
     a.binaries = [b for b in a.binaries if _keep(b)]

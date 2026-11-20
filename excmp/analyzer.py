@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import zipfile
 from pathlib import Path
+from typing import NamedTuple
 
 import zstandard
 
@@ -158,6 +159,32 @@ class FileInfo:
     #: ``0`` means unknown (no root was given), and the estimate then falls
     #: back to the basename.
     arc_name_bytes: int = 0
+    #: B26: what a zip container hands Precomp to expand, read from the central
+    #: directory the probe already opens, member by member.
+    #:
+    #: * ``zip_deflated_bytes``: the uncompressed size of its deflated members
+    #:   that are not images. For plain deflate content that *is* the `.pcf`
+    #:   (0.94-1.00 of it on 13 of 14 real NuGet, APPX, AAR and AAB files; the
+    #:   14th, an AAR holding a nested jar, was 0.50).
+    #: * ``zip_png_bytes``: its PNG members' size, by name. Precomp expands each
+    #:   one's own deflate into pixels (6-106x per byte, which a directory
+    #:   cannot show), so they are priced as PNGs.
+    #: * ``zip_jpeg_bytes``: what its JPEG members occupy, by name. packJPG
+    #:   recodes them; priced as the JPEGs they are (an album of 23 photographs
+    #:   ran within 16% of B22's JPEG rate).
+    #: * ``zip_other_bytes``: what everything else occupies in the zip - GIF
+    #:   members, stored members, other methods. Not expanded; priced at the
+    #:   chain's rate (review: a container of JPEGs and one small deflated page
+    #:   was priced at about 0 s).
+    #:
+    #: A header may not claim more than deflate can make of a member's bytes
+    #: (``_DEFLATE_MAX_RATIO``): a 234-byte zip claiming 10 TB was estimated at
+    #: 24 years. All ``0`` means unknown (a hand-built FileInfo, or nothing
+    #: Precomp can expand) and the estimate falls back to the chain's rate.
+    zip_deflated_bytes: int = 0
+    zip_png_bytes: int = 0
+    zip_jpeg_bytes: int = 0
+    zip_other_bytes: int = 0
 
 
 #: Containers built out of a zip: their members are individually deflated, so
@@ -213,8 +240,37 @@ def _zip_cd_size(path: Path) -> int | None:
     return cd
 
 
+#: B26: the member names the byte counts tell apart (see `FileInfo`): PNG, which
+#: Precomp expands into pixels, JPEG (packJPG), and GIF, which it handles on its
+#: own path and is counted with the rest. By name, lower-cased: a deflated text
+#: member called `c.PNG` is counted as a PNG.
+_ZIP_PNG_MEMBERS = (".png",)
+_ZIP_JPEG_MEMBERS = (".jpg", ".jpeg")
+_ZIP_OTHER_IMAGE_MEMBERS = _ZIP_JPEG_MEMBERS + (".gif",)
+
+
+class ContainerProfile(NamedTuple):
+    """What a probe reads out of a container; see `FileInfo` for the counts."""
+
+    expandable: bool = False
+    deflated: int = 0
+    png: int = 0
+    jpeg: int = 0
+    other: int = 0
+
+#: Deflate cannot expand more than 1032:1 (zlib's documented bound). A central
+#: directory that claims more is lying, and the claim drives a time estimate.
+_DEFLATE_MAX_RATIO = 1032
+
+
 def _zip_is_expandable(path: Path) -> bool:
-    """True when this really is a zip whose members Precomp could expand.
+    return _zip_profile(path)[0]
+
+
+def _zip_profile(path: Path) -> ContainerProfile:
+    """The `ContainerProfile` of a zip; see `FileInfo`.
+
+    True when this really is a zip whose members Precomp could expand.
 
     Reads the central directory only - member *flags* and sizes, never member
     data - so it costs one seek and a short read regardless of how large the
@@ -227,11 +283,12 @@ def _zip_is_expandable(path: Path) -> bool:
     arrives. And since B20 (review) the deflated members have to be worth
     expanding: see `_ZIP_MIN_DEFLATE_SHARE`.
     """
+    none = ContainerProfile()
     try:
         size = path.stat().st_size
         cd = _zip_cd_size(path)
         if cd is None or cd > min(_ZIP_CD_LIMIT, size):
-            return False
+            return none
         with zipfile.ZipFile(path) as zf:
             members = zf.infolist()
     except Exception:  # noqa: BLE001
@@ -239,16 +296,35 @@ def _zip_is_expandable(path: Path) -> bool:
         # raises NotImplementedError for a "version needed" above 6.3, which
         # 7-Zip opens fine (B20 review: 288 of 20,000 mutated zips). This
         # runs during analysis, which K3 made incapable of failing a job.
-        return False
+        return none
     if not members or not size:
-        return False
+        return none
     if any(info.flag_bits & 0x1 for info in members):
-        return False
+        return none
     useful = sum(info.compress_size for info in members
                  if info.filename.lower().endswith(_ZIP_MEDIA_MEMBERS)
                  or (info.compress_type == zipfile.ZIP_DEFLATED
                      and info.compress_size < 0.95 * info.file_size))
-    return useful >= _ZIP_MIN_DEFLATE_SHARE * size
+    if useful < _ZIP_MIN_DEFLATE_SHARE * size:
+        return none
+    deflated = png = jpeg = other = 0
+    for info in members:
+        name = info.filename.lower()
+        if info.compress_type == zipfile.ZIP_DEFLATED:
+            # What the member holds, believed up to what deflate can make of it.
+            held = min(info.file_size, _DEFLATE_MAX_RATIO * info.compress_size)
+        else:
+            held = min(info.file_size, info.compress_size)      # stored: its own bytes
+        if name.endswith(_ZIP_PNG_MEMBERS):
+            png += held
+        elif name.endswith(_ZIP_JPEG_MEMBERS):
+            jpeg += min(info.compress_size, info.file_size)     # what it occupies
+        elif (info.compress_type == zipfile.ZIP_DEFLATED
+              and not name.endswith(_ZIP_OTHER_IMAGE_MEMBERS)):
+            deflated += held
+        else:
+            other += min(info.compress_size, info.file_size)    # what it occupies
+    return ContainerProfile(True, deflated, png, jpeg, other)
 
 
 def _pdf_is_expandable(head: bytes) -> bool:
@@ -260,21 +336,28 @@ def _pdf_is_expandable(head: bytes) -> bool:
     return b"FlateDecode" in head
 
 
-def probe_expandable(path: Path, head: bytes) -> bool:
-    """Will Precomp find a deflate layer in this file? (B5.)
+def probe_container(path: Path, head: bytes) -> ContainerProfile:
+    """Will Precomp find a deflate layer in this file, and what does it hold?
+    (B5, B20, B26.)
 
     ``head`` is the buffer `analyze_file` has already read, so the common case
     costs nothing extra; only a zip-family container pays for a second open.
+    The counts are a zip's (see `FileInfo`); a PDF has none.
     """
     suffix = path.suffix.lower()
     # B20: by content as well as by name. Android AAR/AAB, NuGet, APPX, VSIX
     # and wheels are all zips under other names; measured, Precomp took
     # 38-57% off them, and none was ever probed.
     if suffix in _ZIP_FAMILY or head[:4] == b"PK\x03\x04":
-        return _zip_is_expandable(path)
+        return _zip_profile(path)
     if suffix == ".pdf":
-        return _pdf_is_expandable(head)
-    return False
+        return ContainerProfile(_pdf_is_expandable(head))
+    return ContainerProfile()
+
+
+def probe_expandable(path: Path, head: bytes) -> bool:
+    """Will Precomp find a deflate layer in this file? (B5.)"""
+    return probe_container(path, head)[0]
 
 
 def _image_format(head: bytes) -> str:
@@ -379,6 +462,7 @@ def analyze_file(path: Path, root: Path | None = None) -> FileInfo:
         # and the zlib check still only look at the first few bytes.
         head = fh.read(_PDF_SCAN_BYTES)
     stats = sample_stats(path)
+    container = probe_container(path, head)
     return FileInfo(
         path=path,
         size=size,
@@ -388,7 +472,11 @@ def analyze_file(path: Path, root: Path | None = None) -> FileInfo:
         sample_ratio=stats.ratio,
         sample_ratio_max=stats.ratio_max,
         mtime_ns=st.st_mtime_ns,
-        expandable=probe_expandable(path, head),
+        expandable=container.expandable,
+        zip_deflated_bytes=container.deflated,
+        zip_png_bytes=container.png,
+        zip_jpeg_bytes=container.jpeg,
+        zip_other_bytes=container.other,
         # A second open, JPEGs only: the frame can sit far past `head`.
         lepton_refuses=(jpeg.looks_like_jpeg(head) and jpeg.lepton_refuses(path)),
         is_jpeg=jpeg.looks_like_jpeg(head),

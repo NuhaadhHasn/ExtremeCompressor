@@ -902,13 +902,16 @@ _INSANE_ZIP_VERIFY_RATE = 0.360e6
 _ZIP_PNG_VERIFY_LOW = 1.6
 
 # B28: a member that is itself an archive (a `.jar` inside a `.war`) is a deflate container whose OWN
-# streams Precomp expands again, so a nested byte costs several plain deflated ones. B27's `.war`
-# corpus (3 files, 16.9 MB, 99% nested jars) took 511.6 s compress+D9 against a model that said 100 s,
-# past even its high (398 s): 511.6 s over 18.03 MB of nested members, at the plain rate's 5.38 s/MB
-# (compress + self-test), is 5.3x. PROVISIONAL: one corpus; a second (B27's `.zip`, 35% nested) fits
-# it when its row lands (record: docs/benchmarks/2026-11-21-b27-b5-types.md). Not applied to anything
-# but containers priced by their counts (zip kind).
-_NESTED_FACTOR = 5.3
+# streams Precomp expands again, so a nested byte costs several plain deflated ones. Fitted on TWO
+# corpora, fastest of two rounds each (compress + D9), against the plain rate's 5.38 s/MB (compress +
+# self-test): B27's `.war` (3 files, 16.9 MB, 99% nested jars, 18.03 MB of nested members) 300 s -> 3.05;
+# the synthetic nested corpus (one 10.1 MB zip, 16.2 MB of nested members) 242 s -> 2.75. 3.0 puts both
+# inside their ranges. (The `.war`'s first round read 512 s -> 5.3: the machine slept 6.9 h through it,
+# its extract took 277 s against 96 s on round 2, and the fit built on it was wrong.) Only a container
+# priced by its counts (zip kind) carries nested bytes; `.zip`, `.jar` and `.apk` keep the chain rate
+# until B5 lifts them (`_recode_kind`), so this reaches `.war`, `.ear`, `.aar`, `.nupkg`, `.whl` and
+# other zips under another name. Record: docs/benchmarks/2026-11-21-b27-b5-types.md.
+_NESTED_FACTOR = 3.0
 
 
 # The signed extras are measured against these fixed constants, never against

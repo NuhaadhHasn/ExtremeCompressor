@@ -128,7 +128,7 @@ def test_a_nested_byte_costs_the_nested_factor_times_a_deflated_one():
     k = estimate._NESTED_FACTOR
     assert nested[0] == pytest.approx(plain[0] * k, rel=0.01)
     assert nested[1] == pytest.approx(plain[1] * k, rel=0.01)
-    assert 3.0 <= k <= 8.0, "a nested byte is several times a plain one (measured ~5), never 1 and never 20"
+    assert 2.0 <= k <= 4.5, "a nested byte is several times a plain one (measured 2.75-3.05), never 1 and never 20"
 
 
 def test_a_container_with_only_nested_bytes_is_not_priced_as_unread():
@@ -145,16 +145,20 @@ def test_extreme_does_not_read_the_nested_count():
     assert (a.low, a.expected, a.high) == (b.low, b.expected, b.high)
 
 
-#: B27's `.war` corpus, measured: 3 files, 16,944,934 B, 99% nested jars. compress + D9, seconds.
-WAR = dict(size=16_944_934, deflated=216_964, nested=18_026_265)
+#: Measured, compress + D9, fastest of two rounds. B27's `.war` corpus: 3 files, 99% nested jars (round 1
+#: read 512 s but the machine slept 6.9 h through it: its extract took 277 s against 96 s on round 2).
+#: The synthetic nested corpus: one zip of archives.
+WAR = dict(size=16_944_934, deflated=216_964, nested=18_026_265, seconds=300.0)
+SYNTH = dict(size=10_114_161, deflated=31_726, nested=16_226_377, seconds=242.0)
 
 
-def test_the_war_corpus_is_inside_its_range_now():
-    """Before: expected 100 s, high 398 s, measured 511.6 s."""
-    info = _container("x.war", WAR["size"], deflated=WAR["deflated"], nested=WAR["nested"])
+@pytest.mark.parametrize("corpus", [WAR, SYNTH], ids=["war", "nested-synth"])
+def test_both_nested_corpora_are_inside_their_range_and_near_the_expected(corpus):
+    """Before B28 the war's expected was 100 s against 300 s measured."""
+    info = _container("x.war", corpus["size"], deflated=corpus["deflated"], nested=corpus["nested"])
     t = estimate_time([info], plan([info], Profile.INSANE, TOOLS), NO_PACK)
-    assert t.low <= 511.6 <= t.high, (t.low, t.expected, t.high)
-    assert 511.6 / 1.7 <= t.expected <= 511.6 * 1.7, t.expected
+    assert t.low <= corpus["seconds"] <= t.high, (t.low, t.expected, t.high)
+    assert corpus["seconds"] / 1.3 <= t.expected <= corpus["seconds"] * 1.3, t.expected
 
 
 def test_a_container_without_nested_members_is_priced_exactly_as_before():

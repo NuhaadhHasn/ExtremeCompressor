@@ -166,7 +166,7 @@ package provides one.
 | Package | Licence (verbatim) | Notes |
 |---|---|---|
 | `zstandard` | `BSD-3-Clause` | bundles libzstd; **this is the whole Fast profile** — there is no `zstd.exe` |
-| `PySide6` | `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only` | plus a commercial option. Used **unmodified and dynamically linked**, which is what the LGPL branch requires. A binary release must ship the LGPL text and keep the Qt libraries replaceable — which rules out PyInstaller `--onefile`, as the roadmap already does for SmartScreen reasons |
+| `PySide6-Essentials` (what `requirements.txt` installs since E3; the `PySide6` meta-package adds Addons) | `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only` | plus a commercial option. Used **unmodified and dynamically linked**, which is what the LGPL branch requires. A binary release must ship the LGPL text and keep the Qt libraries replaceable — which rules out PyInstaller `--onefile`, as the roadmap already does for SmartScreen reasons |
 | `PySide6-Essentials`, `PySide6-Addons`, `shiboken6` | same triple disjunction | pulled in by PySide6 |
 | `comtypes` | `MIT` | taskbar progress; optional at runtime |
 | `windows-toasts` | (bundled `LICENSE`; Apache-2.0) | completion toasts; optional at runtime |

@@ -2191,7 +2191,9 @@ display scaling — both need a human at the machine.
       for the code as it is now**: `QtSvg` (icons) and `QtNetwork` (I5's pipe) are
       imported, so the spec keeps them and a test reads the real imports to stop the list
       drifting into a build that dies at start-up. Not done: signing (E4), auto-update
-      (E5), `PySide6-Essentials`, an `.ico`, the external tools are not bundled
+      (E5), an `.ico`, the external tools are not bundled (`requirements.txt` is
+      `PySide6-Essentials` now: proved from the wheel's file list that QtCore/Gui/Widgets/Svg/
+      Network are all in it, and a test keeps code off the Addons-only modules)
       ([packaging/README.md](../packaging/README.md)). Original spec:
       PyInstaller **--onedir** (NOT --onefile: self-extraction triggers AV/
       SmartScreen **and** re-extracts the whole bundle to temp on every launch)

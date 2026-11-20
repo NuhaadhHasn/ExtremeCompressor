@@ -49,8 +49,6 @@ were installed and the build ran first time: `dist\ExtremeCompressor\` is **110 
 * **The external tools are not bundled.** 7-Zip, Precomp, zpaqfranz and the rest are found on the machine or
   fetched by the app (E1); the frozen app finds them the same way the source one does. Fast works with
   nothing else installed.
-* `requirements.txt` still says `PySide6`; the roadmap suggests `PySide6-Essentials` (642 MB -> ~210 MB of
-  dev environment). Swapping it needs proof that `QtSvg` and `QtNetwork` are in it.
 * An application icon: `assets\` holds SVG icons only, no `.ico`.
 * The Windows 11 top-level menu (a signed sparse package, after E4).
 

@@ -90,6 +90,26 @@ def test_the_modules_the_app_never_uses_are_excluded(module):
     assert module not in _qt_modules_imported()
 
 
+#: Qt modules that ship only in the PySide6-Addons wheel, not in PySide6-Essentials.
+_ADDONS_ONLY = {"QtCharts", "QtDataVisualization", "QtMultimedia", "QtMultimediaWidgets",
+                "QtWebEngineCore", "QtWebEngineWidgets", "QtWebEngineQuick", "QtWebSockets",
+                "QtWebChannel", "QtBluetooth", "QtSensors", "QtSerialPort", "QtSerialBus", "QtPdf",
+                "QtPdfWidgets", "Qt3DCore", "Qt3DRender", "Qt3DInput", "Qt3DLogic", "Qt3DAnimation",
+                "Qt3DExtras", "QtNfc", "QtPositioning", "QtLocation", "QtRemoteObjects", "QtScxml",
+                "QtSpatialAudio", "QtTextToSpeech", "QtStateMachine", "QtHttpServer", "QtGraphs",
+                "QtGraphsWidgets", "QtQuick3D", "QtVirtualKeyboard"}
+
+
+def test_the_dev_environment_needs_only_the_essentials_wheel():
+    """The roadmap's 642 MB -> ~210 MB. Proved 2026-11-21 from the installed wheel's file list:
+    QtCore, QtGui, QtWidgets, QtSvg and QtNetwork - everything the app imports - are in
+    PySide6-Essentials. This keeps it true: no code may import an Addons-only module."""
+    text = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert re.search(r"^PySide6-Essentials>=", text, re.M)
+    assert not re.search(r"^PySide6>=", text, re.M)
+    assert not (_qt_modules_imported() & _ADDONS_ONLY), _qt_modules_imported() & _ADDONS_ONLY
+
+
 def test_the_spec_never_turns_upx_on():
     assert not re.search(r"upx\s*=\s*True", SPEC.read_text(encoding="utf-8"))
 

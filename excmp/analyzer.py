@@ -318,25 +318,32 @@ def _zip_profile(path: Path) -> ContainerProfile:
                      and info.compress_size < 0.95 * info.file_size))
     if useful < _ZIP_MIN_DEFLATE_SHARE * size:
         return none
+    # Members cannot occupy more than the zip does: a directory claiming 900,000
+    # compressed bytes in a 226-byte file is lying, and the 1032:1 bound below
+    # multiplies whatever is believed here (review, B28: 26,465 s for 226 bytes).
+    claimed = [min(info.compress_size, size) for info in members]
+    total = sum(claimed)
+    if total > size:
+        claimed = [c * size // total for c in claimed]
     deflated = png = jpeg = other = nested = 0
-    for info in members:
+    for info, occupies in zip(members, claimed):
         name = info.filename.lower()
         if info.compress_type == zipfile.ZIP_DEFLATED:
             # What the member holds, believed up to what deflate can make of it.
-            held = min(info.file_size, _DEFLATE_MAX_RATIO * info.compress_size)
+            held = min(info.file_size, _DEFLATE_MAX_RATIO * occupies)
         else:
-            held = min(info.file_size, info.compress_size)      # stored: its own bytes
+            held = min(info.file_size, occupies)                # stored: its own bytes
         if name.endswith(_ZIP_PNG_MEMBERS):
             png += held
         elif name.endswith(_ZIP_NESTED_MEMBERS):
             nested += held                    # deflated or stored: its inner streams are expanded too
         elif name.endswith(_ZIP_JPEG_MEMBERS):
-            jpeg += min(info.compress_size, info.file_size)     # what it occupies
+            jpeg += min(occupies, info.file_size)               # what it occupies
         elif (info.compress_type == zipfile.ZIP_DEFLATED
               and not name.endswith(_ZIP_OTHER_IMAGE_MEMBERS)):
             deflated += held
         else:
-            other += min(info.compress_size, info.file_size)    # what it occupies
+            other += min(occupies, info.file_size)              # what it occupies
     return ContainerProfile(True, deflated, png, jpeg, other, nested)
 
 

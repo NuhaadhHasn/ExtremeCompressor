@@ -148,10 +148,11 @@ def test_probe_expandable_keeps_answering_a_bool(tmp_path):
 
 # -- the rest of the container, and what a header may claim --------------------
 
-def _raw_zip(path: Path, members) -> Path:
+def _raw_zip(path: Path, members, pad: int = 0) -> Path:
     """A zip whose central directory says what we like and whose members have no
     data: (name, method, compressed size, uncompressed size). The probe reads the
-    directory only."""
+    directory only. ``pad`` bytes of filler stand in for the compressed data, so the
+    sizes the directory claims can be made plausible for the file's length."""
     body = cd = b""
     for name, method, cs, us in members:
         nb = name.encode()
@@ -162,6 +163,7 @@ def _raw_zip(path: Path, members) -> Path:
             extra, c32, u32 = struct.pack("<HHQQ", 1, 16, us, cs), 0xFFFFFFFF, 0xFFFFFFFF
         cd += struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50, 45, 45, 0, method, 0, 0, 0, c32, u32,
                           len(nb), len(extra), 0, 0, 0, 0, off) + nb + extra
+    body += bytes(pad)
     eocd = struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, len(members), len(members), len(cd), len(body), 0)
     path.write_bytes(body + cd + eocd)
     return path
@@ -237,14 +239,14 @@ def test_a_header_cannot_claim_more_than_deflate_can_make(tmp_path):
 
 
 def test_a_stored_member_is_never_counted_past_its_own_bytes(tmp_path):
-    p = _raw_zip(tmp_path / "x.aab", [("a.dex", 8, 5_000, 20_000), ("blob.bin", 0, 100, 10 * 2**40)])
+    p = _raw_zip(tmp_path / "x.aab", [("a.dex", 8, 5_000, 20_000), ("blob.bin", 0, 100, 10 * 2**40)], pad=5_100)
     info = analyze_file(p)
     assert info.zip_other_bytes == 100
 
 
 def test_a_stored_png_is_never_counted_past_its_own_bytes(tmp_path):
     """Mutation (this review's): believing a stored PNG's claimed size passed."""
-    p = _raw_zip(tmp_path / "x.aab", [("a.dex", 8, 5_000, 20_000), ("r.png", 0, 100, 10 * 2**40)])
+    p = _raw_zip(tmp_path / "x.aab", [("a.dex", 8, 5_000, 20_000), ("r.png", 0, 100, 10 * 2**40)], pad=5_100)
     info = analyze_file(p)
     assert info.zip_png_bytes == 100
 

@@ -74,9 +74,31 @@ def test_a_stored_nested_archive_is_counted_too(tmp_path):
 def test_a_nested_archive_is_never_counted_past_what_it_can_hold(tmp_path):
     from tests.test_b26_zip_insane import _raw_zip
     p = _raw_zip(tmp_path / "x.war", [("a.xml", 8, 5_000, 20_000), ("lib/b.jar", 8, 100, 10 * 2**40),
-                                       ("lib/c.jar", 0, 100, 10 * 2**40)])
+                                       ("lib/c.jar", 0, 100, 10 * 2**40)], pad=5_200)
     info = analyze_file(p)
     assert info.zip_nested_bytes == 1032 * 100 + 100       # deflate's bound, and a stored member's own bytes
+
+
+def test_a_member_cannot_claim_more_compressed_bytes_than_the_file_has(tmp_path):
+    """Review (B28): a 226-byte `.war` claiming a `lib/b.jar` of 900,000 compressed
+    bytes was priced at 26,465 s - the 1032:1 bound is applied to the *claimed*
+    compressed size, and that claim was never checked against the file. The bytes
+    a zip's members occupy cannot add up to more than the zip."""
+    from tests.test_b26_zip_insane import _raw_zip
+    p = _raw_zip(tmp_path / "lie.war", [("lib/b.jar", 8, 900_000, 10 * 2**40)])
+    size = p.stat().st_size
+    info = analyze_file(p)
+    assert info.zip_nested_bytes <= 1032 * size
+
+
+def test_members_that_claim_more_than_the_file_in_total_are_scaled_down(tmp_path):
+    from tests.test_b26_zip_insane import _raw_zip
+    p = _raw_zip(tmp_path / "lie2.war", [("a.xml", 8, 600, 10 * 2**30), ("lib/b.jar", 8, 600, 10 * 2**40),
+                                          ("c.png", 8, 600, 10 * 2**30)], pad=0)
+    size = p.stat().st_size
+    info = analyze_file(p)
+    held = info.zip_deflated_bytes + info.zip_nested_bytes + info.zip_png_bytes
+    assert held <= 1032 * size
 
 
 def test_a_hand_built_fileinfo_has_no_nested_bytes():

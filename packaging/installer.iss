@@ -18,6 +18,9 @@ PrivilegesRequired=lowest
 ; No "install for all users" override: an elevating account would run `shell install` into ITS OWN HKCU, and
 ; Program Files is not writable by the tool downloader (toolfetch keeps its tools beside the app).
 ; Close a running window (Restart Manager) before replacing or removing its files.
+; While a window is open (it holds this mutex, gui/singleinstance.py) neither Setup nor the uninstaller
+; touches the files: an uninstall used to remove the uninstall entry and leave every file behind.
+AppMutex=ExtremeCompressor-running
 CloseApplications=yes
 RestartApplications=no
 OutputDir=..\dist

@@ -70,6 +70,33 @@ def _try_lock(name: str):
         return _NO_LOCK
 
 
+#: The name Inno Setup's `AppMutex` watches (packaging/installer.iss): while any window holds it,
+#: Setup and the uninstaller will not replace or remove the program's files. (An uninstall with the
+#: window open once removed the uninstall entry and left every file behind.)
+RUNNING_MUTEX = "ExtremeCompressor-running"
+_running_handle = None
+
+
+def mark_running() -> bool:
+    """Hold ``RUNNING_MUTEX`` until this process exits (a crash frees it). True if it is held."""
+    global _running_handle
+    if _running_handle is not None:
+        return True
+    if sys.platform != "win32":
+        return False
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        handle = kernel32.CreateMutexW(None, 0, f"Local\{RUNNING_MUTEX}")
+    except Exception:                                    # noqa: BLE001
+        return False
+    if not handle:
+        return False
+    _running_handle = handle                             # never closed: process exit releases it
+    return True
+
+
 class IntakeServer(QObject):
     """Listens for what second processes forward. Emits ``received`` once per valid message."""
 

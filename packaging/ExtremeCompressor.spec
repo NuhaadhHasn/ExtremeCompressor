@@ -37,7 +37,13 @@ def _par2_binaries():
 
 
 #: Big or useless files PyInstaller's Qt hook collects anyway (measured 122 MB -> 71 MB on disk).
-DROP_FILES = ["opengl32sw.dll", "qdirect2d.dll"]
+DROP_FILES = [
+    "opengl32sw.dll", "qdirect2d.dll",
+    # The excluded modules' DLLs still ship (review: about 20 MB of 110): the app imports only QtCore,
+    # QtGui, QtWidgets, QtSvg and QtNetwork. packaging/smoke_test.py proves the window still starts.
+    "qt6quick.dll", "qt6qml.dll", "qt6qmlmodels.dll", "qt6qmlmeta.dll", "qt6qmlworkerscript.dll",
+    "qt6pdf.dll", "qt6opengl.dll", "qt6virtualkeyboard.dll", "qpdf.dll", "qtvirtualkeyboardplugin.dll",
+]
 
 
 def _keep(entry):

@@ -42,6 +42,27 @@ def _leave_qt_as_found(qtbot):
     timer.start(0)
     QCoreApplication.exec()
     timer.stop()
+    _destroy_what_main_left_behind()
+
+
+def _destroy_what_main_left_behind() -> None:
+    """``gui.app.main()`` returns with its window and its pipe server still alive (a real process
+    exits right after). Left in the pytest process they are destroyed at interpreter exit, after the
+    QApplication, and on the offscreen platform that is an access violation (exit 139 / 0xC0000005
+    with every test passing: the suite's part 2 reported a failing exit code for it)."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None:
+        return
+    for server in app.findChildren(IntakeServer):
+        server.close()
+        server.deleteLater()
+    for widget in QApplication.topLevelWidgets():
+        if isinstance(widget, MainWindow):
+            widget.close()
+            widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture
@@ -653,3 +674,19 @@ def test_every_retry_of_one_handover_carries_the_same_id(qtbot, monkeypatch, nam
     srv = IntakeServer(name)
     assert acquire(srv, I.Intake("compress", (Path(r"C:\a"),)), deadline_s=5, step_ms=5) is False
     assert len(ids) == 3 and len(set(ids)) == 1 and ids[0]
+
+
+def test_the_main_tests_leave_a_process_that_exits_cleanly():
+    """Every test passed while the process then died on exit (139 / 0xC0000005): `main()`'s window was
+    destroyed after the QApplication. Run the `main()` tests in a child process and check its exit code."""
+    import os
+    import subprocess
+    import sys
+    if os.environ.get("EXCMP_CHILD_PYTEST"):
+        pytest.skip("this is the child run")
+    env = dict(os.environ, EXCMP_CHILD_PYTEST="1", QT_QPA_PLATFORM="offscreen")
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", __file__,
+                        "-k", "test_main_hands or test_main_without"],
+                       env=env, capture_output=True, text=True, timeout=180)
+    assert "2 passed" in r.stdout, r.stdout[-400:]
+    assert r.returncode == 0, (r.returncode, r.stdout[-400:])

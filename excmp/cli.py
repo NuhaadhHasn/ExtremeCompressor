@@ -695,16 +695,15 @@ def cmd_shell(args: argparse.Namespace) -> int:
         print("error: the Explorer menu is a Windows feature", file=sys.stderr)
         return 1
     if args.action == "install":
-        written = shellmenu.install(associate=not args.no_associate)
-        print(f"installed: {len(written)} registry keys under HKEY_CURRENT_USER\\"
-              f"{shellmenu.CLASSES_ROOT} (no administrator needed)")
+        shellmenu.install(associate=not args.no_associate)
+        print("installed the Explorer menu for this user (no administrator needed)")
         print("  right-click a file or folder: 'Compress with ExtremeCompressor'")
         print("  right-click a .excmp:         'Extract here', 'Verify archive'")
         print("  Windows 11 shows them under 'Show more options'")
         return 0
     if args.action == "uninstall":
         removed = shellmenu.uninstall()
-        print(f"removed {len(removed)} entries" if removed else "nothing to remove")
+        print("removed the Explorer menu" if removed else "nothing to remove")
         return 0
     st = shellmenu.status()
     if not st.installed:

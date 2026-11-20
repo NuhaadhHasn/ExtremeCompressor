@@ -277,3 +277,196 @@ def test_the_cli_refuses_to_install_a_launcher_that_is_not_there(root, monkeypat
 def test_the_cli_needs_an_action():
     with pytest.raises(SystemExit):
         _cli()
+
+
+# -- the review of 854a203: each of these failed before the fix -----------------
+
+def _put(root, sub, name, value, kind=None):
+    import winreg
+    key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, rf"{root}\{sub}", 0, winreg.KEY_WRITE)
+    winreg.SetValueEx(key, name, 0, winreg.REG_SZ if kind is None else kind, value)
+    winreg.CloseKey(key)
+
+
+def _tree(root):
+    """Every key and (name, value) under the throwaway root, for before/after comparison."""
+    import winreg
+    out = {}
+
+    def walk(path):
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            n_sub, n_val, _ = winreg.QueryInfoKey(key)
+            out[path[len(root):]] = sorted((winreg.EnumValue(key, i)[0], str(winreg.EnumValue(key, i)[1]))
+                                           for i in range(n_val))
+            for i in range(n_sub):
+                walk(rf"{path}\{winreg.EnumKey(key, i)}")
+    try:
+        walk(root)
+    except FileNotFoundError:
+        pass
+    return out
+
+
+@windows_only
+@pytest.mark.parametrize("kind_name", ["REG_EXPAND_SZ", "REG_BINARY", "REG_DWORD"])
+def test_a_foreign_excmp_default_of_any_type_is_not_taken_over(root, kind_name):
+    import winreg
+    value = {"REG_EXPAND_SZ": "Foreign.%X%", "REG_BINARY": b"\x01\x02", "REG_DWORD": 7}[kind_name]
+    _put(root, ".excmp", "", value, getattr(winreg, kind_name))
+    S.install(PREFIX, root=root, check_exists=False)
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"{root}\.excmp") as key:
+        got, kind = winreg.QueryValueEx(key, "")
+    assert (got, kind) == (value, getattr(winreg, kind_name))
+
+
+@windows_only
+def test_uninstall_leaves_what_somebody_else_put_inside_our_keys(root):
+    """The verb keys are ours, but a subkey or value a user (or another tool) added under them is not."""
+    S.install(PREFIX, root=root, check_exists=False)
+    _put(root, r"*\shell\ExtremeCompressor.Compress\UserSub", "", "mine")
+    _put(root, r"ExtremeCompressor.Archive", "EditFlags", "65536")
+    _put(root, r"ExtremeCompressor.Archive\shell\Mine\command", "", "mine.exe")
+    S.uninstall(root=root)
+    assert _read(root, r"*\shell\ExtremeCompressor.Compress\UserSub") == "mine"
+    assert _read(root, r"ExtremeCompressor.Archive", "EditFlags") == "65536"
+    assert _read(root, r"ExtremeCompressor.Archive\shell\Mine\command") == "mine.exe"
+    # ...while everything it wrote is gone: no value of ours is left behind.
+    left = _tree(root)
+    assert all(name not in ("MUIVerb", "Icon") for vals in left.values() for name, _ in vals)
+    assert not _exists(root, r"*\shell\ExtremeCompressor.Compress\command")
+    assert not _exists(root, r"ExtremeCompressor.Archive\shell\open")
+
+
+@windows_only
+def test_install_then_uninstall_restores_the_tree_exactly(root):
+    _put(root, r"*\shell\SomeoneElse\command", "", "other.exe")
+    _put(root, ".txt", "", "txtfile")
+    before = _tree(root)
+    S.install(PREFIX, root=root, check_exists=False)
+    assert _tree(root) != before
+    S.uninstall(root=root)
+    assert _tree(root) == before
+
+
+@windows_only
+def test_install_writes_only_where_it_says(root):
+    """Nothing outside the three trees and the one association is touched."""
+    S.install(PREFIX, root=root, check_exists=False)
+    tops = {k.lstrip("\\").split("\\")[0] for k in _tree(root) if k.strip("\\")}
+    assert tops == {"*", "Directory", "ExtremeCompressor.Archive", ".excmp"}
+
+
+@windows_only
+def test_the_other_labels_and_icons_are_what_the_menu_shows(root):
+    S.install(PREFIX, root=root, check_exists=False)
+    icon = f'"{PREFIX[0]}",0'
+    assert _read(root, r"ExtremeCompressor.Archive\shell\open", "MUIVerb") == "Extract with ExtremeCompressor"
+    assert _read(root, r"ExtremeCompressor.Archive\shell\ExtractHere", "MUIVerb") == "Extract here"
+    assert _read(root, r"ExtremeCompressor.Archive\shell\Verify", "MUIVerb") == "Verify archive"
+    assert _read(root, r"ExtremeCompressor.Archive\shell") == "open"
+    assert _read(root, r"ExtremeCompressor.Archive\DefaultIcon") == icon
+    assert _read(root, r"*\shell\ExtremeCompressor.Compress", "Icon") == icon
+
+
+@windows_only
+def test_no_associate_leaves_excmp_alone(root):
+    written = S.install(PREFIX, root=root, check_exists=False, associate=False)
+    assert ".excmp" not in written and not _exists(root, ".excmp")
+
+
+@windows_only
+def test_uninstall_removes_only_the_value_from_a_shared_excmp_key(root):
+    S.install(PREFIX, root=root, check_exists=False)
+    _put(root, r".excmp\OpenWithProgids", "Other.Progid", "")
+    S.uninstall(root=root)
+    assert _exists(root, r".excmp\OpenWithProgids")
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"{root}\.excmp") as key:
+        with pytest.raises(FileNotFoundError):
+            winreg.QueryValueEx(key, "")
+
+
+@windows_only
+def test_status_sees_a_half_installed_menu(root):
+    import winreg
+    S.install(PREFIX, root=root, check_exists=False)
+    S._delete_tree(winreg.HKEY_CURRENT_USER, rf"{root}\ExtremeCompressor.Archive\DefaultIcon")
+    st = S.status(PREFIX, root=root)
+    assert not st.installed and r"ExtremeCompressor.Archive\DefaultIcon" in st.missing
+
+
+@windows_only
+def test_status_reports_stale_even_when_something_is_also_missing(root):
+    import winreg
+    S.install([r"C:\old\ExtremeCompressor.exe"], root=root, check_exists=False)
+    S._delete_tree(winreg.HKEY_CURRENT_USER, rf"{root}\Directory\shell\ExtremeCompressor.Compress")
+    st = S.status(PREFIX, root=root)
+    assert st.missing and st.stale
+
+
+@pytest.mark.parametrize("bad", [r"C:\100%1x\ec.exe", "C:\\a\nb\\ec.exe", "C:\\a\tb\\ec.exe",
+                                 "\\foo\\x.exe", "/foo/x.exe", "C:\\folder\\", "C:ec.exe",
+                                 r"C:\a%PATH%\ec.exe"])
+def test_a_launcher_the_shell_would_rewrite_or_mis_split_is_refused(bad):
+    """`%1` and friends are substituted anywhere in the template, a trailing backslash eats the
+    closing quote, and a rooted path with no drive is not absolute for the shell."""
+    with pytest.raises(ValueError):
+        S.command_line("compress", [bad])
+
+
+def test_a_unc_launcher_is_accepted():
+    assert S.command_line("compress", [r"\\server\share\ec.exe"]).startswith('"\\\\server\\share')
+
+
+# -- what Explorer's quoting does to a folder path ------------------------------
+
+@pytest.mark.parametrize("arg,expected", [
+    ("D:", "D:\\"),                   # CommandLineToArgvW turns "D:\" into D:" - the drive ROOT
+    ('D:"', "D:\\"),
+    ('C:\\x y\\"', "C:\\x y"),        # a folder given with its trailing backslash
+    ("C:\\x y", "C:\\x y"),
+])
+def test_a_drive_root_is_not_read_as_the_drives_current_directory(arg, expected):
+    got = I.parse_intake(["compress", arg])
+    assert got.paths == (Path(expected),)
+
+
+def test_a_lone_surrogate_is_not_a_path():
+    payload = json.dumps({"action": "compress", "paths": ["C:\\a\ud800b"]}).encode("utf-8", "surrogatepass")
+    assert I.from_wire(payload) is None
+    assert I.parse_intake(["compress", "C:\\a\ud800b"]) is None
+
+
+def test_deeply_nested_json_is_just_rejected():
+    assert I.from_wire(b"[" * 200_000) is None
+    assert I.from_wire(b'{"a":' * 50_000) is None
+
+
+@pytest.mark.parametrize("opt", ["-platform", "-style", "-stylesheet", "-geometry", "-title"])
+def test_every_qt_option_with_a_value_is_skipped_with_its_value(opt):
+    got = I.parse_intake([opt, "Fusion", "compress", r"C:\a.txt"])
+    assert got == I.Intake("compress", (Path(r"C:\a.txt"),))
+
+
+def test_the_cli_says_it_is_windows_only_elsewhere(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert _cli("status") == 1
+    assert "windows" in capsys.readouterr().err.lower()
+
+
+def test_one_unencodable_path_rejects_the_whole_wire_message():
+    """Strict at the boundary: a message that carries one bad path is not trusted for the others."""
+    payload = json.dumps({"action": "compress", "paths": ["C:\\ok.txt", "C:\\a\ud800b"]}).encode("utf-8")
+    assert I.from_wire(payload) is None
+
+
+@windows_only
+def test_the_cli_no_associate_leaves_excmp_alone(root, monkeypatch, tmp_path):
+    exe = tmp_path / "ExtremeCompressor.exe"
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(S, "default_launcher", lambda: [str(exe)])
+    real = S.install
+    monkeypatch.setattr(S, "install", lambda *a, **k: real(*a, **{"root": root, **k}))
+    assert _cli("install", "--no-associate") == 0
+    assert not _exists(root, ".excmp")
+    assert _exists(root, r"*\shell\ExtremeCompressor.Compress")

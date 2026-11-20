@@ -23,6 +23,7 @@ else and never raises.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -52,12 +53,26 @@ def _clean(text: str) -> str:
     return text.strip().strip('"').strip()
 
 
+def _encodable(text: str) -> bool:
+    """A path that cannot be written as UTF-8 (a lone surrogate) cannot be sent, logged or shown."""
+    try:
+        text.encode("utf-8")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
 def _normalised(action: str, raw: Sequence[str]) -> Intake | None:
     seen: set[str] = set()
     paths: list[Path] = []
     for text in raw:
         text = _clean(text)
-        if not text or "\x00" in text or len(text) > MAX_PATH_CHARS:
+        # ``"D:\"`` reaches us as ``D:"``: the shell's template is ``"%1"`` and
+        # CommandLineToArgvW reads a backslash before a quote as an escape. Once the quote is
+        # stripped a bare ``D:`` is the drive's CURRENT directory, which is not what was clicked.
+        if re.fullmatch(r"[A-Za-z]:", text):
+            text += "\\"
+        if not text or "\x00" in text or len(text) > MAX_PATH_CHARS or not _encodable(text):
             continue
         key = text.lower()
         if key in seen:
@@ -116,7 +131,8 @@ def from_wire(data: bytes) -> Intake | None:
         if not isinstance(paths, list) or not 0 < len(paths) <= MAX_PATHS:
             return None
         for p in paths:
-            if not isinstance(p, str) or "\x00" in p or not 0 < len(p) <= MAX_PATH_CHARS:
+            if (not isinstance(p, str) or "\x00" in p or not 0 < len(p) <= MAX_PATH_CHARS
+                    or not _encodable(p)):
                 return None
         return _normalised(action, paths)
     except (ValueError, UnicodeDecodeError, RecursionError):

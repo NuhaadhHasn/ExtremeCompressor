@@ -1,5 +1,16 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-11-20**. **B26 merged** (`8f59953`; full suite **1,927
+> passed, 1 skipped, 1 xfailed**, corpus guard clean; CI green on the branch):
+> **the B20 zip containers are priced at Insane by what Precomp expands them
+> to**, not by their size. EPUB had run 3.5x over its expected; the old model
+> held for five of six corpora and failed on the one full of PNGs. Time follows
+> the bytes zpaqfranz is handed (16-80 s per input MB, 4.4-7.2 per expanded MB),
+> and the zip's central directory, which the probe already reads, gives them.
+> A review's own findings (a JPEG-heavy container priced at ~0 s, a header
+> claiming 10 TB estimated at 24 years) are fixed. **No phase is queued**.
+> ([record](benchmarks/2026-11-20-b26-insane-containers.md))
+>
 > Status date: **2026-11-18**. **B22-B25 merged** (`ba84077`, `524881c`,
 > `65e6d9c`, `d9a8965`; full suite **1,861 passed, 1 skipped, 1 xfailed**,
 > corpus guard clean; CI green on every branch). B25 pinned Precomp. Insane prices **JPEG, MP3,
@@ -612,6 +623,28 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
+- [x] B26. ✅ **MERGED 2026-11-20** (`8f59953`; suite **1,927 passed, 1
+      skipped, 1 xfailed**, corpus guard clean; CI green on the branch) -
+      **the B20 containers at Insane (AAB, AAR, NuGet, APPX, EPUB, ODT), priced
+      by their expanded size.** 16 rows on six corpora (176.5 MB) plus a JPEG
+      album through `engine.compress` and `engine.extract`, every file
+      restored. The chain's rate plus B20's extra held for five of six; **EPUB
+      ran 3.5x over its expected and past its high** (seconds per input MB
+      ranged 16 to 80, per `.pcf` MB 4.4 to 7.2). The central directory predicts
+      the `.pcf` for plain deflate (0.94-1.00 on 13 of 14 files; an AAR with a
+      nested jar was 0.50); PNG members, which expand 6-106x per byte, are
+      priced at B22's PNG rate, JPEG members at its JPEG rate (one album ran
+      within 16%), the rest at the chain's. Fitted 0.385 / 0.360 MB/s per
+      deflated MB, split by each row's own phase events. The expected is now
+      0.66x-1.57x of the fastest rows (was 0.28x-1.7x); every fastest and
+      contended row is inside its range but one 10.7x row run beside a runaway
+      search. **Two reviewers; four findings were real**: a JPEG-heavy container
+      priced at ~0 s (448 s on main), a header claiming 10 TB estimated at 24
+      years (clamped to deflate's 1032:1), the self-test split wrong for the
+      dominant row, and four mutations of the probe the tests missed. A 15.7 h
+      sleep cost a row. Not done: GIF, stored and nested containers, B5's types
+      at Insane, a second JPEG album and PNG container.
+      [Record](benchmarks/2026-11-20-b26-insane-containers.md).
 - [x] B22. ✅ **MERGED 2026-11-17** (`ba84077`; full suite **1,826 passed, 2 skipped,
       1 xfailed**, corpus guard clean; CI green on the branch) - **Insane's rate on recoded media, and a
       per-job cost.** Eight corpora through `engine.compress` and
@@ -635,7 +668,7 @@ OSI rule comes back before anything ships.
       (caught by a test through `queue_manager._time_split`); review found
       calibration folding the new second into the learned rate (fixed) and
       six wrong figures in the record. Not done: the B20 containers at
-      Insane, a quieter MP3 row.
+      Insane (done in B26), a quieter MP3 row.
       [Record](benchmarks/2026-11-16-b22-insane-recoded.md).
 - [x] B24. ✅ **MERGED 2026-11-17** (`65e6d9c`; suite 1,854 / 2 / 1, corpus
       guard clean; CI green on the branch) - **GIF's Insane rate refitted on

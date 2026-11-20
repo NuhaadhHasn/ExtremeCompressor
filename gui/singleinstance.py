@@ -88,7 +88,7 @@ def mark_running() -> bool:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateMutexW.restype = ctypes.c_void_p
         kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
-        handle = kernel32.CreateMutexW(None, 0, f"Local\{RUNNING_MUTEX}")
+        handle = kernel32.CreateMutexW(None, 0, f"Local\\{RUNNING_MUTEX}")
     except Exception:                                    # noqa: BLE001
         return False
     if not handle:

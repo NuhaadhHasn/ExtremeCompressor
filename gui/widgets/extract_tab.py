@@ -215,6 +215,13 @@ class ExtractTab(QWidget):
         if archive.is_file():
             self.verifyRequested.emit(archive)
 
+    # I5: the same doors the buttons use, for the Explorer verbs.
+    def request_extract(self) -> None:
+        self._emit_request()
+
+    def request_verify(self) -> None:
+        self._emit_verify()
+
     # -- validation --------------------------------------------------------
     def _revalidate(self) -> None:
         archive = Path(self.archive_edit.text().strip('" '))

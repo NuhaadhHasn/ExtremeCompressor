@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
 
 from excmp import __version__
 from excmp.analyzer import FileInfo
+from excmp.intake import Intake
 from excmp.planner import Profile, plan as make_plan
 from excmp.safepath import UnsafePathError, safe_relpath
 from excmp.sample import MeasuredRun
@@ -672,6 +673,48 @@ class MainWindow(QMainWindow):
         worker = AnalysisWorker(list(self._pending), self.presets.current_profile(),
                                 self.tools, self._analysis_signals)
         self._analysis_pool.start(worker)
+
+    def handle_intake(self, intake: Intake) -> None:
+        """What an Explorer verb, or a second launch, asked for (I5).
+
+        Files named but gone are *said*, not skipped: a menu click that does nothing looks like
+        a broken menu. An archive path that is a folder is refused for the same reason it
+        would be on the Extract tab. ``extract-here`` and ``verify`` go through the signals the
+        buttons emit, so they get the checks the buttons get.
+        """
+        found = [p for p in intake.paths if p.exists()]
+        gone = [p for p in intake.paths if not p.exists()]
+        if gone:
+            shown = ", ".join(p.name or str(p) for p in gone[:3])
+            more = f" (+{len(gone) - 3})" if len(gone) > 3 else ""
+            self.banner.show_message(self.tr("Not found: %s%s") % (shown, more), tone="warn")
+        self._bring_to_front()
+        if not found:
+            return
+        if intake.action == "compress":
+            self.tabs.setCurrentWidget(self._scroll)
+            self.add_paths(found)
+            return
+        archive = found[0]
+        if not archive.is_file():
+            self.banner.show_message(self.tr("%s is a folder, not an archive.") % archive.name,
+                                     tone="warn")
+            return
+        tab = self.extract_tab
+        tab.dest_edit.setText("")           # set_archive suggests one only for an empty field
+        tab.set_archive(archive)
+        self.tabs.setCurrentWidget(tab)
+        if intake.action == "extract-here":
+            tab.request_extract()
+        elif intake.action == "verify":
+            tab.request_verify()
+
+    def _bring_to_front(self) -> None:
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self)            # Windows may refuse focus; this flashes the taskbar
 
     def clear_pending(self) -> None:
         self._pending.clear()

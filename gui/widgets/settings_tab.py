@@ -173,8 +173,7 @@ class SettingsTab(QScrollArea):
         # I5. The switch for the Explorer right-click menu (the CLI and the installer could already
         # add it). Per user, no administrator. No modal dialog - a rule of this UI - so what
         # happened is said inline, under the button.
-        self.explorer_button = QPushButton(self.tr("Add"), page)
-        self.explorer_button.setAccessibleName(self.tr("Explorer right-click menu"))
+        self.explorer_button = QPushButton(page)
         self.explorer_button.setAccessibleDescription(self.tr(
             "Adds or removes “Compress with ExtremeCompressor” on files and folders, and "
             "“Extract here” and “Verify archive” on .excmp archives, in the Explorer menu."))
@@ -212,6 +211,11 @@ class SettingsTab(QScrollArea):
         self.setWidget(page)
 
     # -- the Explorer menu (I5) -----------------------------------------------
+    def _set_explorer_button(self, text: str) -> None:
+        """The button's text is its name for a screen reader too: say what it does, to what."""
+        self.explorer_button.setText(text)
+        self.explorer_button.setAccessibleName(self.tr("%s the Explorer right-click menu") % text)
+
     def refresh_explorer_menu(self, message: str | None = None) -> None:
         """Read the registry again and show what is there. ``message`` (a failure) replaces the
         state line, and the button keeps offering whatever is true now."""
@@ -220,17 +224,21 @@ class SettingsTab(QScrollArea):
         try:
             st = self._shell.status()
         except Exception as exc:                              # noqa: BLE001
-            self.explorer_button.setText(self.tr("Add"))
+            self._set_explorer_button(self.tr("Add"))
             self.explorer_state.setText(message or self.tr("Could not read the menu: %s") % exc)
             return
-        if not st.installed:
-            self.explorer_button.setText(self.tr("Add"))
+        if not st.installed and st.found:
+            # An install that failed part-way leaves some entries live: not "absent", and Add finishes it.
+            self._set_explorer_button(self.tr("Repair"))
+            state = self.tr("Partly in the Explorer menu: some entries are missing.")
+        elif not st.installed:
+            self._set_explorer_button(self.tr("Add"))
             state = self.tr("Not in the Explorer menu.")
         elif st.stale:
-            self.explorer_button.setText(self.tr("Repair"))
+            self._set_explorer_button(self.tr("Repair"))
             state = self.tr("On, but it starts a different copy of ExtremeCompressor.")
         else:
-            self.explorer_button.setText(self.tr("Remove"))
+            self._set_explorer_button(self.tr("Remove"))
             state = self.tr("On: right-click a file or a folder.")
         self.explorer_state.setText(message or state)
 

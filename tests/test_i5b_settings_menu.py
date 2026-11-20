@@ -23,19 +23,21 @@ from gui.widgets.settings_tab import SettingsTab                      # noqa: E4
 class FakeShell:
     """Records what the tab asks for; holds the 'registry' state in a dict."""
 
-    def __init__(self, installed=False, stale=False, fail=None):
+    def __init__(self, installed=False, stale=False, fail=None, partial=False):
         self.installed, self.stale, self.fail = installed, stale, fail
+        self.partial = partial
         self.calls = []
 
     def status(self):
         return Status(installed=self.installed, stale=self.stale and self.installed,
-                      missing=[] if self.installed else ["x"], found=[])
+                      missing=[] if self.installed else ["x"],
+                      found=["k"] if (self.installed or self.partial) else [])
 
     def install(self, *a, **k):
         self.calls.append("install")
         if self.fail:
             raise self.fail
-        self.installed, self.stale = True, False
+        self.installed, self.stale, self.partial = True, False, False
         return ["k"]
 
     def uninstall(self, *a, **k):
@@ -137,3 +139,23 @@ def test_the_real_default_backend_is_read_only_on_construction(qtbot, monkeypatc
     tab = SettingsTab({}, Path("."))
     qtbot.addWidget(tab)
     assert wrote == []
+
+
+def test_a_half_installed_menu_is_not_called_absent(qtbot):
+    """Review: an install that failed on its 4th write left the compress verb live, yet the label
+    said "Not in the Explorer menu." The button (Add completes it) was right; the label was not."""
+    tab = _tab(qtbot, FakeShell(partial=True))
+    assert "part" in tab.explorer_state.text().lower()
+    assert "not in" not in tab.explorer_state.text().lower()
+    assert tab.explorer_button.text() == "Repair"
+    tab.explorer_button.click()
+    assert tab.explorer_button.text() == "Remove"
+
+
+@pytest.mark.parametrize("shell", [FakeShell(), FakeShell(installed=True), FakeShell(installed=True, stale=True)])
+def test_a_screen_reader_hears_what_the_button_does(qtbot, shell):
+    """Review: a fixed accessible name hid "Add", "Remove" and "Repair" behind the row's title."""
+    tab = _tab(qtbot, shell)
+    name = tab.explorer_button.accessibleName()
+    assert tab.explorer_button.text() in name
+    assert "Explorer" in name

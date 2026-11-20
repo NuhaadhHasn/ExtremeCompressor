@@ -478,3 +478,40 @@ def test_qt_options_are_skipped_with_their_value_in_either_dash_form(opt):
     """Review: `--platform offscreen` produced "Not found: offscreen"."""
     got = I.parse_intake([opt, "something", "compress", r"C:\a.txt"])
     assert got == I.Intake("compress", (Path(r"C:\a.txt"),))
+
+
+# -- a frozen build: the console tool installs the menu, the WINDOW is what it runs ----------
+
+def _frozen(monkeypatch, exe):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+
+
+def test_frozen_the_verbs_run_the_window_even_when_the_console_tool_installed_them(monkeypatch, tmp_path):
+    """The installer runs `excmp.exe shell install`; sys.executable is then the CONSOLE exe, and a menu
+    that launched it would flash a console and never open the window."""
+    gui = tmp_path / "ExtremeCompressor.exe"
+    cli = tmp_path / "excmp.exe"
+    gui.write_bytes(b"MZ")
+    cli.write_bytes(b"MZ")
+    _frozen(monkeypatch, cli)
+    assert S.default_launcher() == [str(gui)]
+
+
+def test_frozen_from_the_window_itself_it_is_the_same_program(monkeypatch, tmp_path):
+    gui = tmp_path / "ExtremeCompressor.exe"
+    gui.write_bytes(b"MZ")
+    _frozen(monkeypatch, gui)
+    assert S.default_launcher() == [str(gui)]
+
+
+def test_frozen_without_the_window_next_to_it_falls_back_to_what_is_running(monkeypatch, tmp_path):
+    cli = tmp_path / "excmp.exe"
+    cli.write_bytes(b"MZ")
+    _frozen(monkeypatch, cli)
+    assert S.default_launcher() == [str(cli)]
+
+
+def test_from_source_the_launcher_is_the_interpreter_running_run_gui():
+    got = S.default_launcher()
+    assert got[-1].endswith("run_gui.py") and len(got) == 2

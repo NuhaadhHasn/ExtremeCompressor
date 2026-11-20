@@ -49,9 +49,15 @@ def default_launcher() -> list[str]:
 
     A source checkout cannot use ``python -m gui``: Explorer starts the verb in the selected
     file's folder, where ``gui`` is not importable.
+
+    Frozen, the verbs must run the WINDOW (``ExtremeCompressor.exe``) even when the console tool
+    (``excmp.exe``) is what runs ``shell install`` - the installer does exactly that - because the
+    console build would flash a console and never open the window. The window is looked for next to
+    whatever is running; if it is not there, what is running is the best that can be done.
     """
     if getattr(sys, "frozen", False):
-        return [sys.executable]
+        window = Path(sys.executable).with_name("ExtremeCompressor.exe")
+        return [str(window if window.is_file() else Path(sys.executable))]
     exe = Path(sys.executable)
     pythonw = exe.with_name("pythonw.exe")
     return [str(pythonw if pythonw.is_file() else exe), str(repo_root() / "run_gui.py")]

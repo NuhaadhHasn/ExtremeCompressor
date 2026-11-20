@@ -19,17 +19,19 @@ still believes nothing it reads.
 
 from __future__ import annotations
 
+import collections
 import ctypes
 import getpass
 import re
 import sys
 import time
+import uuid
 from typing import Callable
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
-from excmp.intake import MAX_WIRE_BYTES, Intake, from_wire, to_wire
+from excmp.intake import MAX_WIRE_BYTES, Intake, from_wire, parse_wire, to_wire
 
 
 def default_name() -> str:
@@ -77,6 +79,7 @@ class IntakeServer(QObject):
         super().__init__(parent)
         self._name = name or default_name()
         self._lock = None
+        self._seen_ids: collections.deque = collections.deque(maxlen=512)   # recent hand-overs
         self._server = QLocalServer(self)
         self._server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         self._server.newConnection.connect(self._accept)
@@ -131,19 +134,26 @@ class IntakeServer(QObject):
     def _deliver(self, state: dict) -> None:
         if state["done"] or not state["buf"] or len(state["buf"]) > MAX_WIRE_BYTES:
             return
-        intake = from_wire(bytes(state["buf"]))
+        intake, msg_id = parse_wire(bytes(state["buf"]))
         if intake is not None:
-            state["done"] = True                         # exactly once per connection
+            state["done"] = True                         # exactly once per connection...
+            if msg_id is not None:
+                if msg_id in self._seen_ids:             # ...and once per hand-over: a sender whose
+                    return                               # write was not confirmed in time retries
+                self._seen_ids.append(msg_id)
             self.received.emit(intake)
 
 
-def forward(name: str, intake: Intake, timeout_ms: int = 400) -> bool:
-    """Hand ``intake`` to the instance listening on ``name``. True if it was written."""
+def forward(name: str, intake: Intake, timeout_ms: int = 400, msg_id: str | None = None) -> bool:
+    """Hand ``intake`` to the instance listening on ``name``. True if it was written.
+
+    ``msg_id`` names the hand-over; every retry of it must pass the same one (``acquire`` does), so
+    the window recognises a message it has already acted on."""
     sock = QLocalSocket()
     sock.connectToServer(name)
     if not sock.waitForConnected(timeout_ms):
         return False
-    sock.write(to_wire(intake))
+    sock.write(to_wire(intake, msg_id or uuid.uuid4().hex))
     ok = sock.waitForBytesWritten(timeout_ms)
     sock.disconnectFromServer()
     if sock.state() != QLocalSocket.LocalSocketState.UnconnectedState:
@@ -171,8 +181,9 @@ def acquire(server: IntakeServer, intake: Intake | None, *, deadline_s: float = 
     if intake is None:                                   # a second plain launch: its own window
         return True
     end = time.monotonic() + deadline_s
+    msg_id = uuid.uuid4().hex                            # one id for every retry of this hand-over
     while time.monotonic() < end:
-        if forward(server._name, intake):
+        if forward(server._name, intake, msg_id=msg_id):
             return False
         lock = _try_lock(server._name)                   # the running one went away meanwhile
         if lock is not None:

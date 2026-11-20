@@ -24,6 +24,26 @@ from gui.mainwindow import MainWindow                                # noqa: E40
 from gui.singleinstance import IntakeBatcher, IntakeServer, acquire, forward  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _leave_qt_as_found(qtbot):
+    """Run one real ``exec()`` cycle after every test in this file.
+
+    ``gui.app.main()`` runs the real event loop and ends with ``quit()``; when the window it made is
+    destroyed afterwards Qt can be left with a quit requested and NO loop running, and until the next
+    ``QCoreApplication.exec()`` every nested event loop (``qtbot.waitUntil``, ``waitSignal``) returns
+    at once. A first version of these tests did that to 11 later GUI tests on CI (``test_ram_and_knobs``,
+    ``test_i6_*``, ``test_sidecar_and_settings``), each of which passed alone. One throwaway
+    ``exec()`` clears it, and leaves the process as every other test file expects to find it."""
+    yield
+    from PySide6.QtCore import QTimer
+    timer = QTimer()
+    timer.setSingleShot(True)
+    timer.timeout.connect(QCoreApplication.quit)
+    timer.start(0)
+    QCoreApplication.exec()
+    timer.stop()
+
+
 @pytest.fixture
 def name():
     return f"ExtremeCompressorTest-{uuid.uuid4().hex}"
@@ -48,6 +68,20 @@ from gui.singleinstance import IntakeServer, acquire, forward
 app = QCoreApplication([])
 mode, name = sys.argv[2], sys.argv[3]
 intake = Intake("compress", tuple(Path(p) for p in sys.argv[4:]))
+if mode == "raw":
+    # Whatever bytes it is told to write, with no protocol: a hostile or broken sender.
+    from PySide6.QtNetwork import QLocalSocket
+    sock = QLocalSocket()
+    sock.connectToServer(name)
+    if not sock.waitForConnected(5000):
+        sys.exit(1)
+    data = (b"x" * ((1 << 20) + 4096)) if sys.argv[4] == "OVERSIZE" else bytes.fromhex(sys.argv[4])
+    sock.write(data)
+    sock.waitForBytesWritten(5000)
+    sock.disconnectFromServer()
+    if sock.state() != QLocalSocket.LocalSocketState.UnconnectedState:
+        sock.waitForDisconnected(2000)
+    sys.exit(0)
 if mode == "forward":
     sys.exit(0 if forward(name, intake) else 1)
 if mode == "window":
@@ -127,27 +161,41 @@ def test_forward_to_nobody_says_so(qtbot, name):
     assert forward(name, I.Intake("compress", (Path(r"C:\x"),)), timeout_ms=150) is False
 
 
+def _send_raw(qtbot, name, payload):
+    """Write ``payload`` (bytes, or the string ``"OVERSIZE"``) to the pipe from a REAL other process."""
+    arg = "OVERSIZE" if payload == "OVERSIZE" else (payload.hex() or "00")
+    child = _spawn("raw", name, arg)
+    # Pump the event loop while it runs: the server lives in THIS thread and cannot accept the
+    # connection while the test is blocked in proc.wait().
+    qtbot.waitUntil(lambda: child.poll() is not None, timeout=30000)
+    assert child.returncode == 0
+
+
 def test_garbage_on_the_pipe_is_dropped_not_obeyed(qtbot, server, name):
-    for payload in (b"not json", b'{"action": "format-disk", "paths": ["C:\\\\a"]}', b"\xff" * 50):
-        sock = QLocalSocket()
-        sock.connectToServer(name)
-        assert sock.waitForConnected(1000)
-        sock.write(payload)
-        sock.waitForBytesWritten(1000)
-        sock.disconnectFromServer()
-    with qtbot.assertNotEmitted(server.received, wait=400):
-        pass
+    """Not vacuous: each bad payload is really delivered (from another process), and a valid message
+    sent AFTER them must arrive ALONE - so the window read the garbage and chose not to act on it.
+    (A first version sent through an in-process socket, which never delivers, so 'nothing arrived'
+    proved nothing.)"""
+    got = []
+    server.received.connect(got.append)
+    for payload in (b"not json", b'{"action": "format-disk", "paths": ["C:\\\\a"]}', b"\xff" * 50,
+                    b'{"action": "compress", "paths": [], "id": "x"}'):
+        _send_raw(qtbot, name, payload)
+    good = I.to_wire(I.Intake("compress", (Path(r"C:\ok.txt"),)), msg_id="good1")
+    _send_raw(qtbot, name, good)
+    qtbot.waitUntil(lambda: len(got) >= 1, timeout=10000)
+    qtbot.wait(300)
+    assert got == [I.Intake("compress", (Path(r"C:\ok.txt"),))]
 
 
 def test_an_oversized_message_is_cut_off(qtbot, server, name):
-    sock = QLocalSocket()
-    sock.connectToServer(name)
-    assert sock.waitForConnected(1000)
-    sock.write(b"x" * (I.MAX_WIRE_BYTES + 4096))
-    sock.waitForBytesWritten(2000)
-    sock.disconnectFromServer()
-    with qtbot.assertNotEmitted(server.received, wait=500):
-        pass
+    got = []
+    server.received.connect(got.append)
+    _send_raw(qtbot, name, "OVERSIZE")
+    _send_raw(qtbot, name, I.to_wire(I.Intake("compress", (Path(r"C:\after.txt"),)), msg_id="after1"))
+    qtbot.waitUntil(lambda: len(got) >= 1, timeout=10000)
+    qtbot.wait(300)
+    assert got == [I.Intake("compress", (Path(r"C:\after.txt"),))]
 
 
 def test_several_files_each_from_its_own_process_all_arrive(qtbot, server, name):
@@ -337,31 +385,51 @@ def test_a_folder_is_not_an_archive(qtbot, win, tmp_path):
 
 # -- the whole entry point ------------------------------------------------------
 
+def _quit_after(ms):
+    """An OWNED single-shot timer that quits the event loop; the caller stops it in a ``finally``.
+
+    Never ``QTimer.singleShot(ms, QCoreApplication.quit)``: that timer outlives the test, and when it
+    fires inside a LATER test's loop, or in none, the stray ``quit()`` leaves Qt in a state where every
+    later event loop returns at once. A first version of these tests did that with a 30 s "safety"
+    timer and 11 unrelated GUI tests failed on CI (``test_ram_and_knobs``, ``test_i6_*``...), though
+    each passed alone."""
+    from PySide6.QtCore import QTimer
+    timer = QTimer()
+    timer.setSingleShot(True)
+    timer.timeout.connect(QCoreApplication.quit)
+    timer.start(ms)
+    return timer
+
+
 def test_main_hands_the_launch_arguments_to_the_window(qtbot, monkeypatch, tmp_path, name):
     """``python run_gui.py extract X.excmp`` - what the double-click verb runs - ends up in
     ``MainWindow.handle_intake`` once the window is up."""
     import gui.app as app_mod
     import gui.singleinstance as si
-    from PySide6.QtCore import QTimer
     monkeypatch.setattr(si, "default_name", lambda: name)
     archive = tmp_path / "a.excmp"
     archive.write_bytes(b"x")
     seen = []
     monkeypatch.setattr(MainWindow, "handle_intake", lambda self, i: seen.append(i))
-    QTimer.singleShot(0, QCoreApplication.quit)        # leave the event loop as soon as it starts
-    assert app_mod.main(["run_gui.py", "extract", str(archive)]) == 0
+    timer = _quit_after(0)                 # leave the event loop as soon as it starts
+    try:
+        assert app_mod.main(["run_gui.py", "extract", str(archive)]) == 0
+    finally:
+        timer.stop()
     assert seen == [I.Intake("extract", (archive,))]
 
 
 def test_main_without_arguments_just_opens_the_window(qtbot, monkeypatch, name):
     import gui.app as app_mod
     import gui.singleinstance as si
-    from PySide6.QtCore import QTimer
     monkeypatch.setattr(si, "default_name", lambda: name)
     seen = []
     monkeypatch.setattr(MainWindow, "handle_intake", lambda self, i: seen.append(i))
-    QTimer.singleShot(0, QCoreApplication.quit)
-    assert app_mod.main(["run_gui.py"]) == 0
+    timer = _quit_after(0)
+    try:
+        assert app_mod.main(["run_gui.py"]) == 0
+    finally:
+        timer.stop()
     assert seen == []
 
 
@@ -491,12 +559,19 @@ def test_main_passes_a_forwarded_intake_on_to_the_window(qtbot, monkeypatch, nam
     monkeypatch.setattr(si, "default_name", lambda: name)
     seen = []
     monkeypatch.setattr(MainWindow, "handle_intake", lambda self, i: seen.append(i))
-    QTimer.singleShot(300, lambda: _spawn("acquire", name, r"C:\late.txt"))   # a second process
+    spawn = QTimer()                                     # all three timers are OWNED and stopped below
+    spawn.setSingleShot(True)
+    spawn.timeout.connect(lambda: _spawn("acquire", name, r"C:\late.txt"))   # a second process
+    spawn.start(300)
     poll = QTimer()
     poll.timeout.connect(lambda: QCoreApplication.quit() if seen else None)
     poll.start(100)
-    QTimer.singleShot(30_000, QCoreApplication.quit)                           # never hang
-    assert app_mod.main(["run_gui.py"]) == 0
+    watchdog = _quit_after(30_000)                       # never hang
+    try:
+        assert app_mod.main(["run_gui.py"]) == 0
+    finally:
+        for timer in (spawn, poll, watchdog):
+            timer.stop()
     assert seen == [I.Intake("compress", (Path(r"C:\late.txt"),))]
 
 
@@ -531,3 +606,50 @@ def test_the_window_is_brought_back_when_it_was_minimised(qtbot, win, tmp_path, 
         pytest.skip("this Qt platform does not minimise")
     win.handle_intake(I.Intake("compress", (f,)))
     assert not win.isMinimized()
+
+
+# -- a retried message is acted on once -----------------------------------------
+
+def test_the_same_message_delivered_twice_is_acted_on_once(qtbot, server, name):
+    """Review (and a CI-load failure): a secondary whose write was not confirmed in time retries, so the
+    window got a path twice - and a duplicated `extract-here` would start two extractions."""
+    got = []
+    server.received.connect(got.append)
+    wire = I.to_wire(I.Intake("extract-here", (Path(r"C:\a.excmp"),)), msg_id="abc123")
+    _send_raw(qtbot, name, wire)
+    qtbot.waitUntil(lambda: len(got) == 1, timeout=15000)
+    _send_raw(qtbot, name, wire)
+    with qtbot.assertNotEmitted(server.received, wait=500):
+        pass
+    assert len(got) == 1
+
+
+def test_two_different_messages_are_both_acted_on(qtbot, server, name):
+    got = []
+    server.received.connect(got.append)
+    _send_raw(qtbot, name, I.to_wire(I.Intake("extract", (Path(r"C:\a.excmp"),)), msg_id="m1"))
+    _send_raw(qtbot, name, I.to_wire(I.Intake("extract", (Path(r"C:\b.excmp"),)), msg_id="m2"))
+    qtbot.waitUntil(lambda: len(got) == 2, timeout=15000)
+
+
+def test_a_message_with_no_id_is_still_accepted(qtbot, server, name):
+    """Older or hand-written senders: no id means no deduplication, not a refusal."""
+    got = []
+    server.received.connect(got.append)
+    _send_raw(qtbot, name, I.to_wire(I.Intake("compress", (Path(r"C:\x.txt"),))))
+    qtbot.waitUntil(lambda: len(got) == 1, timeout=15000)
+
+
+def test_every_retry_of_one_handover_carries_the_same_id(qtbot, monkeypatch, name):
+    import gui.singleinstance as si
+    ids = []
+
+    def fake_forward(n, intake, timeout_ms=400, msg_id=None):
+        ids.append(msg_id)
+        return len(ids) >= 3
+
+    monkeypatch.setattr(si, "_try_lock", lambda n: None)
+    monkeypatch.setattr(si, "forward", fake_forward)
+    srv = IntakeServer(name)
+    assert acquire(srv, I.Intake("compress", (Path(r"C:\a"),)), deadline_s=5, step_ms=5) is False
+    assert len(ids) == 3 and len(set(ids)) == 1 and ids[0]

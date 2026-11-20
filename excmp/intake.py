@@ -113,29 +113,46 @@ def parse_intake(argv: Sequence[str]) -> Intake | None:
     return _normalised("extract" if one_archive else "compress", words)
 
 
-def to_wire(intake: Intake) -> bytes:
-    return json.dumps({"v": 1, "action": intake.action,
-                       "paths": [str(p) for p in intake.paths]},
-                      ensure_ascii=False).encode("utf-8")
+_MSG_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
+
+
+def to_wire(intake: Intake, msg_id: str | None = None) -> bytes:
+    """The message a second process sends. ``msg_id`` names one hand-over: every retry of it carries
+    the same id, so the window can recognise a message it has already acted on (a sender whose write
+    was not confirmed in time retries, and without this the window got the same path twice - a
+    duplicated ``extract-here`` would start two extractions)."""
+    body = {"v": 1, "action": intake.action, "paths": [str(p) for p in intake.paths]}
+    if msg_id:
+        body["id"] = msg_id
+    return json.dumps(body, ensure_ascii=False).encode("utf-8")
+
+
+def parse_wire(data: bytes) -> tuple[Intake | None, str | None]:
+    """``(intake, message id)`` out of what arrived on the pipe, or ``(None, None)``. Never raises.
+    A message with no id is accepted (no deduplication); a malformed id rejects the message."""
+    try:
+        if not isinstance(data, (bytes, bytearray)) or not 0 < len(data) <= MAX_WIRE_BYTES:
+            return None, None
+        obj = json.loads(bytes(data).decode("utf-8"))
+        if not isinstance(obj, dict):
+            return None, None
+        action, paths, msg_id = obj.get("action"), obj.get("paths"), obj.get("id")
+        if not isinstance(action, str) or action not in ACTIONS:
+            return None, None
+        if not isinstance(paths, list) or not 0 < len(paths) <= MAX_PATHS:
+            return None, None
+        if msg_id is not None and not (isinstance(msg_id, str) and _MSG_ID.fullmatch(msg_id)):
+            return None, None
+        for p in paths:
+            if (not isinstance(p, str) or "\x00" in p or not 0 < len(p) <= MAX_PATH_CHARS
+                    or not _encodable(p)):
+                return None, None
+        intake = _normalised(action, paths)
+        return (intake, msg_id) if intake is not None else (None, None)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return None, None
 
 
 def from_wire(data: bytes) -> Intake | None:
     """Parse what arrived on the pipe, or ``None``. Never raises."""
-    try:
-        if not isinstance(data, (bytes, bytearray)) or not 0 < len(data) <= MAX_WIRE_BYTES:
-            return None
-        obj = json.loads(bytes(data).decode("utf-8"))
-        if not isinstance(obj, dict):
-            return None
-        action, paths = obj.get("action"), obj.get("paths")
-        if not isinstance(action, str) or action not in ACTIONS:
-            return None
-        if not isinstance(paths, list) or not 0 < len(paths) <= MAX_PATHS:
-            return None
-        for p in paths:
-            if (not isinstance(p, str) or "\x00" in p or not 0 < len(p) <= MAX_PATH_CHARS
-                    or not _encodable(p)):
-                return None
-        return _normalised(action, paths)
-    except (ValueError, UnicodeDecodeError, RecursionError):
-        return None
+    return parse_wire(data)[0]

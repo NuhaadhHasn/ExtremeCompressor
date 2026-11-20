@@ -515,3 +515,26 @@ def test_frozen_without_the_window_next_to_it_falls_back_to_what_is_running(monk
 def test_from_source_the_launcher_is_the_interpreter_running_run_gui():
     got = S.default_launcher()
     assert got[-1].endswith("run_gui.py") and len(got) == 2
+
+
+# -- the wire carries an id so a retry can be recognised ---------------------------
+
+def test_the_wire_id_survives():
+    got, mid = I.parse_wire(I.to_wire(I.Intake("compress", (Path(r"C:\a.txt"),)), msg_id="deadBEEF-01"))
+    assert got == I.Intake("compress", (Path(r"C:\a.txt"),)) and mid == "deadBEEF-01"
+
+
+def test_no_id_is_none():
+    assert I.parse_wire(I.to_wire(I.Intake("compress", (Path(r"C:\a.txt"),))))[1] is None
+
+
+@pytest.mark.parametrize("bad", ["", "x" * 65, "a b", "a\x00b", "../../x", "id;drop", 7])
+def test_a_malformed_id_rejects_the_message(bad):
+    payload = json.dumps({"action": "compress", "paths": ["C:\\a"], "id": bad}).encode()
+    assert I.parse_wire(payload) == (None, None)
+    assert I.from_wire(payload) is None
+
+
+def test_from_wire_still_answers_with_just_the_intake():
+    assert I.from_wire(I.to_wire(I.Intake("verify", (Path(r"C:\a.excmp"),)), msg_id="z")) == \
+        I.Intake("verify", (Path(r"C:\a.excmp"),))

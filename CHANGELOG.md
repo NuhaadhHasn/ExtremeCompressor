@@ -19,6 +19,23 @@ it.
 
 ### Added
 
+- **Explorer right-click menu, Windows 10 path (I5, 2026-11-20).** `excmp shell
+  install | uninstall | status` writes per-user registry verbs (no administrator):
+  *Compress with ExtremeCompressor* on files and folders, *Extract here* and *Verify
+  archive* on `.excmp`, which also opens with the app. Each verb is a thin launcher
+  (`<program> <action> "%1"`); nothing is loaded into Explorer. Explorer starts one
+  process per selected file (measured: 3 files, 3 processes, in both multi-select
+  models), so a named mutex makes the first process the window and the others forward
+  their paths over a per-user pipe whose messages are validated strictly. Uninstall
+  removes only what install wrote, and a foreign `.excmp` association of any registry
+  type is never taken over. **Extract here** never overwrites: a name collision means a
+  fresh `name (2)` folder. Two reviews found and fixed, among others, that the obvious
+  "whoever can listen is the window" design is wrong on Windows (a second process can
+  listen on a name already in use) and that a verb skipped the checks the buttons make
+  (`tests/test_i5_shell_menu.py`, `tests/test_i5_gui_intake.py`).
+- **A failed restore no longer leaves the folder it created.** `engine.extract` takes
+  an empty destination it made back out on failure (a password-protected or unreadable
+  archive used to leave an empty `junk/` beside it).
 - **Verified byte-identical restore as the acceptance gate.** `compress()`
   fully restores the archive in a temp directory and hash-compares every file
   against the ledger *before* the archive is published; a chain that cannot

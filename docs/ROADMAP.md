@@ -2181,7 +2181,19 @@ display scaling — both need a human at the machine.
       FLAC (BSD/GPL CLI), xtool (MIT,
       archived), par2cmdline-turbo (GPL, subprocess only), squarify (Apache-2.0),
       Inno Setup (permissive), `cryptography` (Apache-2.0/BSD), `argon2-cffi` (MIT)
-- [ ] E3. PyInstaller **--onedir** (NOT --onefile: self-extraction triggers AV/
+- [x] E3. ✅ **BUILT AND SMOKE-TESTED 2026-11-21**, branch `e3-packaging-draft` (stacked on
+      I5; unsigned: E4). `packaging/`: `ExtremeCompressor.spec` (two programs, one folder),
+      `installer.iss` (per user, no administrator, Explorer-menu task, clean uninstall),
+      `build.cmd`, `smoke_test.py`. First build ran first time: **110 MB** folder,
+      **33.8 MB** installer. Real round trip: silent install in 9 s, the verb runs the
+      *window* in the install folder, a second launch hands its file over in 0.6 s, the
+      uninstaller leaves no file and no registry key. **The exclude list below was wrong
+      for the code as it is now**: `QtSvg` (icons) and `QtNetwork` (I5's pipe) are
+      imported, so the spec keeps them and a test reads the real imports to stop the list
+      drifting into a build that dies at start-up. Not done: signing (E4), auto-update
+      (E5), `PySide6-Essentials`, an `.ico`, the external tools are not bundled
+      ([packaging/README.md](../packaging/README.md)). Original spec:
+      PyInstaller **--onedir** (NOT --onefile: self-extraction triggers AV/
       SmartScreen **and** re-extracts the whole bundle to temp on every launch)
       wrapped in an Inno Setup installer. **Commit a tuned `.spec`**: measured
       122 MB → **71 MB on disk / 28 MB zipped** by excluding

@@ -3,6 +3,8 @@
 
 -r requirements.txt
 
+pyinstaller>=6.22      # GPL-2.0 with a bootloader exception that allows any program to be frozen; build
+                       #   tool only (E3, packaging/), nothing of it is imported by the app
 pytest>=8.0            # MIT
 pytest-qt>=4.4         # MIT; qtbot fixture for the GUI tests
 hypothesis>=6.100     # MPL-2.0; property-based roundtrip tests (D1)

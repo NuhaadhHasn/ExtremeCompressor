@@ -301,6 +301,9 @@ python -m excmp shell status       # is it there, and does it point at this chec
 python -m excmp shell uninstall    # take it away again
 ```
 
+Or switch it from the app: **Settings → Explorer right-click menu** (Add, Remove, or Repair when it
+starts a different copy of the program). The installer offers it as an option too.
+
 Right-click any file or folder for **Compress with ExtremeCompressor**; right-click an
 `.excmp` for **Extract here** and **Verify archive** (a double-click opens it on the Extract
 tab). Select five files and you still get **one** window: Explorer starts a process per file,

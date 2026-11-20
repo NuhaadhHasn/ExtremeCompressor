@@ -2661,7 +2661,9 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
       buttons' checks; busy windows made extra windows (a secondary waits 30 s now).
       70 tests of the first version grew to 123; 25 mutations of the registry, intake and
       GUI code are each caught. Not done: the Windows 11 top-level menu (needs a signed
-      sparse MSIX, after E4); a Settings-tab toggle (the CLI installs it). Original spec:
+      sparse MSIX, after E4). **Settings tab switch added 2026-11-21** (Add / Remove / Repair, an
+      inline state line, no modal dialog; rendered in both themes, which caught a clipped error
+      line the tests could not). Original spec:
       Explorer context menu, Win10 path: HKCU registry verbs (no admin) + argv
       intake in `gui/app.py`. Win11 top-level cascade needs signed sparse MSIX →
       defer to post-E4. **NanaZip is the reference** ([14 §2](research/14-source-study-nanazip.md)):

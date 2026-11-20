@@ -17,6 +17,7 @@ page is what made eliding acceptable rather than lossy.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Signal
@@ -30,10 +31,12 @@ from ..theme import CARD_MARGINS, GAP_BLOCK, GAP_INTRA, GUTTER, VGAP
 
 
 class SettingsRow(QFrame):
-    """One setting: title, what it does, and its control."""
+    """One setting: title, what it does, and its control. ``status`` is an optional line that goes
+    under the description, in the text column where it has the row's width (a state or an error
+    put in the control's narrow column wrapped badly and was clipped)."""
 
     def __init__(self, title: str, description: str, control: QWidget,
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None, status: QLabel | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Card")
         row = QHBoxLayout(self)
@@ -49,6 +52,9 @@ class SettingsRow(QFrame):
         blurb.setWordWrap(True)
         text.addWidget(name)
         text.addWidget(blurb)
+        if status is not None:
+            status.setParent(self)
+            text.addWidget(status)
         row.addLayout(text, 1)
         row.addWidget(control, 0)
         # The description is the accessible description, so a screen reader
@@ -62,9 +68,16 @@ class SettingsTab(QScrollArea):
     themeToggled = Signal()
 
     def __init__(self, tools: dict[str, ToolInfo | None], default_temp: Path,
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None, *, shell=None,
+                 shell_supported: bool | None = None) -> None:
         super().__init__(parent)
         self._tools = dict(tools)
+        # I5: the Explorer menu's backend (excmp.shellmenu), injectable so a test can never write to
+        # the real HKCU\Software\Classes; and whether this platform has an Explorer at all.
+        from excmp import shellmenu
+        self._shell = shell if shell is not None else shellmenu
+        self._shell_supported = (sys.platform == "win32" if shell_supported is None
+                                 else shell_supported)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
 
@@ -157,6 +170,27 @@ class SettingsTab(QScrollArea):
                     "changes, not the stylesheet."),
             self.theme_button, page))
 
+        # I5. The switch for the Explorer right-click menu (the CLI and the installer could already
+        # add it). Per user, no administrator. No modal dialog - a rule of this UI - so what
+        # happened is said inline, under the button.
+        self.explorer_button = QPushButton(page)
+        self.explorer_button.setAccessibleDescription(self.tr(
+            "Adds or removes “Compress with ExtremeCompressor” on files and folders, and "
+            "“Extract here” and “Verify archive” on .excmp archives, in the Explorer menu."))
+        self.explorer_button.clicked.connect(self._toggle_explorer_menu)
+        self.explorer_state = QLabel("", page)
+        self.explorer_state.setWordWrap(True)
+        self.explorer_state.setStyleSheet("font-weight: 600;")
+        self.explorer_row = SettingsRow(
+            self.tr("Explorer right-click menu"),
+            self.tr("“Compress with ExtremeCompressor” on files and folders; “Extract here” and "
+                    "“Verify archive” on .excmp archives. Per user: no administrator needed. "
+                    "Windows 11 shows it under “Show more options”."),
+            self.explorer_button, page, status=self.explorer_state)
+        self.explorer_row.setVisible(self._shell_supported)
+        column.addWidget(self.explorer_row)
+        self.refresh_explorer_menu()
+
         # The inventory the status strip elides at narrow widths.
         self._tools_label = QLabel("", page)
         self._tools_label.setObjectName("Subtitle")
@@ -175,6 +209,50 @@ class SettingsTab(QScrollArea):
 
         column.addStretch(1)
         self.setWidget(page)
+
+    # -- the Explorer menu (I5) -----------------------------------------------
+    def _set_explorer_button(self, text: str) -> None:
+        """The button's text is its name for a screen reader too: say what it does, to what."""
+        self.explorer_button.setText(text)
+        self.explorer_button.setAccessibleName(self.tr("%s the Explorer right-click menu") % text)
+
+    def refresh_explorer_menu(self, message: str | None = None) -> None:
+        """Read the registry again and show what is there. ``message`` (a failure) replaces the
+        state line, and the button keeps offering whatever is true now."""
+        if not self._shell_supported:
+            return
+        try:
+            st = self._shell.status()
+        except Exception as exc:                              # noqa: BLE001
+            self._set_explorer_button(self.tr("Add"))
+            self.explorer_state.setText(message or self.tr("Could not read the menu: %s") % exc)
+            return
+        if not st.installed and st.found:
+            # An install that failed part-way leaves some entries live: not "absent", and Add finishes it.
+            self._set_explorer_button(self.tr("Repair"))
+            state = self.tr("Partly in the Explorer menu: some entries are missing.")
+        elif not st.installed:
+            self._set_explorer_button(self.tr("Add"))
+            state = self.tr("Not in the Explorer menu.")
+        elif st.stale:
+            self._set_explorer_button(self.tr("Repair"))
+            state = self.tr("On, but it starts a different copy of ExtremeCompressor.")
+        else:
+            self._set_explorer_button(self.tr("Remove"))
+            state = self.tr("On: right-click a file or a folder.")
+        self.explorer_state.setText(message or state)
+
+    def _toggle_explorer_menu(self) -> None:
+        try:
+            st = self._shell.status()
+            if st.installed and not st.stale:
+                self._shell.uninstall()
+            else:
+                self._shell.install()
+        except Exception as exc:                              # noqa: BLE001
+            self.refresh_explorer_menu(self.tr("Could not change it: %s") % exc)
+            return
+        self.refresh_explorer_menu()
 
     # -- tools ---------------------------------------------------------------
     def set_tools(self, tools: dict[str, ToolInfo | None]) -> None:

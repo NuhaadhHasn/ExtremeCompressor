@@ -246,7 +246,11 @@ Recommended order, each one branch and one merge:
 
 1. **A second `.docx` corpus** at Insane, one round (~80 min for 80 MB: B27's docx took
    4,632 s). Docx is the one B5 type outside its chain range on the unsafe side (2.84x); the
-   container model matched it (0.97x). If the second corpus agrees, lift `.docx` from
+   container model matched it (0.97x). **The probe explains it**: the docx corpus is 71.7 MB PNG in
+   80 MB (one file, `office-docx-020`, is 46% of it), the mechanism B26 already priced; xlsx (PNG 6.1 MB
+   in a 7.2 MB corpus, container 3.4x over) and pptx (24 of 40 MB JPEG) are why a suffix rule is wrong.
+   Consider pricing a B5 type by its counts when they show a large PNG/JPEG share, not by suffix. If the
+   second corpus agrees, lift `.docx` from
    `_PRECOMP_EXPANDABLE` in `_recode_kind` (which also arms B28's nested rule for it), and read
    `.pptx` again (1.64x chain, 1.41x container). The corpora are in `C:\excmp-bench\b27\corpora`.
 2. **A third nested corpus** (a `.war`/`.ear`/`.whl`/`.vsix` with a high nested share): the

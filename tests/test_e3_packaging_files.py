@@ -130,6 +130,16 @@ def test_the_unused_big_files_are_dropped():
     assert {"opengl32sw.dll", "qdirect2d.dll"} <= set(_literal("DROP_FILES"))
 
 
+def test_the_dlls_of_the_excluded_qt_modules_are_dropped_too():
+    """Review: excluding a module's Python wrapper leaves its Qt DLL in the folder (about 20 MB)."""
+    dropped = set(_literal("DROP_FILES"))
+    for dll in ("qt6quick.dll", "qt6qml.dll", "qt6pdf.dll", "qt6opengl.dll", "qt6virtualkeyboard.dll"):
+        assert dll in dropped
+    # ... and never one the app's own modules load.
+    for needed in ("qt6core.dll", "qt6gui.dll", "qt6widgets.dll", "qt6svg.dll", "qt6network.dll"):
+        assert needed not in dropped
+
+
 def test_the_assets_the_app_reads_are_bundled():
     assert (ROOT / "assets" / "icons").is_dir()
     assert '"assets"' in SPEC.read_text(encoding="utf-8")

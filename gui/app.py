@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication
 from excmp.intake import parse_intake
 
 from .mainwindow import MainWindow
-from .singleinstance import IntakeBatcher, IntakeServer, acquire
+from .singleinstance import IntakeBatcher, IntakeServer, acquire, mark_running
 from .theme import qss
 from .winintegration import set_app_id
 
@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     server = IntakeServer(parent=app)
     if not acquire(server, intake):
         return 0                                    # the running window has the files
+    mark_running()                                  # the installer will not touch a running program
     window = MainWindow(theme="dark")
     batcher = IntakeBatcher(window.handle_intake, parent=window)
     server.received.connect(batcher.push)

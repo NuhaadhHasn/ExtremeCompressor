@@ -2642,7 +2642,27 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
 - [x] I4. ✅ **ALREADY DONE** (wave 3c, `_maybe_first_run` on the W2-9 Banner) — verified 2026-09-03, not re-implemented. Original item:
 - [ ] ~~I4.~~ First-run onboarding card: what was found, what each missing tool unlocks,
       links to downloads. Upgrades to one-click when E1 lands — don't block on it
-- [ ] I5. Explorer context menu, Win10 path: HKCU registry verbs (no admin) + argv
+- [x] I5. ✅ **BUILT 2026-11-20**, branch `i5-explorer-menu` (the Win10 path; the merge
+      waits for CI, which needs the network). `excmp/intake.py` (the command-line
+      contract + a strictly validated pipe message), `excmp/shellmenu.py` (per-user
+      HKCU verbs; `excmp shell install | uninstall | status`), `gui/singleinstance.py`
+      (one window however many processes), `MainWindow.handle_intake`, `run_gui.py`.
+      **Measured, not assumed:** Explorer starts ONE PROCESS PER SELECTED FILE (3
+      files, 3 simultaneous processes, in the default AND the `Player` multi-select
+      model), so the first process must become the window. **Two wrong turns the
+      tests caught:** "whoever can `QLocalServer.listen` is the window" is false on
+      Windows (a second process's listen on a name in use succeeds: a named mutex
+      decides now), and a first uninstall deleted whole key trees. **Two reviews, every
+      finding reproduced first:** a foreign `.excmp` default of another registry type was
+      overwritten; uninstall removed what others had added under our keys; a launcher
+      path with `%` is rewritten by the shell; `D:\` reaches the app as `D:` (the drive's
+      current directory); **Extract here put a user's edited file back to its archived
+      text** (now: a collision means a fresh `name (2)` folder); the verbs skipped the
+      buttons' checks; busy windows made extra windows (a secondary waits 30 s now).
+      70 tests of the first version grew to 123; 25 mutations of the registry, intake and
+      GUI code are each caught. Not done: the Windows 11 top-level menu (needs a signed
+      sparse MSIX, after E4); a Settings-tab toggle (the CLI installs it). Original spec:
+      Explorer context menu, Win10 path: HKCU registry verbs (no admin) + argv
       intake in `gui/app.py`. Win11 top-level cascade needs signed sparse MSIX →
       defer to post-E4. **NanaZip is the reference** ([14 §2](research/14-source-study-nanazip.md)):
       the complete IExplorerCommand/IEnumExplorerCommand pattern + the exact

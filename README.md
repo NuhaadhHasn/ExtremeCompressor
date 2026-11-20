@@ -293,6 +293,26 @@ Every screenshot above is regenerated from the real app by
 repack-style corpus, drives the actual window through the whole flow, and
 grabs the frames. The numbers in them are genuine output, not mockups.
 
+### Right-click in Explorer (Windows 10; per user, no administrator)
+
+```bash
+python -m excmp shell install      # add the menu
+python -m excmp shell status       # is it there, and does it point at this checkout?
+python -m excmp shell uninstall    # take it away again
+```
+
+Right-click any file or folder for **Compress with ExtremeCompressor**; right-click an
+`.excmp` for **Extract here** and **Verify archive** (a double-click opens it on the Extract
+tab). Select five files and you still get **one** window: Explorer starts a process per file,
+so the first becomes the window and the others hand their paths to it. Windows 11 shows the
+entries under *Show more options* (the top-level menu needs a signed package).
+
+What it will not do: it writes only its own registry keys under
+`HKEY_CURRENT_USER\Software\Classes`, removes only what it wrote (a value or subkey you or
+another program added under one of its keys survives), and leaves a `.excmp` association that
+another program already owns alone. **Extract here** never replaces an existing file: if the
+archive's top-level name is already in the folder it restores to a fresh `name (2)` folder.
+
 The legacy Tkinter prototype in `main.py` still runs but is superseded.
 
 ---

@@ -8,7 +8,10 @@ from pathlib import Path
 from PySide6.QtCore import QLocale, QTranslator
 from PySide6.QtWidgets import QApplication
 
+from excmp.intake import parse_intake
+
 from .mainwindow import MainWindow
+from .singleinstance import IntakeBatcher, IntakeServer, acquire
 from .theme import qss
 from .winintegration import set_app_id
 
@@ -43,10 +46,21 @@ def build_app(argv: list[str] | None = None) -> QApplication:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Start the window - or, when Explorer started this process to hand files over (I5) and a
+    window is already running, give it the files and exit."""
     set_app_id()
+    argv = list(sys.argv if argv is None else argv)
+    intake = parse_intake(argv[1:])
     app = build_app(argv)
+    server = IntakeServer(parent=app)
+    if not acquire(server, intake):
+        return 0                                    # the running window has the files
     window = MainWindow(theme="dark")
+    batcher = IntakeBatcher(window.handle_intake, parent=window)
+    server.received.connect(batcher.push)
     window.show()
+    if intake is not None:
+        batcher.push(intake)
     return app.exec()
 
 

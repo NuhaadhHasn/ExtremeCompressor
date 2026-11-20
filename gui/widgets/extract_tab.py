@@ -215,6 +215,20 @@ class ExtractTab(QWidget):
         if archive.is_file():
             self.verifyRequested.emit(archive)
 
+    # I5: the same doors the buttons use, for the Explorer verbs - including the question each
+    # button asks before it is enabled (Verify is off for an archive with no SHA-256 ledger).
+    def request_extract(self) -> bool:
+        if not self.start_button.isEnabled():
+            return False
+        self._emit_request()
+        return True
+
+    def request_verify(self) -> bool:
+        if not self.verify_button.isEnabled():
+            return False
+        self._emit_verify()
+        return True
+
     # -- validation --------------------------------------------------------
     def _revalidate(self) -> None:
         archive = Path(self.archive_edit.text().strip('" '))
@@ -513,6 +527,35 @@ class ExtractTab(QWidget):
         if len(tops) == 1 and nested:
             return archive.parent
         return archive.with_suffix("")
+
+    @staticmethod
+    def safe_here_destination(archive: Path) -> Path:
+        """Where "Extract here" (the Explorer verb) may write WITHOUT replacing anything.
+
+        The Extract button shows its destination before the click, so a user who sees that it
+        is their Downloads folder, with their edited copy of a file in it, can choose. The verb
+        shows nothing: one right-click went straight to ``extract`` and put an edited ``a.txt``
+        back to its archived text (found by the I5 review). So the suggested destination is used
+        only if none of the archive's top-level names exists in it already; otherwise the
+        restore goes to a fresh folder named after the archive, ``name (2)``, ``name (3)``...
+        An archive that cannot be listed gets a fresh folder too.
+        """
+        from excmp.engine import list_archive
+
+        dest = ExtractTab._suggest_destination(archive)
+        try:
+            tops = {e.name.replace("\\", "/").split("/", 1)[0]
+                    for e in list_archive(archive).entries}
+        except Exception:                                    # noqa: BLE001
+            tops = set()
+        if tops and not any((dest / t).exists() for t in tops):
+            return dest
+        base = archive.with_suffix("")
+        candidate, n = base, 2
+        while candidate.exists():
+            candidate = base.with_name(f"{base.name} ({n})")
+            n += 1
+        return candidate
 
     # -- progress reporting ------------------------------------------------
     def set_running(self, percent: float, eta: float | None) -> None:

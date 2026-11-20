@@ -687,6 +687,36 @@ def cmd_hash(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_shell(args: argparse.Namespace) -> int:
+    """I5: add, remove or check the Explorer right-click menu (per user, no admin)."""
+    from . import shellmenu
+
+    if sys.platform != "win32":
+        print("error: the Explorer menu is a Windows feature", file=sys.stderr)
+        return 1
+    if args.action == "install":
+        shellmenu.install(associate=not args.no_associate)
+        print("installed the Explorer menu for this user (no administrator needed)")
+        print("  right-click a file or folder: 'Compress with ExtremeCompressor'")
+        print("  right-click a .excmp:         'Extract here', 'Verify archive'")
+        print("  Windows 11 shows them under 'Show more options'")
+        return 0
+    if args.action == "uninstall":
+        removed = shellmenu.uninstall()
+        print("removed the Explorer menu" if removed else "nothing to remove")
+        return 0
+    st = shellmenu.status()
+    if not st.installed:
+        print("not installed" + (f" (missing: {', '.join(st.missing)})" if st.found else ""))
+        return 1
+    if st.stale:
+        print("installed, but the menu runs a different program than this one: "
+              "run 'excmp shell install' to point it here")
+        return 2
+    print("installed")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="excmp",
                                 description="ExtremeCompressor engine CLI")
@@ -843,6 +873,14 @@ def build_parser() -> argparse.ArgumentParser:
     ph.add_argument("paths", nargs="+")
     ph.add_argument("--json", action="store_true")
     ph.set_defaults(func=cmd_hash)
+
+    psh = sub.add_parser("shell", help="add, remove or check the Explorer right-click "
+                                       "menu (Windows, per user, no administrator)")
+    psh.add_argument("action", choices=["install", "uninstall", "status"])
+    psh.add_argument("--no-associate", action="store_true",
+                     help="install: add the menu entries but do not make .excmp open "
+                          "with ExtremeCompressor")
+    psh.set_defaults(func=cmd_shell)
     return p
 
 

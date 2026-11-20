@@ -839,12 +839,67 @@ _RECODE_BASE_VERIFY_RATE = 6.5e6    # _VERIFY_RATE["precomp+sevenzip"]
 #           whose self-test ran separate from its compress (png-dl1's extract
 #           was as long as its whole compress+D9, so its split is unusable)
 #
-# Only these four kinds: the B20 containers are unmeasured at Insane and keep
-# the chain's rate and the extra above.
+# These four kinds are priced by file size. The B20 containers are priced by
+# what Precomp expands them to (B26, below).
 _INSANE_RECODE_RATE = {"jpeg": 0.277e6, "mp3": 0.171e6, "gif": 0.121e6,
                        "png": 0.0289e6}
 _INSANE_RECODE_VERIFY_RATE = {"jpeg": 0.312e6, "mp3": 0.221e6, "gif": 0.148e6,
                               "png": 0.0339e6}
+
+# B26: the B20 containers at Insane (2026-11-19/20; docs/benchmarks/
+# 2026-11-20-b26-insane-containers.md). Six corpora, 176.5 MB, 16 valid rows
+# through engine.compress and engine.extract, every file restored. The chain's
+# rate plus B20's extra held for five of the six; EPUB ran 3.5x over its
+# expected and past its high. What predicts the time is not the file's size but
+# what Precomp hands zpaqfranz: seconds per input MB ran 16 (AAB) to 80 (EPUB),
+# per expanded MB only 4.4-7.2 (fastest rows).
+#
+# * Plain deflate content: the members' uncompressed size IS the `.pcf` (0.94-
+#   1.00 of it on 13 of 14 files; the 14th, an AAR holding a nested jar, is
+#   0.50 and is priced about 2x low), so its rate is bytes of
+#   ``zip_deflated_bytes`` per second. Fitted on the four corpora with no PNG
+#   worth the name, the fastest row of each, each row split by its own phase
+#   events (the compress phase ends at the first `verify` event; the D9 phase
+#   is the rest), byte-weighted:
+#
+#       corpus  deflated MB  compress  self-test      per corpus, MB/s
+#       nupkg       4.00      16.6 s    12.0 s        0.241 / 0.332
+#       appx       19.29      71.4 s    66.7 s        0.270 / 0.289
+#       aar        16.17      65.0 s    44.4 s        0.249 / 0.364
+#       aab       346.15     849.6 s   947.5 s        0.407 / 0.365
+#
+#   0.385 and 0.360 MB/s. **The AABs are 90% of the fit's deflated bytes** (68%
+#   of all six corpora's input bytes), so this is the AABs' rate: the three
+#   small corpora agree on compress within 12% and run 30-37% under it, and
+#   sit 17-23% under their quiet rows here (expected over fastest 0.77-0.83).
+#   The AABs are two apps from one
+#   toolchain that share most of their expanded bytes (the per-file model
+#   cannot see that). B22 split by `extract_s` instead; on the AAB row the D9
+#   phase (990.6 s) is 20% longer than extract (827.8 s), on eight other rows
+#   within 7%, so the totals agree and only the split moves (0.331 / 0.425).
+# * PNG members are what a directory cannot size: Precomp expands each one's
+#   own deflate into pixels, 6x (ODT) to 106x (an EPUB) per PNG byte. They are
+#   priced as the PNGs they are, at B22's rates, which came from other
+#   corpora, so the PNG rate itself is out of sample for EPUB (4.2 MB of PNG in
+#   5.7) and ODT (33.8 MB in 36.8): 0.66x and 1.57x their fastest rows. The 1.7x
+#   band and the ODT low-end pin in the tests were set after seeing those two:
+#   a regression pin, not validation. A container's PNGs can sit 5x either side
+#   of the one rate.
+# * JPEG members (``zip_jpeg_bytes``) are priced at B22's JPEG rates. Measured on
+#   ONE album of 23 stored photographs, 11.6 MB, 30.7% smaller, every file
+#   restored: 91.4 s (compress 45.8 + D9 45.6) and 198.3 s (a contended round,
+#   others 24%), against 79 s at the JPEG rates and 238 s at the chain's; so the
+#   fastest row is 1.16x the model. (First priced at the chain's rate, which put
+#   the low end above that row.) ODT holds 2.5 MB of JPEG, EPUB 0.9 MB.
+# * Everything else (GIF members, stored members, other methods:
+#   ``zip_other_bytes``) is priced at the chain's own Insane rate, unmeasured,
+#   so the safe way round.
+_INSANE_ZIP_RATE = 0.385e6
+_INSANE_ZIP_VERIFY_RATE = 0.360e6
+# How far under the model the self-test of a container's PNG members can run
+# (the low end only; the high end already has _RECODE_SPREAD). The ODT, the
+# least expanding PNG container measured, ran at 1/1.6 of it.
+_ZIP_PNG_VERIFY_LOW = 1.6
 
 
 # The signed extras are measured against these fixed constants, never against
@@ -905,6 +960,37 @@ class RecodeCost:
     own_bytes: int = 0
     own_compress_seconds: float = 0.0
     own_verify_seconds: float = 0.0
+    #: B26: the self-test seconds of PNG members inside zip containers, which
+    #: ``estimate_time`` lets the low end undercut (`_ZIP_PNG_VERIFY_LOW`).
+    zip_png_verify_seconds: float = 0.0
+
+
+def _insane_own_seconds(kind: str, info: FileInfo) -> tuple[float, float] | None:
+    """(compress, self-test) seconds Insane spends on this file by its own
+    measured rates, or None where it has none and the chain's rate applies.
+
+    B26: a zip container is priced by what Precomp hands zpaqfranz, not by its
+    own size - 3x the size for plain deflate content, 6-18x for one full of
+    PNGs (EPUB, ODT). The directory gives the deflated members' size; the PNG
+    members are priced as the PNGs they are and the JPEG members as JPEGs
+    (B22); whatever else the container holds is priced at the chain's rate. A
+    container the probe did not read (a hand-built FileInfo) has no counts:
+    None.
+    """
+    if kind == "zip":
+        deflated, png, jpeg, other = (info.zip_deflated_bytes, info.zip_png_bytes,
+                                      info.zip_jpeg_bytes, info.zip_other_bytes)
+        if not (deflated or png or jpeg or other):
+            return None
+        return (deflated / _INSANE_ZIP_RATE + png / _INSANE_RECODE_RATE["png"]
+                + jpeg / _INSANE_RECODE_RATE["jpeg"] + other / _INSANE_BASE_RATE,
+                deflated / _INSANE_ZIP_VERIFY_RATE
+                + png / _INSANE_RECODE_VERIFY_RATE["png"]
+                + jpeg / _INSANE_RECODE_VERIFY_RATE["jpeg"] + other / _INSANE_BASE_VERIFY_RATE)
+    if kind in _INSANE_RECODE_RATE:
+        return (info.size / _INSANE_RECODE_RATE[kind],
+                info.size / _INSANE_RECODE_VERIFY_RATE[kind])
+    return None
 
 
 def _recode_kind(info: FileInfo) -> str | None:
@@ -929,16 +1015,18 @@ def recode_cost(infos: list[FileInfo], the_plan: Plan,
     _, piped = _split(infos, the_plan)
     insane = _insane_chain(stages)
     total = own_bytes = 0
-    compress = verify = own_c = own_v = 0.0
+    compress = verify = own_c = own_v = png_v = 0.0
     for info in piped:
         kind = _recode_kind(info)
         if kind is None:
             continue
         total += info.size
-        if insane and kind in _INSANE_RECODE_RATE:
+        own = _insane_own_seconds(kind, info) if insane else None
+        if own is not None:
             # B22: billed at its own measured rate, in place of the chain's.
-            c = info.size / _INSANE_RECODE_RATE[kind]
-            v = info.size / _INSANE_RECODE_VERIFY_RATE[kind]
+            c, v = own
+            if kind == "zip":
+                png_v += info.zip_png_bytes / _INSANE_RECODE_VERIFY_RATE["png"]
             own_bytes += info.size
             own_c += c
             own_v += v
@@ -952,7 +1040,7 @@ def recode_cost(infos: list[FileInfo], the_plan: Plan,
         compress, verify = max(0.0, compress), max(0.0, verify)
     return RecodeCost(bytes=total, compress_seconds=compress, verify_seconds=verify,
                       own_bytes=own_bytes, own_compress_seconds=own_c,
-                      own_verify_seconds=own_v)
+                      own_verify_seconds=own_v, zip_png_verify_seconds=png_v)
 
 
 def recoded_seconds(recode: RecodeCost, stages: Sequence[str],
@@ -1207,9 +1295,13 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     # low end stays the chain's (review: a symmetric spread put the design
     # folder's low at 71.5 s, its fastest run took 279 s).
     paced_compress, paced_verify = recoded_seconds(recode, stages, rates)
+    # B26: a PNG inside a container expands 6x (an ODT) to 106x (an EPUB) per
+    # byte and one rate prices them all, so its self-test can run well under
+    # the figure: the ODT's ran at 0.63x of it (665 s against 1,057 s).
+    png_cut = recode.zip_png_verify_seconds * (1 - 1 / _ZIP_PNG_VERIFY_LOW)
     return TimeEstimate(
         low=(base + codec_seconds / spread + cost.seconds / _PACK_SPREAD
-             + fixed * _JOB_FIXED_RANGE[0]),
+             + fixed * _JOB_FIXED_RANGE[0] - png_cut),
         expected=base + codec_seconds + cost.seconds + fixed,
         high=(base - paced_verify + (codec_seconds - paced_compress) * spread
               + (paced_compress + paced_verify) * _RECODE_SPREAD

@@ -242,4 +242,5 @@ def test_the_spec_collects_the_par2_binary_into_the_layout_recovery_reads():
 def test_the_smoke_test_always_removes_what_it_installed_and_never_runs_over_a_real_menu():
     text = (PKG / "smoke_test.py").read_text(encoding="utf-8")
     assert "finally:" in text and "unins000.exe" in text
+    assert "refuses while the window is open" in text
     assert "already installed" in text

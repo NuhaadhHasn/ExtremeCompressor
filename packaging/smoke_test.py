@@ -123,14 +123,24 @@ def installer_round_trip(work: Path) -> None:
             running = subprocess.Popen([str(target / "ExtremeCompressor.exe")], env=env,
                                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL)
-            time.sleep(8)       # the uninstaller has to cope with the window being open
+            time.sleep(8)
             try:
-                u = subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-                                   timeout=300)
-                check("silent uninstall (window open)", u.returncode == 0)
+                # With the window open the uninstaller must REFUSE and change nothing: it used to
+                # report success, delete the uninstall entry and leave every file behind.
+                refused = subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                                         timeout=300)
+                check("the uninstaller refuses while the window is open", refused.returncode != 0,
+                      f"exit code {refused.returncode}")
+                check("... and leaves the program and its uninstall entry alone",
+                      (target / "ExtremeCompressor.exe").exists() and key_exists(UNINST_KEY))
             finally:
                 if running.poll() is None:
                     subprocess.run(["taskkill", "/F", "/T", "/PID", str(running.pid)], capture_output=True)
+            time.sleep(3)
+            if uninstaller.exists():
+                u = subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                                   timeout=300)
+                check("silent uninstall (window closed)", u.returncode == 0)
             for _ in range(30):             # the uninstaller finishes in a helper process
                 if not target.exists() or not any(target.iterdir()):
                     break

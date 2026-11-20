@@ -67,6 +67,12 @@ def _exe() -> Path | None:
     land in output we parse. The wheel puts the genuine executable in
     ``par2/binaries``.
     """
+    # A frozen build (E3) carries it at <bundle>/par2/binaries/par2.exe.
+    bundle = getattr(sys, "_MEIPASS", None)
+    if bundle:
+        frozen = Path(bundle) / "par2" / "binaries" / "par2.exe"
+        if frozen.exists():
+            return frozen
     for base in (Path(sys.prefix), Path(sys.base_prefix)):
         candidate = base / "Lib" / "site-packages" / "par2" / "binaries" / "par2.exe"
         if candidate.exists():
@@ -75,8 +81,12 @@ def _exe() -> Path | None:
         import par2  # type: ignore
     except ImportError:
         return None
-    packaged = Path(par2.__file__).parent / "binaries" / "par2.exe"
-    return packaged if packaged.exists() else None
+    # `par2` is a namespace package: `__file__` is None, so look in `__path__`.
+    for folder in getattr(par2, "__path__", None) or ():
+        packaged = Path(folder) / "binaries" / "par2.exe"
+        if packaged.exists():
+            return packaged
+    return None
 
 
 def available() -> bool:

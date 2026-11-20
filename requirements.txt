@@ -7,7 +7,9 @@
 # gui/winintegration.py).
 
 zstandard>=0.22        # BSD-3; bundles libzstd, so Fast needs no external exe
-PySide6>=6.6           # LGPL-3.0; Qt bindings, dynamically linked and unmodified
+PySide6-Essentials>=6.6  # LGPL-3.0; Qt bindings, dynamically linked and unmodified. Essentials, not
+                         #   the PySide6 meta-package: the app imports QtCore, QtGui, QtWidgets, QtSvg and
+                         #   QtNetwork, all in Essentials (checked 2026-11-21; tests/test_e3_packaging_files.py)
 comtypes>=1.4          # MIT; ITaskbarList3 for taskbar progress (Qt6 dropped it)
 windows-toasts>=1.1    # Apache-2.0; completion notifications
 lepton-jpeg-python>=0.5.8  # Apache-2.0; bit-exact JPEG recompression (B2)

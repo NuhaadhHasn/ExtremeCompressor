@@ -19,6 +19,13 @@ it.
 
 ### Added
 
+- **A frozen build and a per-user installer (E3, 2026-11-21).** `packaging/` holds a
+  PyInstaller `--onedir` spec (the window and a console `excmp.exe`), an Inno Setup script
+  (no administrator, an optional Explorer-menu task, a clean uninstall), `build.cmd` and
+  `smoke_test.py`. First build: 110 MB folder, 33.8 MB installer. A real silent install
+  registers the window (not the console tool) for the menu, and the uninstaller leaves no
+  file and no registry key. **Unsigned**: Windows SmartScreen will warn until E4.
+
 - **Explorer right-click menu, Windows 10 path (I5, 2026-11-20).** `excmp shell
   install | uninstall | status` writes per-user registry verbs (no administrator):
   *Compress with ExtremeCompressor* on files and folders, *Extract here* and *Verify

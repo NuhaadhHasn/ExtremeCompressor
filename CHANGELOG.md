@@ -135,6 +135,12 @@ it.
 
 ### Fixed
 
+- **A pinned tool replaced by an unverified one was silent (B27, 2026-11-20).** B25 made
+  discovery prefer the hash-pinned Precomp and fall back to the Program Files install for
+  a checkout that has not fetched it; nothing said so. `find_tools` now logs one warning
+  per tool and process, naming the unverified path it is using and how to fetch the pinned
+  copy (a pinned copy that is found, a pinned tool that is absent, and an unpinned tool
+  are not warnings).
 - **A 57,020-file folder could not be archived at all.** The manifest went to
   schema v2 with a 64 MiB cap measured against its own serialised size; the
   same tree now archives, 55,477 files, 71.39% saved, byte-identical

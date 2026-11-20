@@ -12,6 +12,7 @@ missing tool raise :class:`ToolMissingError` when actually used.
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess
@@ -19,6 +20,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_BIN = Path(__file__).resolve().parent.parent / "tools" / "bin"
+
+_log = logging.getLogger(__name__)
+
+#: Tools whose fallback has already been announced in this process (see `_warn_unpinned`).
+_UNPINNED_WARNED: set[str] = set()
+
+
+def _warn_unpinned(name: str, path: str) -> None:
+    """Say, once per tool and process, that a hash-pinned tool is being replaced by an unverified one.
+
+    B25 made discovery prefer the verified copy and fall back to the well-known install for a
+    checkout that has not fetched it. The fallback was silent: a machine could run an unverified
+    Precomp for months believing the pin was in force, or lose its pinned copy to a failed digest
+    check and never hear of it. ``find_tools`` runs on every analysis, hence once.
+    """
+    if name in _UNPINNED_WARNED:
+        return
+    _UNPINNED_WARNED.add(name)
+    _log.warning("%s: the hash-pinned copy is not installed (or no longer matches its pin); "
+                 "using the UNVERIFIED copy at %s. Fetch the pinned one with "
+                 "toolfetch.fetch_tool(TOOL_MANIFEST[%r]).", name, path, name)
 
 #: Tools we still look for, and will still *run*, but will never choose for a
 #: new archive.
@@ -183,6 +205,7 @@ def find_tools(with_versions: bool = False) -> dict[str, ToolInfo | None]:
         # pin would never run; the well-known path stays as the fallback for a
         # machine that has not fetched the pinned copy yet.
         located: str | None = _pinned_tool(name)
+        pinned_found = located is not None
         if located is None:
             for p in paths:
                 if Path(p).is_file():
@@ -197,6 +220,8 @@ def find_tools(with_versions: bool = False) -> dict[str, ToolInfo | None]:
         if located is None:
             found[name] = None
         else:
+            if name in toolfetch.TOOL_MANIFEST and not pinned_found:
+                _warn_unpinned(name, located)
             version = _probe_version(name, located) if with_versions else ""
             found[name] = ToolInfo(name=name, path=located, version=version)
     return found

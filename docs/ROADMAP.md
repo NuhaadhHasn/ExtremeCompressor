@@ -1,5 +1,15 @@
 # 🗺️ ExtremeCompressor — Remaining Work, Step by Step
 
+> Status date: **2026-11-21**. **B27, B28, I5, I5b and E3 merged** (`6f36989`, `cfa2a83`,
+> `f50f45d`, `b7cd5da`, `87d756e`, plus the exit-crash fix `d859aea`; full suite **2,213 passed, 1 skipped, 1 xfailed**, corpus guard clean; CI green on every
+> branch). **The Explorer right-click menu exists** (I5: per-user registry verbs, one window
+> however many files are selected, a switch on the Settings tab) and **there is a frozen build and
+> a per-user installer** (E3, unsigned). B27 measured B5's six types at Insane (12 rows, 10 corpora)
+> and **changed nothing**: the chain holds on four of six and the one corpus on which it runs
+> outside its range on the unsafe side (docx, 2.8x) is a single corpus. B28 prices archives
+> inside archives (`_NESTED_FACTOR = 3.0`, two corpora). **The next job is a second `.docx`
+> corpus.** ([record](benchmarks/2026-11-21-b27-b5-types.md))
+>
 > Status date: **2026-11-20**. **B26 merged** (`8f59953`; full suite **1,927
 > passed, 1 skipped, 1 xfailed**, corpus guard clean; CI green on the branch):
 > **the B20 zip containers are priced at Insane by what Precomp expands them
@@ -623,6 +633,26 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
+- [x] B27. ✅ **MERGED 2026-11-21** (`6f36989`) - **B5's types at Insane, measured: no change.**
+      12 rows on 10 corpora (docx, xlsx, pptx, zip, jar, apk plus war, nupkg, album, a synthetic
+      nested zip), 0 mismatches. Measured over expected: the chain model is inside its range on
+      xlsx, pptx, zip, jar; **past its high on docx (4,632 s against 1,629 expected)**, below its
+      low on apk; the container model is inside on docx, pptx, zip, jar and below its low on xlsx
+      and apk. Neither wins, and the docx miss is one corpus, so **no suffix left
+      `_PRECOMP_EXPANDABLE`**. The pin fallback now says so, once (`find_tools` logs a warning
+      when a hash-pinned tool is replaced by an unverified one). The timing harness times with the
+      unbiased clock and reports `slept_s`: a row the machine slept through (`war-r1`, 6.9 h) was
+      caught by its extract time and discarded. **Next: a second `.docx` corpus, one round, then lift
+      `.docx` if it agrees.** ([record](benchmarks/2026-11-21-b27-b5-types.md))
+- [x] B28. ✅ **MERGED 2026-11-21** (`cfa2a83`) - **archives inside archives.** A `.war` of `.jar`
+      files ran past the container model's high: Precomp expands the inner streams too. The probe
+      counts nested members (`zip_nested_bytes`) and the estimator charges each
+      `_NESTED_FACTOR = 3.0` plain deflated bytes, fitted on the `.war` (3.05) and a synthetic
+      nested zip (2.75), both inside their ranges. **A first fit of 5.3 rested on a round the
+      machine slept through; a reviewer saw that the test passed for any factor from 2 to 7.9.**
+      A crafted central directory (a 226-byte `.war` claiming 900 kB) was priced at 26,465 s: a
+      zip's members are now clamped to what the file holds. **Dormant for `.zip`, `.jar` and `.apk`**
+      (the B5 suffixes keep the chain's rate until they are lifted).
 - [x] B26. ✅ **MERGED 2026-11-20** (`8f59953`; suite **1,927 passed, 1
       skipped, 1 xfailed**, corpus guard clean; CI green on the branch) -
       **the B20 containers at Insane (AAB, AAR, NuGet, APPX, EPUB, ODT), priced
@@ -2181,8 +2211,14 @@ display scaling — both need a human at the machine.
       FLAC (BSD/GPL CLI), xtool (MIT,
       archived), par2cmdline-turbo (GPL, subprocess only), squarify (Apache-2.0),
       Inno Setup (permissive), `cryptography` (Apache-2.0/BSD), `argon2-cffi` (MIT)
-- [x] E3. ✅ **BUILT AND SMOKE-TESTED 2026-11-21**, branch `e3-packaging-draft` (stacked on
-      I5; unsigned: E4). `packaging/`: `ExtremeCompressor.spec` (two programs, one folder),
+- [x] E3. ✅ **MERGED 2026-11-21** (`87d756e`; built and smoke-tested; unsigned: E4; after the review
+      **92 MB** folder, **27.7 MB** installer: the DLLs of the excluded Qt modules are dropped). A review found
+      **PAR2 missing from the frozen build** (`excmp.exe compress --recovery` died with a `Path(None)`
+      error: `par2` is a namespace package) and fixed it: the spec collects `par2.exe`, `recovery`
+      looks in the bundle. The installer no longer offers an all-users install; **an uninstall with the window open used to
+      return 0, delete the uninstall entry and leave every file behind**: the window now holds a
+      mutex that `AppMutex` watches, so the uninstaller refuses and changes nothing (the smoke test proves
+      both halves). The smoke test cleans up after itself and refuses to run over a real menu. `packaging/`: `ExtremeCompressor.spec` (two programs, one folder),
       `installer.iss` (per user, no administrator, Explorer-menu task, clean uninstall),
       `build.cmd`, `smoke_test.py`. First build ran first time: **110 MB** folder,
       **33.8 MB** installer. Real round trip: silent install in 9 s, the verb runs the
@@ -2656,8 +2692,7 @@ Full plan with effort estimates: [research/11](research/11-ui-v2-plan.md).
 - [x] I4. ✅ **ALREADY DONE** (wave 3c, `_maybe_first_run` on the W2-9 Banner) — verified 2026-09-03, not re-implemented. Original item:
 - [ ] ~~I4.~~ First-run onboarding card: what was found, what each missing tool unlocks,
       links to downloads. Upgrades to one-click when E1 lands — don't block on it
-- [x] I5. ✅ **BUILT 2026-11-20**, branch `i5-explorer-menu` (the Win10 path; the merge
-      waits for CI, which needs the network). `excmp/intake.py` (the command-line
+- [x] I5. ✅ **MERGED 2026-11-21** (`f50f45d`; Settings switch `b7cd5da`; the Win10 path). `excmp/intake.py` (the command-line
       contract + a strictly validated pipe message), `excmp/shellmenu.py` (per-user
       HKCU verbs; `excmp shell install | uninstall | status`), `gui/singleinstance.py`
       (one window however many processes), `MainWindow.handle_intake`, `run_gui.py`.

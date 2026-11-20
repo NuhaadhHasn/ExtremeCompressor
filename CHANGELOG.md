@@ -159,6 +159,20 @@ it.
 
 ### Fixed
 
+- **Archives inside archives are priced (B28, 2026-11-21).** A `.war` of `.jar` files ran past its
+  high at Insane (300 s measured against 100 s expected): Precomp expands the inner streams too.
+  The central-directory probe counts nested members apart and the estimator charges each 3.0
+  plain deflated bytes (fitted on a `.war` and a synthetic nested zip, both inside their ranges).
+  A crafted directory claiming more compressed bytes than the file has is clamped. `.zip`, `.jar`
+  and `.apk` keep the chain's rate: B27 measured them and found no better model
+  ([record](docs/benchmarks/2026-11-21-b27-b5-types.md)).
+- **The frozen build carries PAR2 (E3 review, 2026-11-21).** `excmp.exe compress --recovery` and
+  `repair` failed in the first frozen build; the spec now bundles `par2.exe` and the lookup finds
+  it. The installer is per-user only, and **an uninstall with the window open no longer
+  half-removes the program** (it used to return 0, delete the uninstall entry and leave every file):
+  the window holds a mutex the installer watches, so the uninstaller refuses. The unused Qt DLLs
+  are dropped: 110 MB to 92 MB, installer 27.7 MB.
+
 - **A pinned tool replaced by an unverified one was silent (B27, 2026-11-20).** B25 made
   discovery prefer the hash-pinned Precomp and fall back to the Program Files install for
   a checkout that has not fetched it; nothing said so. `find_tools` now logs one warning

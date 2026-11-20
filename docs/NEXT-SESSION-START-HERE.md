@@ -1,20 +1,18 @@
-# 🚦 START HERE — handoff (written 2026-11-20, after B26; B22-B25 before it)
+# 🚦 START HERE — handoff (written 2026-11-21, after B27/B28, I5, I5b and E3)
 
-> **B26 is merged** (`8f59953`; branch `270b5eb`). Tests: **1,927 passed, 1
-> skipped, 1 xfailed** locally in three parts, corpus guard clean over 157 files
-> (`Programs` 34 + the corpus copy below 123); CI green on the branch. B22-B25
-> are `ba84077`, `524881c`, `65e6d9c`, `d9a8965`.
+> **Five branches merged on 2026-11-21** (merge commits `6f36989` B27, `cfa2a83` B28, `f50f45d`
+> I5, `b7cd5da` I5b, `87d756e` E3 and `d859aea`, a fix to I5's tests). Tests: **2,213 passed, 1 skipped, 1 xfailed** locally in three parts, corpus guard
+> clean; CI green on every branch (and on `main` after the push). Earlier: B26 `8f59953`,
+> B22-B25 `ba84077`, `524881c`, `65e6d9c`, `d9a8965`.
 >
-> **B26 (2026-11-19/20):** the B20 containers (AAB, AAR, NuGet, APPX, EPUB, ODT)
-> at Insane are priced by what Precomp expands them to. `analyzer.probe_container`
-> reads four counts out of the zip central directory
-> (`FileInfo.zip_deflated_bytes / zip_png_bytes / zip_jpeg_bytes /
-> zip_other_bytes`, 0 = unknown). Record:
-> `docs/benchmarks/2026-11-20-b26-insane-containers.md`.
+> **The owner's 2026-11-20/21 agenda is done**: the Explorer right-click menu (I5, with a Settings
+> tab switch, I5b), a frozen build and a per-user installer (E3, **unsigned**), and the work
+> around B26 (B27 measured B5's types, B28 priced archives inside archives). The owner said to
+> stop at 07:00 on 2026-11-21, so the work stopped there.
 >
-> **There is no queued phase and no owner agenda.** §3 lists what can be picked,
-> with a recommendation. **Read §2 first**: most of B22-B26's cost was the
-> machine, not the code.
+> **There is no queued phase and no owner agenda.** §3 lists what can be picked, with a
+> recommendation: **a second `.docx` corpus first**. **Read §2 first**: the machine cost more
+> than the code again (a 6.9 h sleep corrupted a row that a fit then rested on).
 >
 > **The owner empties `C:\DevCache\_trash` for good, and keeps adding to it**
 > (2026-11-19: "there will be more added to trash and it will be permanently
@@ -76,29 +74,76 @@
   test file the change could touch, not a guessed subset before the suite.**
 - **`C:\excmp-bench\contention.ps1`** logs, every 15 s, the bench's CPU share
   against everything else's (`run_contention.cmd` in `b26` starts it). **Stop it
-  when the bench is done** (it runs forever; this session stopped its own).
-- **Worktree `..\ExtremeCompressor-b21`** is kept, detached at `main`
-  (`8f59953`), clean. For the next item: `git switch -c <branch>` in it. Its
-  `tools\bin` is a junction to the main checkout's: **unlink it before removing
-  the worktree**. Main checkout's code is what `b21_app.py` times: **do not edit
-  it while a batch runs**; work in the worktree.
+  when the bench is done** (it runs forever; B27 stopped its own on 2026-11-21).
+- **Worktree `..\ExtremeCompressor-b21`** is kept, detached at `main`, clean (its `dist\` and
+  `build\` from the E3 builds were removed). For the next item: `git switch -c <branch>` in it. Its
+  `tools\bin` is a junction to the main checkout's: **unlink it before removing the worktree**. A
+  frozen build needs a `.venv` there too (a junction to the main checkout's works; unlink it the same
+  way). Main checkout's code is what `b21_app.py` times: **do not edit it while a batch runs**; work in
+  the worktree.
+- **The timing batch is over and nothing of mine is running**: `C:\excmp-bench\b27\` has the corpora
+  (`corpora\`, copies of the owner's files), the rows (`out\b13-app-*.jsonl`), `driver2.py` (the
+  reordered batch with a cutoff), `b27_report.py` (the tables of the record) and `mk_handoff.py`-style
+  scratch scripts. The contention logger was stopped. `aab2` was started and stopped (no row).
 
 ---
 
-## 1. What shipped (2026-11-19 – 11-20)
+## 1. What shipped (2026-11-20 – 11-21)
 
 | item | result | record |
 |---|---|---|
-| **B26 containers at Insane** | the old model (chain rate + B20's extra) held for 5 of 6 corpora and failed EPUB by **3.5x**. Time follows the bytes zpaqfranz is handed: **16-80 s per input MB, 4.4-7.2 per `.pcf` MB**. Deflated members: 0.385 compress / 0.360 self-test MB/s of their uncompressed size (fitted on NuGet, APPX, AAR, AAB, split by each row's phase events); PNG members at B22's PNG rate; JPEG members at its JPEG rate (one album, within 16%); the rest at the chain's. Expected is **0.66x-1.57x** of the fastest rows (was 0.28x-1.7x) | `docs/benchmarks/2026-11-20-b26-insane-containers.md` |
-| **B26 probe** | `probe_container()` returns a `ContainerProfile`; a member's claimed size is believed up to deflate's 1032:1; `probe_expandable` still answers a bool and agrees with main on every input tried | `tests/test_b26_zip_insane.py` (66) |
-| **B26 low end** | the PNG members' self-test may run 1.6x under the model (`_ZIP_PNG_VERIFY_LOW`): the ODT's ran at 0.63x of it | same |
-| **Review** | two reviewers (estimator and evidence; the analyzer under hostile input), every finding reproduced first. Real: a JPEG-heavy container priced at ~0 s (448 s on main), a header claiming 10 TB (24 years), the self-test split, four mutations the tests missed. 13 mutations are each caught now | the record, §4 |
-
-Tests added: **66** (`test_b26_zip_insane.py`). No existing test moved.
+| **I5 Explorer menu** | `excmp shell install/uninstall/status` writes per-user HKCU verbs (Compress on files and folders; Extract here / Verify archive on `.excmp`); Explorer starts **one process per selected file**, so a named mutex picks the window and the rest hand their file over a validated pipe (`QLocalServer`, message ids dedupe retries). Two reviews, every finding reproduced: a foreign `.excmp` default was overwritten, uninstall removed keys others had added, Extract here overwrote a user's edit (now a fresh `name (2)` folder) | `tests/test_i5_shell_menu.py`, `test_i5_gui_intake.py`; README; ROADMAP I5 |
+| **I5b Settings switch** | Add / Remove / Repair on the Settings tab, state line inline (no modal dialog); a review made a half-installed menu say so and gave the button an accessible name that says what it does | `tests/test_i5b_settings_menu.py` |
+| **E3 frozen build + installer** | `packaging/`: PyInstaller `--onedir` (window `ExtremeCompressor.exe` and console `excmp.exe` in one folder, never onefile, never UPX), Inno Setup per user. **110 MB folder, 33.8 MB installer first**; a real silent install registered the *window* for the verb and the uninstaller left no file and no key. `PySide6-Essentials` is enough (proved from the wheel's file list). A review found **PAR2 missing from the frozen build** (fixed) | `packaging/README.md`; ROADMAP E3 |
+| **B27** | B5's six types timed at Insane, 12 rows on 10 corpora, 0 mismatches: **no change**, the chain stays (docx is the one miss, one corpus). Plus the pin-fallback warning (`find_tools` logs when a hash-pinned tool is replaced by an unverified one) | `docs/benchmarks/2026-11-21-b27-b5-types.md` |
+| **B28 nested archives** | `zip_nested_bytes`; `_NESTED_FACTOR = 3.0` from two corpora; a zip's members are clamped to the file (a 226-byte `.war` was priced at 26,465 s) | `tests/test_b28_nested_archives.py` (25) |
 
 ---
 
 ## 2. Findings worth not rediscovering
+
+### This session (2026-11-20/21)
+
+- **Check `slept_s` before trusting a row, and never fit on one.** The harness now times with
+  `QueryUnbiasedInterruptTime` and prints `slept_s`; the times stay right through a sleep, but a
+  slept row still ran under odd conditions: `war-r1` read 512 s with `slept_s` 24,669, its extract
+  277 s against 96 s on round 2, and **round 2 read 300 s**. B28's factor was first fitted to the
+  512 (5.3) and a reviewer noticed the test accepted any factor from 2 to 7.9; **two corpora gave
+  3.0**. A fit whose test can't fail is a fit nobody checked.
+- **The timing batch order matters when time is short.** A 12-row queue was ~6 h; it was
+  reordered (`C:\excmp-bench\b27\driver2.py`) so the rows that decide something ran first, and
+  nothing starts after a cutoff. The quiet CPU for the suite and a rebuild is part of the plan.
+- **B5's types, measured over expected (one row each):** chain xlsx 0.89, pptx 1.64, zip 0.89, jar
+  1.48, **docx 2.84 (past its high)**, apk 0.51 (below its low); container model xlsx 0.29, pptx
+  1.41, zip 0.83, jar 2.14, docx 0.97, apk 0.58. Neither wins; docx is one corpus.
+- **`.zip`, `.jar` and `.apk` are not reached by B28's nested rule** (`_recode_kind` returns
+  nothing for the B5 suffixes), so the nested factor is dormant for them until they are lifted.
+- **A silent uninstall with the window open returned 0, deleted the uninstall entry and left every file
+  behind** (found by the smoke test's own cleanup, not by a test): Inno's `AppMutex` (the window holds
+  `gui.singleinstance.RUNNING_MUTEX`) makes the uninstaller refuse instead. **Always read what a
+  "success" left on disk.**
+- **A pytest process died on exit (139 / 0xC0000005) with every test passing**: I5's `main()` tests left
+  the window and server alive until interpreter exit, after the QApplication, which crashes on the
+  offscreen platform (production exits clean on the real one, three runs). `suite_parts.py` prints each
+  part's return code: read it, a green dot line is not a pass.
+- **The Explorer verbs are HKCU, and tests must never touch it**: every test writes under a
+  throwaway registry root; `packaging/smoke_test.py` writes the real keys, so it now refuses to run
+  over an existing menu and always uninstalls.
+- **`par2` is a namespace package** (`__file__` is None): `Path(par2.__file__)` raises in a frozen
+  build. `recovery._exe` looks in `sys._MEIPASS` and `par2.__path__`.
+- **Qt traps:** a stray `QCoreApplication.quit()` leaves nested event loops dead until the next
+  `exec()` (a fixture drains it); an in-process `QLocalServer` and client in one process never
+  deliver, so the intake tests use real subprocesses; `Popen.wait` blocks the event loop; the venv's
+  `python.exe` is a launcher, so kill a process tree with `taskkill /F /T`.
+- **Windows traps:** PowerShell `-Path` treats `*` as a wildcard (use `reg.exe` or `-LiteralPath`);
+  git-bash rewrites `/D...` switches (set `MSYS_NO_PATHCONV=1` for `reg` and `ISCC`); **a literal
+  NUL byte in a `.py` makes git call it binary** (write `bytes(n)`); `sed -i` converts CRLF to LF
+  (still); Claude Code's low-memory reaper kills background shell loops, **a detached
+  `Start-Process` python survived all night**; the classifier blocks a force-push, so branch
+  surgery means a new branch and a normal push.
+- **The frozen build:** `requirements.txt` is `PySide6-Essentials`; the roadmap's exclude list
+  wrongly names QtSvg (icons) and QtNetwork (I5's pipe), a test reads the real imports; the
+  excluded modules' DLLs still ship unless dropped (`DROP_FILES`).
 
 ### The measurements, and how far to trust them
 
@@ -175,7 +220,7 @@ Tests added: **66** (`test_b26_zip_insane.py`). No existing test moved.
 - **The suggestion text reads Extreme as "strongest"**, so Insane's figures reach
   the table and the bar, not the recommendation sentence.
 - **B5's types (`.docx .xlsx .pptx .zip .jar .apk`) keep the chain rate at Insane**
-  although the probe now fills their counts: nobody has timed one there.
+  although the probe now fills their counts: timed in B27, no model beat it (see above).
 
 ### Still true
 
@@ -199,25 +244,20 @@ Tests added: **66** (`test_b26_zip_insane.py`). No existing test moved.
 
 Recommended order, each one branch and one merge:
 
-1. **The bench clock** (a small, local fix; it is the machine's second lost row):
-   `b13_app.py` and `b21_app.py` time with `time.monotonic`; use
-   `QueryUnbiasedInterruptTime` (or log wall and unbiased both) and have the
-   harness print the compress time the moment compress ends. Bench scripts are
-   not in the repo (`C:\excmp-bench\`), so it is not a branch.
-2. **B5's types at Insane** (`.docx .xlsx .pptx .zip .jar .apk`): the model now
-   prices a container by its counts, and these keep the chain's rate because
-   nothing was timed. A set of 3-4 corpora (Office files, a jar/apk set, plain
-   zips) at Insane is about an hour on a quiet machine, then the model either
-   fits them (lift the `_PRECOMP_EXPANDABLE` exclusion in `_recode_kind`) or
-   it doesn't.
-3. **A second JPEG-in-zip corpus and a second PNG-heavy container** (a CBZ, an
-   APK of images): each of B26's PNG and JPEG rates rests on one corpus.
-4. **The estimator's per-file limits** (§4: near-duplicates, a piped file under
-   3 MiB as one probe sample).
-5. **A missing pinned Precomp falls back to Program Files silently** (B25
-   leftover; a log line would help).
-6. **Anything the owner asks for**: the elevated-session and release lanes (D4b,
-   E3-E5), the Explorer menu (I5, **ask first**, HKCU).
+1. **A second `.docx` corpus** at Insane, one round (~80 min for 80 MB: B27's docx took
+   4,632 s). Docx is the one B5 type outside its chain range on the unsafe side (2.84x); the
+   container model matched it (0.97x). If the second corpus agrees, lift `.docx` from
+   `_PRECOMP_EXPANDABLE` in `_recode_kind` (which also arms B28's nested rule for it), and read
+   `.pptx` again (1.64x chain, 1.41x container). The corpora are in `C:\excmp-bench\b27\corpora`.
+2. **A third nested corpus** (a `.war`/`.ear`/`.whl`/`.vsix` with a high nested share): the
+   factor 3.0 rests on a real `.war` and a synthetic zip. The 1%-nested jar corpus ran 2.2x
+   over the container model, so part of the gap may be a general "class-file archives cost more".
+3. **Windows 11's top-level menu** needs a signed sparse MSIX, so it waits for E4 (code signing).
+   Not done and not possible without a certificate: **E4 signing, E5 auto-update, an `.ico`**.
+4. **A second JPEG-in-zip corpus and a second PNG-heavy container** (B26's rates each rest on one).
+5. **The estimator's per-file limits** (§4).
+6. **Anything the owner asks for.** A rebuilt installer is `packaging\build.cmd` then
+   `python packaging\smoke_test.py` (it writes the real Explorer keys and refuses if they exist).
 
 ---
 
@@ -235,9 +275,10 @@ Recommended order, each one branch and one merge:
 | **Media** | HEIC/WebP: no lossless recompressor; AVI/WMV/FLV/AAC unmeasured |
 | **B13** | the owner's *Celeste* FMOD download never arrived |
 | **B6** | only with an owner-provided Oodle sample; it also settles `-intense` |
-| **D6b, I5, I10** | fuzz targets; Explorer menu (**ask first**, HKCU); settings search / drag-out / jump list |
+| **D6b, I10** | fuzz targets; settings search / drag-out / jump list |
 | **Tools** | SREP unpinned (not used by the engine); the pinned Precomp exists only where it was fetched (per checkout) |
-| **B15, D4b, C, H, E3–E5** | too early / elevated session / lossy phase / installer phase / release-only |
+| **B15, D4b, C, H, E4-E5** | too early / elevated session / lossy phase / installer phase / signing and auto-update |
+| **E3 leftovers** | the installer is unsigned (SmartScreen warns); the external tools are not bundled (the downloader fetches them beside the app); `PrivilegesRequired=lowest` means per-user only |
 | **I7** | ❌ won't do |
 
 ---
@@ -248,9 +289,15 @@ Recommended order, each one branch and one merge:
   (B26): deflated members' uncompressed size at 0.385 / 0.360 MB/s, PNG members at
   B22's PNG rate, JPEG members at its JPEG rate, the rest at the chain's; **all
   counts 0 keeps the old pricing**; Extreme is untouched; **B5's types keep the
-  chain rate** until someone times them.
-- **A header may not claim more than deflate can make** (1032:1); a stored
-  member counts its own bytes.
+  chain rate** (timed in B27: no model beat it).
+- **A header may not claim more than deflate can make** (1032:1), **and a zip's members may not
+  occupy more than the zip** (B28); a stored member counts its own bytes.
+- **A nested archive member costs `_NESTED_FACTOR = 3.0` plain deflated bytes** (B28, two
+  corpora); it reaches `.war .ear .aar .nupkg .whl .vsix` and zips under other names.
+- **The Explorer menu is per user (HKCU), a thin launcher, one window via a named mutex**; Extract
+  here never overwrites (a collision gets a fresh `name (2)` folder).
+- **The frozen build is `--onedir`, never onefile, never UPX; the installer is per-user and
+  unsigned.**
 - **The self-test split comes from a row's own phase events**, not `extract_s`
   (B26); the totals are the same.
 - **The PNG members' self-test may undercut the model by 1.6x** in the low end

@@ -1,8 +1,12 @@
 # Packaging (E3): a frozen build and a per-user installer
 
-**Status, 2026-11-21: built and smoke-tested once, not signed.** PyInstaller 6.22.3 and Inno Setup 6.7.3
-were installed and the build ran first time: `dist\ExtremeCompressor\` is **110 MB** on disk and
-`ExtremeCompressor-0.1.0-setup.exe` is **33.8 MB**. `python packaging\smoke_test.py` repeats the checks.
+**Status, 2026-11-21: built and smoke-tested, not signed.** PyInstaller 6.22.3 and Inno Setup 6.7.3.
+The first build was 110 MB / 33.8 MB; after a review dropped the DLLs of the excluded Qt modules,
+`dist\ExtremeCompressor\` is **92 MB** on disk and `ExtremeCompressor-0.1.0-setup.exe` is **27.7 MB**.
+`python packaging\smoke_test.py` repeats the checks (it writes the real Explorer-menu keys, so it refuses to
+run when they exist, and always uninstalls). It proves, among others, that the frozen `excmp.exe` writes and
+uses PAR2 recovery records, and that **an uninstall with the window open is refused and changes nothing**
+(the window holds a mutex the installer's `AppMutex` watches; it used to return 0 and leave every file).
 
 | File | What it is |
 |---|---|
@@ -31,7 +35,7 @@ were installed and the build ran first time: `dist\ExtremeCompressor\` is **110 
 * **The roadmap's exclude list was wrong for the code as it is now.** It names `QtSvg` and `QtNetwork`;
   the icons need `QtSvg` and I5's single-instance pipe needs `QtNetwork`. Following it would build an app
   that dies at start-up. The spec keeps both, and a test reads the real imports so the list cannot drift
-  into that again. (110 MB, not the roadmap's 71 MB: it kept those two modules and the toast and crypto
+  into that again. (92 MB, not the roadmap's 71 MB: it kept those two modules and the toast and crypto
   libraries the app has gained since.)
 * **Never UPX** (it raises antivirus detections), **never `--onefile`** (re-extracts every launch).
 * **Per-user install** because the menu is per user (HKCU); nothing here needs administrator rights.

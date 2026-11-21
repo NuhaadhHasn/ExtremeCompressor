@@ -30,8 +30,10 @@ from excmp.estimate import compare_profiles, estimate_size, estimate_time  # noq
 from excmp.planner import Profile, plan as make_plan  # noqa: E402
 from excmp.tools import find_tools  # noqa: E402
 
-BACKTEST_CORPUS = Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD"
-                       r"\0No Need To Check\Programs")
+_PROGRAMS = (Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD"
+             r"\0No Need To Check\Programs"),
+             Path(r"C:\excmp-bench\temp-copies\Programs"))   # verified copy, see tests
+BACKTEST_CORPUS = next((p for p in _PROGRAMS if p.is_dir()), _PROGRAMS[0])
 BACKTEST_FILES = [
     "R-4.5.1-win.exe",
     "Windows-KB890830-x64-V5.129.exe",

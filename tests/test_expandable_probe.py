@@ -124,9 +124,14 @@ def test_the_probe_survives_a_truncated_container(tmp_path):
 # the two real corpora, which disagree with each other on purpose
 # --------------------------------------------------------------------------
 
-_ENCRYPTED = Path(
-    r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD\0No Need To Check"
-    r"\Programs\Wondershare UniConverter 15.0.9.15 (x64) pass=123.zip")
+# 2026-11-21: the owner deletes the originals, so each corpus falls back to a SHA-256-verified
+# copy under C:\excmp-bench\temp-copies.
+_ENCRYPTED_CANDIDATES = (
+    Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD\0No Need To Check"
+         r"\Programs\Wondershare UniConverter 15.0.9.15 (x64) pass=123.zip"),
+    Path(r"C:\excmp-bench\temp-copies\Programs"
+         r"\Wondershare UniConverter 15.0.9.15 (x64) pass=123.zip"))
+_ENCRYPTED = next((p for p in _ENCRYPTED_CANDIDATES if p.is_file()), _ENCRYPTED_CANDIDATES[0])
 
 
 @pytest.mark.skipif(not _ENCRYPTED.is_file(), reason="needs the Programs corpus")
@@ -138,9 +143,12 @@ def test_the_real_encrypted_zip_is_not_claimed():
     assert analyze_file(_ENCRYPTED).expandable is False
 
 
-_TUTORIALS = Path(
-    r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD\0No Need To Check"
-    r"\Programming Tutorials, Guides, Course, and Files")
+_TUTORIALS_CANDIDATES = (
+    Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD\0No Need To Check"
+         r"\Programming Tutorials, Guides, Course, and Files"),
+    # the 51 Office/PDF files this test reads (the first 25 of each type), nothing else
+    Path(r"C:\excmp-bench\temp-copies\Programming Tutorials, Guides, Course, and Files"))
+_TUTORIALS = next((p for p in _TUTORIALS_CANDIDATES if p.is_dir()), _TUTORIALS_CANDIDATES[0])
 
 
 @pytest.mark.skipif(not _TUTORIALS.is_dir(), reason="needs the tutorial corpus")

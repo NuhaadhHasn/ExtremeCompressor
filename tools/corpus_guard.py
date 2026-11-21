@@ -35,6 +35,9 @@ WATCHED = [
     # 2026-11-18: the folder above was moved to the trash; this is the
     # hash-identical copy the tests now read. Skipped when absent.
     Path(r"C:\excmp-bench\corpora\My Graphical Projects"),
+    # 2026-11-21: verified copies the tests fall back to when the originals are deleted.
+    Path(r"C:\excmp-bench\temp-copies\Programs"),
+    Path(r"C:\excmp-bench\temp-copies\Programming Tutorials, Guides, Course, and Files"),
 ]
 
 STORE = Path(__file__).resolve().parent.parent / ".corpus-snapshot.json"

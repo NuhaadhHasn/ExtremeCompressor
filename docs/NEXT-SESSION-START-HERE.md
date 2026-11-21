@@ -361,3 +361,11 @@ Recommended order, each one branch and one merge:
 - **Before deleting anything, inventory it completely** (owner's global rule,
   2026-10-17): hidden files, `git status --ignored`, junctions unlinked first.
   **Moves go to `C:\DevCache\_trash\<date>\`; the owner empties it, for good.**
+
+## Corpus copies (2026-11-22)
+
+The owner deletes the original `Programs` and tutorials folders and empties `_trash`. Verified copies sit in
+`C:\excmp-bench	emp-copies\` (`Programs\` 34 files; the 51 Office/PDF tutorial files the probe test reads;
+`trash-new\` 576 new samples incl. 55 new .docx for the second docx corpus). The tests and `estimate_report.py`
+fall back to them (originals win while they exist); `corpus_guard.py` watches them. **Delete `temp-copies` only
+when the owner says the work is finalized** (the tests then skip). The opt-in 57k-file React walk is not copied.

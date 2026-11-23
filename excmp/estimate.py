@@ -1007,6 +1007,14 @@ def _insane_own_seconds(kind: str, info: FileInfo) -> tuple[float, float] | None
     return None
 
 
+#: B5's types whose TIME stays at the chain's rate at Insane. ``.docx`` is not among them (B29): two
+#: independent corpora ran 2.84x and 2.01x over the chain model's expected (4,632 s and 1,794 s) and
+#: 0.97x and 0.78x of the container model's, because a docx is mostly PNG by bytes. ``.xlsx`` and
+#: ``.pptx`` stay: one corpus each, and the container model is no better for them. The planner's
+#: piping and the SIZE ratio still use ``_PRECOMP_EXPANDABLE``, which this does not change.
+_CHAIN_RATE_TIME_TYPES = _PRECOMP_EXPANDABLE - {".docx"}
+
+
 def _recode_kind(info: FileInfo) -> str | None:
     if info.lepton_refuses:
         return "jpeg"
@@ -1014,8 +1022,8 @@ def _recode_kind(info: FileInfo) -> str | None:
         return fmt          # B21: by content, as the planner routes them
     if info.path.suffix.lower() == ".mp3":
         return "mp3"
-    if info.expandable and info.path.suffix.lower() not in _PRECOMP_EXPANDABLE:
-        return "zip"        # B20's containers; B5's types keep the chain rate
+    if info.expandable and info.path.suffix.lower() not in _CHAIN_RATE_TIME_TYPES:
+        return "zip"        # B20's containers, and (B29) .docx; the other B5 types keep the chain rate
     return None
 
 

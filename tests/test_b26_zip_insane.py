@@ -392,9 +392,10 @@ def test_a_container_the_probe_did_not_read_keeps_the_chain_rate():
 
 
 def test_the_b5_types_keep_the_chain_rate_at_insane():
-    """`.docx .xlsx .pptx .zip .jar .apk` are B5's, measured at Extreme; nobody
-    measured them at Insane, so the counts do not move them."""
-    for name in ("a.docx", "b.xlsx", "c.pptx", "d.zip", "e.jar", "f.apk"):
+    """`.xlsx .pptx .zip .jar .apk` are B5's, measured at Extreme; B27 measured them at Insane
+    and none was lifted, so the counts do not move them. (`.docx` is the exception, B29:
+    tests/test_b29_docx_by_content.py.)"""
+    for name in ("b.xlsx", "c.pptx", "d.zip", "e.jar", "f.apk"):
         info = _container(name, 10_000_000, 30_000_000, 0)
         the_plan = plan([info], Profile.INSANE, TOOLS)
         assert recode_cost([info], the_plan).own_bytes == 0, name

@@ -29,13 +29,13 @@ from excmp.analyzer import analyze_file
 from excmp.estimate import estimate_size, estimate_time
 from excmp.planner import Profile, plan as make_plan
 from excmp.tools import find_tools
+from corpus_paths import first_holding
 
 # 2026-11-21: the owner deletes the original folders, so each corpus falls back to a
 # SHA-256-verified copy under C:\excmp-bench\temp-copies (manifests sit beside them).
 _PROGRAMS = (Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD"
               r"\0No Need To Check\Programs"),
              Path(r"C:\excmp-bench\temp-copies\Programs"))
-CORPUS = next((p for p in _PROGRAMS if p.is_dir()), _PROGRAMS[0])
 
 # The exact subset the run used, with the sizes it was measured at. A size
 # mismatch means the file changed underneath us and the comparison is void.
@@ -47,6 +47,7 @@ FILES = {
     "Winxvideo.AI.3.5.0.0.w64.rar": 212_734_622,
     "Wondershare UniConverter 15.0.9.15 (x64) pass=123.zip": 263_670_338,
 }
+CORPUS = first_holding(_PROGRAMS, FILES)   # the original only while it still holds every file
 TOTAL = sum(FILES.values())          # 733,276,432
 
 # profile -> (measured saved fraction, measured total seconds including the

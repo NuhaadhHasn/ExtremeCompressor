@@ -33,7 +33,6 @@ from excmp.tools import find_tools  # noqa: E402
 _PROGRAMS = (Path(r"C:\Users\nuhaa\Desktop\Downloads-1\PalluVaapaHDD"
              r"\0No Need To Check\Programs"),
              Path(r"C:\excmp-bench\temp-copies\Programs"))   # verified copy, see tests
-BACKTEST_CORPUS = next((p for p in _PROGRAMS if p.is_dir()), _PROGRAMS[0])
 BACKTEST_FILES = [
     "R-4.5.1-win.exe",
     "Windows-KB890830-x64-V5.129.exe",
@@ -42,6 +41,8 @@ BACKTEST_FILES = [
     "Winxvideo.AI.3.5.0.0.w64.rar",
     "Wondershare UniConverter 15.0.9.15 (x64) pass=123.zip",
 ]
+# the original only while it still holds every file (the owner deletes them one by one)
+BACKTEST_CORPUS = next((p for p in _PROGRAMS if all((p / n).is_file() for n in BACKTEST_FILES)), _PROGRAMS[0])
 # Post-B11/D9 run of 2026-08-01 (precomp->sevenzip chain, total includes the
 # pre-publish restore+verify gate) - keep in step with tests/test_estimate_backtest.py.
 BACKTEST_MEASURED = {Profile.NORMAL: (0.0280, 103.8), Profile.EXTREME: (0.0297, 254.3)}

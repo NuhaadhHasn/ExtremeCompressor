@@ -977,6 +977,15 @@ class RecodeCost:
     zip_png_verify_seconds: float = 0.0
 
 
+#: B30: a JPEG *inside* a container is slower than the same JPEG as a file (the unzip and the re-zip
+#: come on top of the recoder). B26 priced it at the file's rate on one album; two more JPEG-dominant
+#: containers ran 1.77x (a second album) and 1.53x (six JPEG EPUBs) over that, and a JPEG-heavy .pptx
+#: corpus 1.41x. 1.45 is the least-squares fit (in the log) over the three pure-JPEG corpora, so the
+#: three read 0.78x, 1.23x and 1.09x: a regression pin, not validation. Plain JPEG files keep B22's
+#: rate. Record: docs/benchmarks/2026-11-21-b27-b5-types.md, last section.
+_ZIP_JPEG_SLOWDOWN = 1.45
+
+
 def _insane_own_seconds(kind: str, info: FileInfo) -> tuple[float, float] | None:
     """(compress, self-test) seconds Insane spends on this file by its own
     measured rates, or None where it has none and the chain's rate applies.
@@ -997,10 +1006,11 @@ def _insane_own_seconds(kind: str, info: FileInfo) -> tuple[float, float] | None
         # B28: archives inside the archive count as several plain deflated bytes each.
         deflated += _NESTED_FACTOR * info.zip_nested_bytes
         return (deflated / _INSANE_ZIP_RATE + png / _INSANE_RECODE_RATE["png"]
-                + jpeg / _INSANE_RECODE_RATE["jpeg"] + other / _INSANE_BASE_RATE,
+                + jpeg * _ZIP_JPEG_SLOWDOWN / _INSANE_RECODE_RATE["jpeg"] + other / _INSANE_BASE_RATE,
                 deflated / _INSANE_ZIP_VERIFY_RATE
                 + png / _INSANE_RECODE_VERIFY_RATE["png"]
-                + jpeg / _INSANE_RECODE_VERIFY_RATE["jpeg"] + other / _INSANE_BASE_VERIFY_RATE)
+                + jpeg * _ZIP_JPEG_SLOWDOWN / _INSANE_RECODE_VERIFY_RATE["jpeg"]
+                + other / _INSANE_BASE_VERIFY_RATE)
     if kind in _INSANE_RECODE_RATE:
         return (info.size / _INSANE_RECODE_RATE[kind],
                 info.size / _INSANE_RECODE_VERIFY_RATE[kind])

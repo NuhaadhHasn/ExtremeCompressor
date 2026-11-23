@@ -908,8 +908,8 @@ _ZIP_PNG_VERIFY_LOW = 1.6
 # the synthetic nested corpus (one 10.1 MB zip, 16.2 MB of nested members) 242 s -> 2.75. 3.0 puts both
 # inside their ranges. (The `.war`'s first round read 512 s -> 5.3: the machine slept 6.9 h through it,
 # its extract took 277 s against 96 s on round 2, and the fit built on it was wrong.) Only a container
-# priced by its counts (zip kind) carries nested bytes; `.zip`, `.jar` and `.apk` keep the chain rate
-# until B5 lifts them (`_recode_kind`), so this reaches `.war`, `.ear`, `.aar`, `.nupkg`, `.whl` and
+# priced by its counts (zip kind) carries nested bytes; `.zip`, `.jar`, `.apk`, `.xlsx`, `.pptx` and a
+# docx with little PNG keep the chain rate (`_recode_kind`; a PNG-dominant `.docx` is lifted by B29), so this reaches `.war`, `.ear`, `.aar`, `.nupkg`, `.whl` and
 # other zips under another name. Record: docs/benchmarks/2026-11-21-b27-b5-types.md.
 _NESTED_FACTOR = 3.0
 
@@ -1007,23 +1007,33 @@ def _insane_own_seconds(kind: str, info: FileInfo) -> tuple[float, float] | None
     return None
 
 
-#: B5's types whose TIME stays at the chain's rate at Insane. ``.docx`` is not among them (B29): two
-#: independent corpora ran 2.84x and 2.01x over the chain model's expected (4,632 s and 1,794 s) and
-#: 0.97x and 0.78x of the container model's, because a docx is mostly PNG by bytes. ``.xlsx`` and
-#: ``.pptx`` stay: one corpus each, and the container model is no better for them. The planner's
-#: piping and the SIZE ratio still use ``_PRECOMP_EXPANDABLE``, which this does not change.
-_CHAIN_RATE_TIME_TYPES = _PRECOMP_EXPANDABLE - {".docx"}
+#: B5's types whose TIME stays at the chain's rate at Insane. ``.docx`` leaves it only when PNG-dominant
+#: (B29): two independent corpora, 73% and 90% PNG by bytes, ran 2.84x and 2.01x over the chain model's
+#: expected (4,632 s and 1,794 s) and 0.97x and 0.78x of the container model's. A docx with little PNG
+#: has no evidence behind the container price (the JPEG-in-zip rate rests on one album, and the one
+#: JPEG-heavy B5 corpus, .pptx, ran 1.41x over it), so it keeps the chain rate. ``.xlsx`` and ``.pptx``
+#: stay: one corpus each, and the container model is no better for them. The planner's piping and the
+#: SIZE ratio still use ``_PRECOMP_EXPANDABLE``, which this does not change.
+_CHAIN_RATE_TIME_TYPES = _PRECOMP_EXPANDABLE
+_DOCX_PNG_SHARE = 0.5          # PNG bytes / file size from which a docx is priced by its counts
 
 
-def _recode_kind(info: FileInfo) -> str | None:
+def _priced_by_counts(info: FileInfo, insane: bool) -> bool:
+    if info.path.suffix.lower() == ".docx":
+        # Only at Insane: B5 measured .docx at Extreme, and that figure stands.
+        return insane and info.zip_png_bytes >= _DOCX_PNG_SHARE * info.size
+    return info.path.suffix.lower() not in _CHAIN_RATE_TIME_TYPES
+
+
+def _recode_kind(info: FileInfo, insane: bool = False) -> str | None:
     if info.lepton_refuses:
         return "jpeg"
     if (fmt := image_format(info)) in ("png", "gif"):
         return fmt          # B21: by content, as the planner routes them
     if info.path.suffix.lower() == ".mp3":
         return "mp3"
-    if info.expandable and info.path.suffix.lower() not in _CHAIN_RATE_TIME_TYPES:
-        return "zip"        # B20's containers, and (B29) .docx; the other B5 types keep the chain rate
+    if info.expandable and _priced_by_counts(info, insane):
+        return "zip"        # B20's containers, and (B29) a PNG-dominant .docx; the other B5 types keep the chain rate
     return None
 
 
@@ -1039,7 +1049,7 @@ def recode_cost(infos: list[FileInfo], the_plan: Plan,
     total = own_bytes = 0
     compress = verify = own_c = own_v = png_v = 0.0
     for info in piped:
-        kind = _recode_kind(info)
+        kind = _recode_kind(info, insane)
         if kind is None:
             continue
         total += info.size

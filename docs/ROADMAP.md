@@ -644,6 +644,12 @@ OSI rule comes back before anything ships.
       unbiased clock and reports `slept_s`: a row the machine slept through (`war-r1`, 6.9 h) was
       caught by its extract time and discarded. **Next: a second `.docx` corpus, one round, then lift
       `.docx` if it agrees.** ([record](benchmarks/2026-11-21-b27-b5-types.md))
+- [x] B29. ✅ **2026-11-23** - **a PNG-dominant `.docx` is priced by its counts at Insane.** A second `.docx` corpus
+  (55 files, 43.8 MB, 73% PNG) ran 1,794 s: the chain model said 892 s (2.01x too short), the container model
+  2,295 s (0.78x); the first corpus was 2.84x and 0.97x. Lifted only when `zip_png_bytes >= 0.5 * size` and only at
+  Insane (B5 measured Extreme). A review reproduced a JPEG-heavy docx priced 3x lower on no evidence (kept at the
+  chain rate) and my first version moving Extreme too (fixed, test fails on it). Record: the last section of
+  `docs/benchmarks/2026-11-21-b27-b5-types.md`.
 - [x] B28. ✅ **MERGED 2026-11-21** (`cfa2a83`) - **archives inside archives.** A `.war` of `.jar`
       files ran past the container model's high: Precomp expands the inner streams too. The probe
       counts nested members (`zip_nested_bytes`) and the estimator charges each

@@ -63,12 +63,37 @@ def test_the_expected_figure_is_within_a_band_of_both_measured_rows(corpus):
     assert measured / 1.6 <= t.expected <= measured / 0.6, (corpus, t.expected, measured)
 
 
-def test_a_docx_is_billed_at_its_own_rates_and_the_other_b5_types_are_not():
+def test_a_png_dominant_docx_is_billed_at_its_own_rates_and_the_other_b5_types_are_not():
     for name, own in (("a.docx", True), ("b.xlsx", False), ("c.pptx", False),
                       ("d.zip", False), ("e.jar", False), ("f.apk", False)):
-        info = _docx(name, 10_000_000, 30_000_000, 0, 0, 0)
+        info = _docx(name, 10_000_000, 3_000_000, 8_000_000, 0, 0)
         the_plan = plan([info], Profile.INSANE, TOOLS)
         assert (recode_cost([info], the_plan).own_bytes > 0) is own, name
+
+
+def test_a_docx_with_little_png_keeps_the_chain_rate():
+    """The container price of a JPEG-heavy docx is ~3x below the chain's, on a JPEG rate that rests on
+    one album: no evidence, so it stays at the chain's rate (the safer, higher one). The reviewer
+    of B29 reproduced this: 20 MB of JPEG went 409 s -> 138 s expected before the PNG-share rule."""
+    jpeg = _docx("photos.docx", 20_000_000, 100_000, 0, 19_800_000, 0)
+    text = _docx("memo.docx", 2_000_000, 8_000_000, 0, 0, 0)
+    for info in (jpeg, text):
+        the_plan = plan([info], Profile.INSANE, TOOLS)
+        assert recode_cost([info], the_plan).own_bytes == 0, info.path.name
+    chain = _docx("photos.xlsx", 20_000_000, 100_000, 0, 19_800_000, 0)
+    the_plan = plan([chain], Profile.INSANE, TOOLS)
+    t_chain = estimate_time([chain], the_plan, NO_PACK)
+    t_docx = estimate_time([jpeg], plan([jpeg], Profile.INSANE, TOOLS), NO_PACK)
+    assert (t_docx.low, t_docx.expected, t_docx.high) == (t_chain.low, t_chain.expected, t_chain.high)
+
+
+def test_the_png_share_is_by_bytes_at_the_threshold():
+    from excmp.estimate import _DOCX_PNG_SHARE
+    assert _DOCX_PNG_SHARE == 0.5
+    at = _docx("at.docx", 10_000_000, 5_000_000, 5_000_000, 0, 0)
+    below = _docx("below.docx", 10_000_000, 5_000_001, 4_999_999, 0, 0)
+    assert recode_cost([at], plan([at], Profile.INSANE, TOOLS)).own_bytes > 0
+    assert recode_cost([below], plan([below], Profile.INSANE, TOOLS)).own_bytes == 0
 
 
 def test_a_docx_the_probe_did_not_read_keeps_the_chain_rate():
@@ -87,10 +112,25 @@ def test_the_size_ratio_of_a_docx_is_still_b5s_measured_one():
 
 
 @pytest.mark.parametrize("profile", [Profile.NORMAL, Profile.EXTREME])
-def test_only_insane_reads_the_counts(profile):
-    infos = CORPORA["docx2"][0]()
+@pytest.mark.parametrize("corpus", sorted(CORPORA))
+def test_only_insane_reads_the_counts(profile, corpus):
+    infos = CORPORA[corpus][0]()
     bare = [FileInfo(**{**infos[0].__dict__, "zip_deflated_bytes": 0, "zip_png_bytes": 0,
                         "zip_jpeg_bytes": 0, "zip_other_bytes": 0})]
     a = estimate_time(infos, plan(infos, profile, TOOLS), NO_PACK)
     b = estimate_time(bare, plan(bare, profile, TOOLS), NO_PACK)
     assert (a.low, a.expected, a.high) == (b.low, b.expected, b.high)
+
+
+@pytest.mark.parametrize("profile", [Profile.NORMAL, Profile.EXTREME])
+@pytest.mark.parametrize("corpus", sorted(CORPORA))
+def test_below_insane_a_docx_is_priced_exactly_as_an_xlsx_with_the_same_counts(profile, corpus):
+    """B5 measured .docx at Extreme and that figure stands: the lift is Insane's alone. (The first
+    version of B29 moved Extreme too; a test that only compared files with and without counts
+    missed it. This compares against a type that is still at the chain rate.)"""
+    docx = CORPORA[corpus][0]()[0]
+    xlsx = FileInfo(**{**docx.__dict__, "path": Path("same.xlsx")})
+    a = estimate_time([docx], plan([docx], profile, TOOLS), NO_PACK)
+    b = estimate_time([xlsx], plan([xlsx], profile, TOOLS), NO_PACK)
+    assert (a.low, a.expected, a.high) == (b.low, b.expected, b.high)
+    assert recode_cost([docx], plan([docx], profile, TOOLS)).own_bytes == 0

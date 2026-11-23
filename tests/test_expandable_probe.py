@@ -148,7 +148,13 @@ _TUTORIALS_CANDIDATES = (
          r"\Programming Tutorials, Guides, Course, and Files"),
     # the 51 Office/PDF files this test reads (the first 25 of each type), nothing else
     Path(r"C:\excmp-bench\temp-copies\Programming Tutorials, Guides, Course, and Files"))
-_TUTORIALS = next((p for p in _TUTORIALS_CANDIDATES if p.is_dir()), _TUTORIALS_CANDIDATES[0])
+def _office_count(root: Path) -> int:
+    return sum(1 for ext in ("*.docx", "*.pptx", "*.xlsx", "*.pdf")
+               for _ in list(root.rglob(ext))[:25]) if root.is_dir() else 0
+
+
+# a partly deleted original must not hide the copy: take the first with the 20 files the test needs
+_TUTORIALS = next((p for p in _TUTORIALS_CANDIDATES if _office_count(p) >= 20), _TUTORIALS_CANDIDATES[0])
 
 
 @pytest.mark.skipif(not _TUTORIALS.is_dir(), reason="needs the tutorial corpus")

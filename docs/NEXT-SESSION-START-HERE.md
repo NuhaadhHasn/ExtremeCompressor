@@ -11,7 +11,7 @@
 > stop at 07:00 on 2026-11-21, so the work stopped there.
 >
 > **There is no queued phase and no owner agenda.** §3 lists what can be picked, with a
-> recommendation: **a second `.docx` corpus first**. **Read §2 first**: the machine cost more
+> recommendation: **a third nested corpus**. (B29, 2026-11-23, did the second `.docx` corpus and lifted a PNG-dominant `.docx` at Insane.) **Read §2 first**: the machine cost more
 > than the code again (a 6.9 h sleep corrupted a row that a fit then rested on).
 >
 > **The owner empties `C:\DevCache\_trash` for good, and keeps adding to it**
@@ -96,6 +96,7 @@
 | **I5b Settings switch** | Add / Remove / Repair on the Settings tab, state line inline (no modal dialog); a review made a half-installed menu say so and gave the button an accessible name that says what it does | `tests/test_i5b_settings_menu.py` |
 | **E3 frozen build + installer** | `packaging/`: PyInstaller `--onedir` (window `ExtremeCompressor.exe` and console `excmp.exe` in one folder, never onefile, never UPX), Inno Setup per user. **110 MB folder, 33.8 MB installer first**; a real silent install registered the *window* for the verb and the uninstaller left no file and no key. `PySide6-Essentials` is enough (proved from the wheel's file list). A review found **PAR2 missing from the frozen build** (fixed) | `packaging/README.md`; ROADMAP E3 |
 | **B27** | B5's six types timed at Insane, 12 rows on 10 corpora, 0 mismatches: **no change**, the chain stays (docx is the one miss, one corpus). Plus the pin-fallback warning (`find_tools` logs when a hash-pinned tool is replaced by an unverified one) | `docs/benchmarks/2026-11-21-b27-b5-types.md` |
+| **B29 docx by content** | a second `.docx` corpus (55 files, 43.8 MB, 73% PNG) ran 1,794 s: chain 2.01x too short, container 0.78x. A PNG-dominant `.docx` (PNG >= half its bytes) is now priced by its counts **at Insane only**; a docx with little PNG, and `.xlsx .pptx .zip .jar .apk`, keep the chain rate. A review caught a JPEG-heavy docx going 3x cheaper (now kept at the chain rate) and that my first version also moved Extreme (fixed, with a test that fails on it) | `tests/test_b29_docx_by_content.py` (14); benchmark doc, last section |
 | **B28 nested archives** | `zip_nested_bytes`; `_NESTED_FACTOR = 3.0` from two corpora; a zip's members are clamped to the file (a 226-byte `.war` was priced at 26,465 s) | `tests/test_b28_nested_archives.py` (25) |
 
 ---
@@ -115,7 +116,8 @@
   nothing starts after a cutoff. The quiet CPU for the suite and a rebuild is part of the plan.
 - **B5's types, measured over expected (one row each):** chain xlsx 0.89, pptx 1.64, zip 0.89, jar
   1.48, **docx 2.84 (past its high)**, apk 0.51 (below its low); container model xlsx 0.29, pptx
-  1.41, zip 0.83, jar 2.14, docx 0.97, apk 0.58. Neither wins; docx is one corpus.
+  1.41, zip 0.83, jar 2.14, docx 0.97, apk 0.58. Neither won on six types; docx, with a second corpus
+  (B29: chain 2.01, container 0.78), is now container-priced when PNG-dominant.
 - **`.zip`, `.jar` and `.apk` are not reached by B28's nested rule** (`_recode_kind` returns
   nothing for the B5 suffixes), so the nested factor is dormant for them until they are lifted.
 - **A silent uninstall with the window open returned 0, deleted the uninstall entry and left every file
@@ -219,8 +221,9 @@
   ignores it (B23). A skipped stage reports its end.
 - **The suggestion text reads Extreme as "strongest"**, so Insane's figures reach
   the table and the bar, not the recommendation sentence.
-- **B5's types (`.docx .xlsx .pptx .zip .jar .apk`) keep the chain rate at Insane**
-  although the probe now fills their counts: timed in B27, no model beat it (see above).
+- **B5's types `.xlsx .pptx .zip .jar .apk` keep the chain rate at Insane** although the probe now fills
+  their counts: timed in B27, no model beat it. **`.docx` is the exception (B29): PNG-dominant ones are
+  priced by their counts at Insane**; Normal and Extreme are unchanged.
 
 ### Still true
 
@@ -244,15 +247,9 @@
 
 Recommended order, each one branch and one merge:
 
-1. **A second `.docx` corpus** at Insane, one round (~80 min for 80 MB: B27's docx took
-   4,632 s). Docx is the one B5 type outside its chain range on the unsafe side (2.84x); the
-   container model matched it (0.97x). **The probe explains it**: the docx corpus is 71.7 MB PNG in
-   80 MB (one file, `office-docx-020`, is 46% of it), the mechanism B26 already priced; xlsx (PNG 6.1 MB
-   in a 7.2 MB corpus, container 3.4x over) and pptx (24 of 40 MB JPEG) are why a suffix rule is wrong.
-   Consider pricing a B5 type by its counts when they show a large PNG/JPEG share, not by suffix. If the
-   second corpus agrees, lift `.docx` from
-   `_PRECOMP_EXPANDABLE` in `_recode_kind` (which also arms B28's nested rule for it), and read
-   `.pptx` again (1.64x chain, 1.41x container). The corpora are in `C:\excmp-bench\b27\corpora`.
+1. ~~A second `.docx` corpus~~ **done in B29** (2026-11-23). What is left of it: `.pptx` read again (1.64x
+   chain, 1.41x container; JPEG-heavy) and a JPEG-heavy `.docx` corpus, which would let the PNG-share rule
+   be replaced by pricing every docx by its counts. `.xlsx` is PNG-light and the container is 3.4x over it.
 2. **A third nested corpus** (a `.war`/`.ear`/`.whl`/`.vsix` with a high nested share): the
    factor 3.0 rests on a real `.war` and a synthetic zip. The 1%-nested jar corpus ran 2.2x
    over the container model, so part of the gap may be a general "class-file archives cost more".

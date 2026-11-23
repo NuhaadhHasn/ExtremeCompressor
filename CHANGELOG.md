@@ -159,6 +159,10 @@ it.
 
 ### Fixed
 
+- **A PNG-dominant `.docx` is priced by its counts at Insane (B29, 2026-11-23).** A second `.docx` corpus
+  (55 files, 43.8 MB, 73% PNG) ran 1,794 s against a chain-rate estimate of 892 s; the first had been 2.84x
+  too short. The container model was 0.97x and 0.78x of the two. Lifted when PNG is at least half the file and
+  only at Insane; `.xlsx .pptx .zip .jar .apk` and a docx with little PNG keep the chain rate.
 - **Archives inside archives are priced (B28, 2026-11-21).** A `.war` of `.jar` files ran past its
   high at Insane (300 s measured against 100 s expected): Precomp expands the inner streams too.
   The central-directory probe counts nested members apart and the estimator charges each 3.0

@@ -7,9 +7,10 @@ and a JPEG-heavy `.pptx` corpus ran 1.41x over. A JPEG inside a zip pays the unz
 well as the recoder, so it is slower than the file. One factor over the three pure-JPEG corpora
 (least squares in the log) is 1.45: measured / expected then reads 0.78x, 1.23x and 1.09x.
 
-That is fitted on the very corpora asserted below, so these are regression pins, not validation. The
-check that was not fitted: the `.pptx` corpus (still priced at the chain's rate, because it is a B5
-type) comes closer, 1.41x -> 1.31x. A plain `.jpg` is untouched.
+That is fitted on the very corpora asserted below, so these are regression pins, not validation (and
+two of the three are ~12 MB, one ~60 MB). Not fitted, and only a hypothetical: the container-model price
+of the `.pptx` corpus (it stays at the chain's rate, being a B5 type) would move 1.41x -> 1.31x. A plain
+`.jpg` is untouched.
 
 The counts are what the probe read on the real files (summed over each corpus).
 """

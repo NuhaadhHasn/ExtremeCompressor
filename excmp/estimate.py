@@ -885,8 +885,9 @@ _INSANE_RECODE_VERIFY_RATE = {"jpeg": 0.312e6, "mp3": 0.221e6, "gif": 0.148e6,
 #   band and the ODT low-end pin in the tests were set after seeing those two:
 #   a regression pin, not validation. A container's PNGs can sit 5x either side
 #   of the one rate.
-# * JPEG members (``zip_jpeg_bytes``) are priced at B22's JPEG rates. Measured on
-#   ONE album of 23 stored photographs, 11.6 MB, 30.7% smaller, every file
+# * JPEG members (``zip_jpeg_bytes``) are priced at B22's JPEG rates times
+#   ``_ZIP_JPEG_SLOWDOWN`` (B30, x1.45: two more JPEG containers ran 1.53-1.77x over the
+#   plain rate). B26 first measured on ONE album of 23 stored photographs, 11.6 MB, 30.7% smaller, every file
 #   restored: 91.4 s (compress 45.8 + D9 45.6) and 198.3 s (a contended round,
 #   others 24%), against 79 s at the JPEG rates and 238 s at the chain's; so the
 #   fastest row is 1.16x the model. (First priced at the chain's rate, which put
@@ -1021,8 +1022,8 @@ def _insane_own_seconds(kind: str, info: FileInfo) -> tuple[float, float] | None
 #: B5's types whose TIME stays at the chain's rate at Insane. ``.docx`` leaves it only when PNG-dominant
 #: (B29): two independent corpora, 73% and 90% PNG by bytes, ran 2.84x and 2.01x over the chain model's
 #: expected (4,632 s and 1,794 s) and 0.97x and 0.78x of the container model's. A docx with little PNG
-#: has no evidence behind the container price (the JPEG-in-zip rate rests on one album, and the one
-#: JPEG-heavy B5 corpus, .pptx, ran 1.41x over it), so it keeps the chain rate. ``.xlsx`` and ``.pptx``
+#: has no evidence behind the container price (the JPEG-in-zip rate, B30's x1.45, rests on three JPEG
+#: containers, none a docx, and the JPEG-heavy .pptx corpora disagree 2.5-3x), so it keeps the chain rate. ``.xlsx`` and ``.pptx``
 #: stay: one corpus each, and the container model is no better for them. The planner's piping and the
 #: SIZE ratio still use ``_PRECOMP_EXPANDABLE``, which this does not change.
 _CHAIN_RATE_TIME_TYPES = _PRECOMP_EXPANDABLE

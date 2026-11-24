@@ -165,8 +165,9 @@
   its `.pcf`, priced about 2x low.
 - **"Out of sample" is true only for the PNG rate** (B22's corpora). The 1.7x band
   and the ODT low-end pin in the tests were set after seeing the results.
-- **One album is one corpus** (JPEGs in a zip ran at B22's JPEG rate within 16%;
-  its contended round was 2.2x). Everything about JPEG-in-zip rests on it.
+- **JPEG-in-zip rests on three corpora (B30)**: the first album ran within 16% of B22's JPEG rate, a second
+  album 1.77x and six JPEG EPUBs 1.53x over it, so a JPEG in a container is priced x1.45 (a fit on those three,
+  two of them ~12 MB; a regression pin, not validation).
 - **The self-test (D9) phase from a row's own events is not `extract_s`**: 20%
   longer on the AAB row, within 7% on eight others, 0.65x on `epub-r2`.
   `rows`' `events` have the phase boundary (first `verify` event).
@@ -290,7 +291,7 @@ Recommended order, each one branch and one merge:
 
 - **A zip container at Insane is priced by its central-directory counts**
   (B26): deflated members' uncompressed size at 0.385 / 0.360 MB/s, PNG members at
-  B22's PNG rate, JPEG members at its JPEG rate, the rest at the chain's; **all
+  B22's PNG rate, JPEG members at its JPEG rate x1.45 (B30), the rest at the chain's; **all
   counts 0 keeps the old pricing**; Extreme is untouched; **B5's types keep the
   chain rate** (timed in B27: no model beat it).
 - **A header may not claim more than deflate can make** (1032:1), **and a zip's members may not

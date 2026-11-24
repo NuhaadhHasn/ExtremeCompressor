@@ -361,11 +361,11 @@ def test_a_container_costs_what_it_expands_to_not_what_it_weighs():
 
 def test_a_container_of_jpegs_and_one_small_page_is_not_free():
     """The review's regression: 448 s on main, 2.0 s with the images in no count.
-    Priced as JPEGs (B22's rates) it is ~140 s; the measured 11.6 MB album ran
-    at 0.8x of that model's seconds."""
+    Priced as JPEGs (B22's rates, x B30's 1.45 inside a container) it is ~200 s; the
+    band is wide on purpose (it sat 0.4 s from its old ceiling after B30)."""
     info = _container("album.epub", 20_000_000, 5_007, 0, jpeg=19_990_000)
     t = estimate_time([info], plan([info], Profile.INSANE, TOOLS), NO_PACK)
-    assert 100 <= t.expected <= 200, t.expected
+    assert 100 <= t.expected <= 280, t.expected
     assert t.low > 30 and t.high > t.expected
 
 

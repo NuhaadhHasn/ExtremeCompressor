@@ -97,6 +97,7 @@
 | **E3 frozen build + installer** | `packaging/`: PyInstaller `--onedir` (window `ExtremeCompressor.exe` and console `excmp.exe` in one folder, never onefile, never UPX), Inno Setup per user. **110 MB folder, 33.8 MB installer first**; a real silent install registered the *window* for the verb and the uninstaller left no file and no key. `PySide6-Essentials` is enough (proved from the wheel's file list). A review found **PAR2 missing from the frozen build** (fixed) | `packaging/README.md`; ROADMAP E3 |
 | **B27** | B5's six types timed at Insane, 12 rows on 10 corpora, 0 mismatches: **no change**, the chain stays (docx is the one miss, one corpus). Plus the pin-fallback warning (`find_tools` logs when a hash-pinned tool is replaced by an unverified one) | `docs/benchmarks/2026-11-21-b27-b5-types.md` |
 | **B29 docx by content** | a second `.docx` corpus (55 files, 43.8 MB, 73% PNG) ran 1,794 s: chain 2.01x too short, container 0.78x. A PNG-dominant `.docx` (PNG >= half its bytes) is now priced by its counts **at Insane only**; a docx with little PNG, and `.xlsx .pptx .zip .jar .apk`, keep the chain rate. A review caught a JPEG-heavy docx going 3x cheaper (now kept at the chain rate) and that my first version also moved Extreme (fixed, with a test that fails on it) | `tests/test_b29_docx_by_content.py` (14); benchmark doc, last section |
+| **B30 four more corpora** | nested3 (122 MB) 1.10x: the nested factor 3.0 stands on a third corpus. A second album (1.77x) and six JPEG EPUBs (1.53x) ran slower than B26's JPEG rate: **a JPEG inside a container is now priced x1.45** (`_ZIP_JPEG_SLOWDOWN`, fitted on three pure-JPEG corpora). A second `.pptx` corpus ran 0.52x of the chain model (the first was 1.64x the other way): `.pptx` is not lifted. A second PNG-heavy container (round 2, quiet) 0.67x: PNG rate unchanged. A slept round 1 was discarded | `tests/test_b30_zip_jpeg_rate.py`; benchmark doc, last section |
 | **B28 nested archives** | `zip_nested_bytes`; `_NESTED_FACTOR = 3.0` from two corpora; a zip's members are clamped to the file (a 226-byte `.war` was priced at 26,465 s) | `tests/test_b28_nested_archives.py` (25) |
 
 ---
@@ -164,8 +165,9 @@
   its `.pcf`, priced about 2x low.
 - **"Out of sample" is true only for the PNG rate** (B22's corpora). The 1.7x band
   and the ODT low-end pin in the tests were set after seeing the results.
-- **One album is one corpus** (JPEGs in a zip ran at B22's JPEG rate within 16%;
-  its contended round was 2.2x). Everything about JPEG-in-zip rests on it.
+- **JPEG-in-zip rests on three corpora (B30)**: the first album ran within 16% of B22's JPEG rate, a second
+  album 1.77x and six JPEG EPUBs 1.53x over it, so a JPEG in a container is priced x1.45 (a fit on those three,
+  two of them ~12 MB; a regression pin, not validation).
 - **The self-test (D9) phase from a row's own events is not `extract_s`**: 20%
   longer on the AAB row, within 7% on eight others, 0.65x on `epub-r2`.
   `rows`' `events` have the phase boundary (first `verify` event).
@@ -250,12 +252,12 @@ Recommended order, each one branch and one merge:
 1. ~~A second `.docx` corpus~~ **done in B29** (2026-11-23). What is left of it: `.pptx` read again (1.64x
    chain, 1.41x container; JPEG-heavy) and a JPEG-heavy `.docx` corpus, which would let the PNG-share rule
    be replaced by pricing every docx by its counts. `.xlsx` is PNG-light and the container is 3.4x over it.
-2. **A third nested corpus** (a `.war`/`.ear`/`.whl`/`.vsix` with a high nested share): the
-   factor 3.0 rests on a real `.war` and a synthetic zip. The 1%-nested jar corpus ran 2.2x
-   over the container model, so part of the gap may be a general "class-file archives cost more".
+2. ~~A third nested corpus~~ **done in B30** (1.10x). A `.whl`/`.vsix`/real `.ear` would still be a better test of the
+   class-file-archive gap (the 1%-nested jar corpus ran 2.2x over the container model).
 3. **Windows 11's top-level menu** needs a signed sparse MSIX, so it waits for E4 (code signing).
    Not done and not possible without a certificate: **E4 signing, E5 auto-update, an `.ico`**.
-4. **A second JPEG-in-zip corpus and a second PNG-heavy container** (B26's rates each rest on one).
+4. ~~A second JPEG-in-zip corpus and a second PNG-heavy container~~ **done in B30**: the JPEG rate moved (x1.45), the
+   PNG rate did not (0.67x). What is left: a JPEG-heavy `.docx`, and why two `.pptx` corpora disagree 2.5-3x.
 5. **The estimator's per-file limits** (§4).
 6. **Anything the owner asks for.** A rebuilt installer is `packaging\build.cmd` then
    `python packaging\smoke_test.py` (it writes the real Explorer keys and refuses if they exist).
@@ -289,7 +291,7 @@ Recommended order, each one branch and one merge:
 
 - **A zip container at Insane is priced by its central-directory counts**
   (B26): deflated members' uncompressed size at 0.385 / 0.360 MB/s, PNG members at
-  B22's PNG rate, JPEG members at its JPEG rate, the rest at the chain's; **all
+  B22's PNG rate, JPEG members at its JPEG rate x1.45 (B30), the rest at the chain's; **all
   counts 0 keeps the old pricing**; Extreme is untouched; **B5's types keep the
   chain rate** (timed in B27: no model beat it).
 - **A header may not claim more than deflate can make** (1032:1), **and a zip's members may not

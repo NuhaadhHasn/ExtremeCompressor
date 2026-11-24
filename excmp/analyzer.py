@@ -175,8 +175,9 @@ class FileInfo:
     #:   one's own deflate into pixels (6-106x per byte, which a directory
     #:   cannot show), so they are priced as PNGs.
     #: * ``zip_jpeg_bytes``: what its JPEG members occupy, by name. packJPG
-    #:   recodes them; priced as the JPEGs they are (an album of 23 photographs
-    #:   ran within 16% of B22's JPEG rate).
+    #:   recodes them; priced as the JPEGs they are, x1.45 inside a container
+    #:   (B30; the first album alone ran within 16% of B22's rate, two more JPEG
+    #:   containers 1.53-1.77x over it).
     #: * ``zip_other_bytes``: what everything else occupies in the zip - GIF
     #:   members, stored members, other methods. Not expanded; priced at the
     #:   chain's rate (review: a container of JPEGs and one small deflated page

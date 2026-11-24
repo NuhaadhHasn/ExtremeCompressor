@@ -109,7 +109,7 @@ residual bytes taken out at the other rates, byte-weighted:
   eight other rows within 7%, on `epub-r2` 226 against 350. The split by events
   (0.385 / 0.360) is the one the progress bar's phases need; split by `extract_s`
   it was 0.331 / 0.425. The sums agree, so the ranges do not move much.
-- **JPEG members** are priced at B22's JPEG rates. One album of 23 stored
+- **JPEG members** are priced at B22's JPEG rates (**B30 multiplies that by 1.45** for a JPEG inside a container). One album of 23 stored
   photographs (11.6 MB, ordinary JPEGs from the design corpus, plus a tiny
   deflated page) ran 91.4 s (compress 45.8 + D9 45.6) fastest and 198.3 s
   contended, against 79 s at the JPEG rates and 238 s at the chain's; the model

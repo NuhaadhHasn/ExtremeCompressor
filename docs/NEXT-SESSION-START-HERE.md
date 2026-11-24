@@ -364,7 +364,8 @@ Recommended order, each one branch and one merge:
 ## Corpus copies (2026-11-22)
 
 The owner deletes the original `Programs` and tutorials folders and empties `_trash`. Verified copies sit in
-`C:\excmp-bench\temp-copies\` (`Programs\` 34 files; the 51 Office/PDF tutorial files the probe test reads;
-`trash-new\` 576 new samples incl. 55 new .docx for the second docx corpus). The tests and `estimate_report.py`
-fall back to them (originals win while they exist); `corpus_guard.py` watches them. **Delete `temp-copies` only
-when the owner says the work is finalized** (the tests then skip). The opt-in 57k-file React walk is not copied.
+`C:\excmp-bench\temp-copies\` (`Programs\` 34 files; the 51 Office/PDF tutorial files the probe test reads). The
+2 GB of other samples that sat beside them were moved to `_trash` on 2026-11-25; the second docx corpus is now
+`C:\excmp-bench\b29\corpora\docx2` (and the other B29/B30 corpora are in `b29\corpora`). The tests and `estimate_report.py`
+fall back to them (originals win while they exist); `corpus_guard.py` watches them. **Keep `temp-copies`**: the original
+`Programs` is half deleted (25 of 34 files on 2026-11-25) and the tests read these copies (without them they skip). The opt-in 57k-file React walk is not copied.

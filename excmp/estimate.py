@@ -910,7 +910,8 @@ _ZIP_PNG_VERIFY_LOW = 1.6
 # its extract took 277 s against 96 s on round 2, and the fit built on it was wrong.) Only a container
 # priced by its counts (zip kind) carries nested bytes; `.zip`, `.jar`, `.apk`, `.xlsx`, `.pptx` and a
 # docx with little PNG keep the chain rate (`_recode_kind`; a PNG-dominant `.docx` is lifted by B29), so this reaches `.war`, `.ear`, `.aar`, `.nupkg`, `.whl` and
-# other zips under another name. Record: docs/benchmarks/2026-11-21-b27-b5-types.md.
+# other zips under another name. A third corpus (B30: four zips, 45.6 MB nested, copied as `.war`) ran
+# 2,373 s against 2,154 s expected at 3.0 (1.10x): the factor stands. Record: docs/benchmarks/2026-11-21-b27-b5-types.md.
 _NESTED_FACTOR = 3.0
 
 

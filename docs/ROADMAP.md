@@ -650,6 +650,11 @@ OSI rule comes back before anything ships.
   Insane (B5 measured Extreme). A review reproduced a JPEG-heavy docx priced 3x lower on no evidence (kept at the
   chain rate) and my first version moving Extreme too (fixed, test fails on it). Record: the last section of
   `docs/benchmarks/2026-11-21-b27-b5-types.md`.
+- [x] B30. ✅ **2026-11-24** - **four more corpora at Insane.** Nested factor 3.0 stands (1.10x on a third corpus). A JPEG inside
+  a container is priced x1.45 (a second album ran 1.77x and six JPEG EPUBs 1.53x over B26's rate; fitted on the three
+  pure-JPEG corpora). `.pptx` not lifted (a second corpus ran 0.52x of the chain model, the first 1.64x the other way).
+  PNG rate unchanged (0.67x on 61 MB). A slept row (png2 round 1) was discarded: an unbiased clock is not enough.
+  Record: the last section of `docs/benchmarks/2026-11-21-b27-b5-types.md`.
 - [x] B28. ✅ **MERGED 2026-11-21** (`cfa2a83`) - **archives inside archives.** A `.war` of `.jar`
       files ran past the container model's high: Precomp expands the inner streams too. The probe
       counts nested members (`zip_nested_bytes`) and the estimator charges each

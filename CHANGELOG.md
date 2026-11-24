@@ -159,6 +159,10 @@ it.
 
 ### Fixed
 
+- **A JPEG inside a container is priced 1.45x slower than a JPEG file (B30, 2026-11-24).** A second album ran 1.77x
+  and six JPEG EPUBs 1.53x over the old rate; one factor fitted on the three pure-JPEG corpora. Plain `.jpg` files are
+  unchanged. Three more corpora were measured and changed nothing (nested archives 1.10x, a second `.pptx`, a second PNG-heavy
+  container 0.67x).
 - **A PNG-dominant `.docx` is priced by its counts at Insane (B29, 2026-11-23).** A second `.docx` corpus
   (55 files, 43.8 MB, 73% PNG) ran 1,794 s against a chain-rate estimate of 892 s; the first had been 2.84x
   too short. The container model was 0.97x and 0.78x of the two. Lifted when PNG is at least half the file and

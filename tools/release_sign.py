@@ -16,11 +16,16 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from excmp import updater  # noqa: E402
 
 KEY_PATH = Path(os.environ.get("EXCMP_UPDATE_KEY", Path.home() / ".excmp" / "update-signing.key"))
 
@@ -38,6 +43,11 @@ def keygen(path: Path = KEY_PATH) -> str:
     path.write_text(raw.hex() + "\n", encoding="ascii")
     try:
         os.chmod(path, 0o600)
+        if sys.platform == "win32":      # chmod only sets the read-only flag there: drop inherited access
+            user = os.environ.get("USERNAME", "")
+            if user:
+                subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                               capture_output=True, check=False)
     except OSError:
         pass
     return public_hex(priv)
@@ -49,7 +59,13 @@ def load_key(path: Path = KEY_PATH) -> Ed25519PrivateKey:
     return Ed25519PrivateKey.from_private_bytes(bytes.fromhex(path.read_text(encoding="ascii").strip()))
 
 
+_INSTALLER = re.compile(r"ExtremeCompressor-\d+(\.\d+){1,3}-setup\.exe")
+
+
 def write_sums(installer: Path) -> Path:
+    if not _INSTALLER.fullmatch(installer.name):
+        raise SystemExit(f"{installer.name} is not named ExtremeCompressor-<version>-setup.exe: the app looks "
+                         "for exactly that name in the release")
     h = hashlib.sha256()
     with open(installer, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -59,9 +75,20 @@ def write_sums(installer: Path) -> Path:
     return out
 
 
-def sign_file(sums: Path, key_path: Path = KEY_PATH) -> Path:
+def sign_file(sums: Path, key_path: Path = KEY_PATH, expect_public: bytes | None = None) -> Path:
+    """Sign ``sums`` and check the signature against the key the APP has built in (``expect_public``,
+    default :data:`excmp.updater.PUBLIC_KEY`): a wrong or replaced key would otherwise make a release that
+    every installed copy silently refuses."""
+    expect = updater.PUBLIC_KEY if expect_public is None else expect_public
+    message = sums.read_bytes()
+    signature = load_key(key_path).sign(message).hex()
+    try:
+        updater.verify_signature(message, signature, expect)
+    except updater.UpdateError:
+        raise SystemExit("this key does not match PUBLIC_KEY in excmp/updater.py: a release signed with it "
+                         "would be refused by every installed copy") from None
     out = sums.parent / (sums.name + ".sig")
-    out.write_text(load_key(key_path).sign(sums.read_bytes()).hex() + "\n", encoding="ascii")
+    out.write_text(signature + "\n", encoding="ascii")
     return out
 
 

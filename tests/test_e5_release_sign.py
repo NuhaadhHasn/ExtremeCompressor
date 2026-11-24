@@ -27,7 +27,7 @@ def test_what_the_tool_signs_the_updater_accepts(tool, tmp_path):
     installer = tmp_path / "ExtremeCompressor-0.2.0-setup.exe"
     installer.write_bytes(b"MZ" + b"installer" * 1000)
     sums = tool.write_sums(installer)
-    sig = tool.sign_file(sums, key)
+    sig = tool.sign_file(sums, key, expect_public=bytes.fromhex(pub_hex))
     updater.verify_signature(sums.read_bytes(), sig.read_text(encoding="ascii"), bytes.fromhex(pub_hex))
     table = updater.parse_sums(sums.read_text(encoding="ascii"))
     import hashlib
@@ -58,3 +58,22 @@ def test_the_private_key_is_not_in_the_repo():
     assert hits == []
     for p in (ROOT / "excmp" / "updater.py", ROOT / "tools" / "release_sign.py"):
         assert not re.search(r"private_key\s*=\s*bytes\.fromhex", p.read_text(encoding="utf-8"))
+
+
+def test_a_key_that_is_not_the_apps_key_is_refused_before_a_release_is_made(tool, tmp_path):
+    """The mistake that would otherwise ship a release every installed copy silently refuses."""
+    key = tmp_path / "k"
+    tool.keygen(key)
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_bytes(b"x")
+    with pytest.raises(SystemExit, match="PUBLIC_KEY"):
+        tool.sign_file(sums, key)                          # checked against the key built into the app
+
+
+@pytest.mark.parametrize("name", ["setup.exe", "ExtremeCompressor-setup.exe", "ExtremeCompressor-0.2.0.exe",
+                                  "ExtremeCompressor-v0.2.0-setup.exe", "evil-0.2.0-setup.exe"])
+def test_an_installer_the_app_would_not_look_for_is_refused(tool, tmp_path, name):
+    f = tmp_path / name
+    f.write_bytes(b"x")
+    with pytest.raises(SystemExit, match="named"):
+        tool.write_sums(f)

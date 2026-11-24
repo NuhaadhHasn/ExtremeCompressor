@@ -13,11 +13,12 @@ Nothing here blocks the GUI, shows a modal dialog or touches the disk outside th
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, QRunnable, QSettings, QThreadPool, Signal
+from PySide6.QtCore import QObject, QSettings, Signal
 
 from excmp import updater
 
@@ -29,20 +30,21 @@ class _Signals(QObject):
     done = Signal(object)          # (kind, payload)
 
 
-class _Call(QRunnable):
-    def __init__(self, fn: Callable[[], object], kind: str, signals: _Signals) -> None:
-        super().__init__()
-        self._fn, self._kind, self._signals = fn, kind, signals
-        self.setAutoDelete(True)
-
-    def run(self) -> None:
-        try:
-            result = (self._kind, self._fn(), None)
-        except updater.UpdateError as exc:
-            result = (self._kind, None, str(exc))
-        except Exception as exc:                                   # noqa: BLE001 - never let a thread die silently
-            result = (self._kind, None, f"unexpected error: {exc}")
-        self._signals.done.emit(result)
+def _run(fn: Callable[[], object], kind: str, signals: _Signals) -> None:
+    """Run ``fn`` on a DAEMON thread (a QThreadPool would keep the process alive until a stuck download ends)
+    and report the outcome as a signal, which Qt delivers on the GUI thread."""
+    try:
+        result = (kind, fn(), None)
+    except updater.Cancelled:
+        return
+    except updater.UpdateError as exc:
+        result = (kind, None, str(exc))
+    except Exception as exc:                                       # noqa: BLE001 - never let a thread die silently
+        result = (kind, None, f"unexpected error: {type(exc).__name__}")
+    try:
+        signals.done.emit(result)
+    except RuntimeError:                                           # the window is already gone
+        pass
 
 
 class UpdateController(QObject):
@@ -63,8 +65,7 @@ class UpdateController(QObject):
         self.info: updater.UpdateInfo | None = None
         self.installer: Path | None = None
         self._silent = False
-        self._pool = QThreadPool(self)
-        self._pool.setMaxThreadCount(1)
+        self._cancel = threading.Event()
         self._signals = _Signals(self)
         self._signals.done.connect(self._finished)
 
@@ -76,8 +77,7 @@ class UpdateController(QObject):
             return False
         self._silent = silent
         self._set("checking", "" if silent else "Checking…")
-        QSettings().setValue(LAST_CHECK_KEY, time.time())
-        self._pool.start(_Call(lambda: self._check(self.current), "check", self._signals))
+        self._start(lambda: self._check(self.current, cancelled=self._cancel.is_set), "check")
         return True
 
     def install(self) -> bool:
@@ -92,14 +92,23 @@ class UpdateController(QObject):
         self._set("downloading", f"Downloading {info.version}…")
 
         def work():
-            return self._download(info, dest, progress=lambda done, total: self.progress.emit(done, total))
-        self._pool.start(_Call(work, "download", self._signals))
+            return self._download(info, dest, progress=lambda done, total: self.progress.emit(done, total),
+                                  cancelled=self._cancel.is_set)
+        self._start(work, "download")
         return True
+
+    def cancel(self) -> None:
+        """Stop whatever is running (the window is closing). The thread notices within one read."""
+        self._cancel.set()
 
     def due(self) -> bool:
         return updater.due(QSettings().value(LAST_CHECK_KEY))
 
     # -- internals ---------------------------------------------------------------------------------
+    def _start(self, fn: Callable[[], object], kind: str) -> None:
+        threading.Thread(target=_run, args=(fn, kind, self._signals), daemon=True,
+                         name=f"update-{kind}").start()
+
     def _set(self, state: str, message: str) -> None:
         self.state, self.message = state, message
         self.stateChanged.emit()
@@ -110,6 +119,7 @@ class UpdateController(QObject):
             self._set("error", "" if (self._silent and kind == "check") else error)
             return
         if kind == "check":
+            QSettings().setValue(LAST_CHECK_KEY, time.time())      # only an answered check counts as a look
             if payload is None:
                 self.info = None
                 self._set("uptodate", "" if self._silent else f"You have the latest version ({self.current}).")

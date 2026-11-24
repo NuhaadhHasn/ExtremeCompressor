@@ -29,7 +29,7 @@ def _info(version="0.2.0"):
 
 
 def _controller(qtbot, check=None, download=None, current="0.1.0", tmp_path=None):
-    c = UpdateController(check=check or (lambda cur: None), download=download or (lambda info, dest, progress=None: tmp_path / "setup.exe"),
+    c = UpdateController(check=check or (lambda cur, cancelled=None: None), download=download or (lambda info, dest, progress=None, cancelled=None: tmp_path / "setup.exe"),
                          current=current, dest=tmp_path)
     return c
 
@@ -54,14 +54,14 @@ def test_a_check_that_finds_nothing_says_so(qtbot, tmp_path):
 
 
 def test_a_check_that_finds_an_update_announces_it(qtbot, tmp_path):
-    c = _controller(qtbot, check=lambda cur: _info(), tmp_path=tmp_path)
+    c = _controller(qtbot, check=lambda cur, cancelled=None: _info(), tmp_path=tmp_path)
     with qtbot.waitSignal(c.available, timeout=5000) as sig:
         c.check()
     assert sig.args[0].version == "0.2.0" and c.state == "available" and "0.2.0" in c.message
 
 
 def test_a_failed_check_is_an_error_message_not_an_exception(qtbot, tmp_path):
-    def boom(cur):
+    def boom(cur, cancelled=None):
         raise UpdateError("could not reach the update server: offline")
     c = _controller(qtbot, check=boom, tmp_path=tmp_path)
     c.check()
@@ -70,7 +70,7 @@ def test_a_failed_check_is_an_error_message_not_an_exception(qtbot, tmp_path):
 
 
 def test_an_unexpected_exception_in_the_thread_is_caught_too(qtbot, tmp_path):
-    def boom(cur):
+    def boom(cur, cancelled=None):
         raise RuntimeError("bug")
     c = _controller(qtbot, check=boom, tmp_path=tmp_path)
     c.check()
@@ -84,7 +84,7 @@ def test_a_silent_check_leaves_no_text_for_uptodate_or_error(qtbot, tmp_path):
     _wait(qtbot, c, "uptodate")
     assert c.message == ""
 
-    def boom(cur):
+    def boom(cur, cancelled=None):
         raise UpdateError("offline")
     c2 = _controller(qtbot, check=boom, tmp_path=tmp_path)
     c2.check(silent=True)
@@ -93,7 +93,7 @@ def test_a_silent_check_leaves_no_text_for_uptodate_or_error(qtbot, tmp_path):
 
 
 def test_install_downloads_then_announces_the_verified_file(qtbot, tmp_path):
-    c = _controller(qtbot, check=lambda cur: _info(), tmp_path=tmp_path)
+    c = _controller(qtbot, check=lambda cur, cancelled=None: _info(), tmp_path=tmp_path)
     c.check()
     _wait(qtbot, c, "available")
     with qtbot.waitSignal(c.readyToLaunch, timeout=5000) as sig:
@@ -109,10 +109,10 @@ def test_install_before_a_check_does_nothing(qtbot, tmp_path):
 def test_a_failed_download_is_reported_and_can_be_retried(qtbot, tmp_path):
     calls = []
 
-    def dl(info, dest, progress=None):
+    def dl(info, dest, progress=None, cancelled=None):
         calls.append(1)
         raise UpdateError("the downloaded installer's SHA-256 does not match the signed checksum")
-    c = _controller(qtbot, check=lambda cur: _info(), download=dl, tmp_path=tmp_path)
+    c = _controller(qtbot, check=lambda cur, cancelled=None: _info(), download=dl, tmp_path=tmp_path)
     c.check()
     _wait(qtbot, c, "available")
     c.install()
@@ -123,7 +123,7 @@ def test_a_failed_download_is_reported_and_can_be_retried(qtbot, tmp_path):
 def test_two_checks_do_not_overlap(qtbot, tmp_path):
     gate = []
 
-    def slow(cur):
+    def slow(cur, cancelled=None):
         while not gate:
             time.sleep(0.01)
         return None
@@ -165,7 +165,7 @@ def test_turning_the_daily_look_off_is_remembered(qtbot, tmp_path):
 
 
 def test_the_button_checks_then_offers_the_download(qtbot, tmp_path):
-    ctrl = _controller(qtbot, check=lambda cur: _info(), tmp_path=tmp_path)
+    ctrl = _controller(qtbot, check=lambda cur, cancelled=None: _info(), tmp_path=tmp_path)
     tab = _tab(qtbot, ctrl)
     tab.update_button.click()
     _wait(qtbot, ctrl, "available")
@@ -179,7 +179,7 @@ def test_the_button_checks_then_offers_the_download(qtbot, tmp_path):
 def test_the_button_is_disabled_while_checking(qtbot, tmp_path):
     gate = []
 
-    def slow(cur):
+    def slow(cur, cancelled=None):
         while not gate:
             time.sleep(0.01)
         return None
@@ -193,7 +193,7 @@ def test_the_button_is_disabled_while_checking(qtbot, tmp_path):
 
 
 def test_an_error_is_said_inline_without_a_dialog(qtbot, tmp_path):
-    def boom(cur):
+    def boom(cur, cancelled=None):
         raise UpdateError("could not reach the update server: offline")
     ctrl = _controller(qtbot, check=boom, tmp_path=tmp_path)
     tab = _tab(qtbot, ctrl)
@@ -210,7 +210,7 @@ def win(qtbot, tmp_path, monkeypatch):
     from gui.mainwindow import MainWindow
     w = MainWindow()
     qtbot.addWidget(w)
-    ctrl = _controller(qtbot, check=lambda cur: _info(), tmp_path=tmp_path)
+    ctrl = _controller(qtbot, check=lambda cur, cancelled=None: _info(), tmp_path=tmp_path)
     w.settings_tab.updates.stateChanged.disconnect()
     w.settings_tab.updates.available.disconnect()
     w.settings_tab.updates.readyToLaunch.disconnect()
@@ -285,3 +285,57 @@ def test_a_bare_window_never_starts_a_check_by_itself(qtbot, monkeypatch):
     qtbot.addWidget(w)
     qtbot.wait(300)
     assert calls == []
+
+
+def test_a_failed_check_does_not_count_as_a_look(qtbot, tmp_path):
+    """An offline start must not suppress the next try for 24 hours."""
+    def boom(cur, cancelled=None):
+        raise UpdateError("offline")
+    c = UpdateController(check=boom, current="0.1.0", dest=tmp_path)
+    c.check()
+    _wait(qtbot, c, "error")
+    assert c.due()
+
+
+def test_a_cancelled_check_delivers_nothing(qtbot, tmp_path):
+    started, release = [], []
+
+    def slow(cur, cancelled=None):
+        started.append(1)
+        while not release:
+            if cancelled and cancelled():
+                raise updater.Cancelled("cancelled")
+            time.sleep(0.01)
+        return None
+    c = UpdateController(check=slow, current="0.1.0", dest=tmp_path)
+    c.check()
+    qtbot.waitUntil(lambda: bool(started), timeout=3000)
+    c.cancel()
+    qtbot.wait(300)
+    assert c.state == "checking"              # no result was delivered after the cancel
+
+
+def test_the_state_label_never_renders_server_text_as_markup(qtbot, tmp_path):
+    from PySide6.QtCore import Qt
+
+    def boom(cur, cancelled=None):
+        raise UpdateError("<a href='http://evil.example'>click</a>")
+    ctrl = _controller(qtbot, check=boom, tmp_path=tmp_path)
+    tab = _tab(qtbot, ctrl)
+    assert tab.update_state.textFormat() == Qt.TextFormat.PlainText
+    tab.update_button.click()
+    _wait(qtbot, ctrl, "error")
+    assert "<a href" in tab.update_state.text()          # shown as text, not turned into a link
+
+
+def test_an_update_never_replaces_a_warning_already_on_screen(qtbot, win):
+    w, ctrl = win
+    w.banner.show_message("A job is still running.", tone="warn")
+    w._update_available(_info())
+    assert "job is still running" in w.banner._text.text()
+
+
+def test_closing_the_window_cancels_a_running_update(qtbot, win):
+    w, ctrl = win
+    w.close()
+    assert ctrl._cancel.is_set()

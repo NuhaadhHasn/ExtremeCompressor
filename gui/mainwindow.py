@@ -1565,6 +1565,9 @@ class MainWindow(QMainWindow):
 
     def _update_available(self, info) -> None:
         updates = self.settings_tab.updates
+        if not self.banner.isHidden() and self.banner.property("tone") == "warn":
+            return        # never replace a warning the user may need (a running job's); the Settings row
+                          # already says an update is waiting. A plain info note (the intro) may give way.
         self.banner.show_message(
             self.tr("Version %s is available.") % info.version, tone="info",
             actions=[(self.tr("Download and install"), updates.install),
@@ -1600,6 +1603,7 @@ class MainWindow(QMainWindow):
                 closable=False)
             event.ignore()
             return
+        self.settings_tab.updates.cancel()
         self.settings_tab.save()
         QSettings().setValue("window/geometry", self.saveGeometry())
         self.queue.shutdown()

@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Signal
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QFileDialog, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QScrollArea,
                                QSpinBox, QVBoxLayout, QWidget)
@@ -202,6 +202,7 @@ class SettingsTab(QScrollArea):
         self.update_button.clicked.connect(self._update_clicked)
         self.update_state = QLabel(self.tr("Version %s.") % self.updates.current, page)
         self.update_state.setWordWrap(True)
+        self.update_state.setTextFormat(Qt.TextFormat.PlainText)      # server text is never markup
         self.update_state.setStyleSheet("font-weight: 600;")
         update_control = QWidget(page)
         update_box = QVBoxLayout(update_control)

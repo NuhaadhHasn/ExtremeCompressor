@@ -351,3 +351,117 @@ def test_due_checks_at_most_once_a_day_and_survives_nonsense():
     assert not due(1_000_000.0 - 3600, now=1_000_000.0)
     assert due(1_000_000.0 - 25 * 3600, now=1_000_000.0)
     assert due(1_000_000.0 + 10 * 3600, now=1_000_000.0)       # a clock that moved back is not "never again"
+
+
+# -- the review's hardening --------------------------------------------------------------------------
+
+class _Trickle:
+    """A server that sends one byte at a time: every read succeeds, so only an overall deadline stops it."""
+
+    def __init__(self, size=100_000):
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", str(size))
+                self.end_headers()
+                try:
+                    for _ in range(size):
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                        import time as _t
+                        _t.sleep(0.05)
+                except OSError:
+                    pass
+
+        class _S(ThreadingHTTPServer):
+            daemon_threads = True
+            block_on_close = False          # a slow handler must not hold the test hostage
+        self.httpd = _S(("127.0.0.1", 0), H)
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def test_a_server_that_trickles_bytes_hits_the_overall_deadline_for_a_check(monkeypatch):
+    import time
+    monkeypatch.setattr(updater, "MAX_CHECK_SECONDS", 0.6)
+    t = _Trickle()
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(UpdateError, match="(?i)too slow"):
+            check_for_update("0.1.0", api_url=t.base + "/api/latest", policy=_policy(), timeout=5)
+        assert time.monotonic() - t0 < 4
+    finally:
+        t.close()
+
+
+def test_a_trickling_download_hits_the_overall_deadline(server, tmp_path):
+    import time
+    _priv, pub, _p = _release(server, "0.2.0")
+    info = check_for_update("0.1.0", api_url=server.base + "/api/latest", policy=_policy())
+    t = _Trickle(size=len(_p))
+    try:
+        from dataclasses import replace
+        slow = replace(info, installer_url=t.base + "/x.exe")
+        t0 = time.monotonic()
+        with pytest.raises(UpdateError, match="(?i)too slow"):
+            download_update(slow, tmp_path, public_key=pub, policy=_policy(), timeout=5, max_seconds=0.8)
+        assert time.monotonic() - t0 < 4
+        assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+    finally:
+        t.close()
+
+
+def test_a_cancel_stops_the_download_and_leaves_nothing(server, tmp_path):
+    _priv, pub, _p = _release(server, "0.2.0")
+    info = check_for_update("0.1.0", api_url=server.base + "/api/latest", policy=_policy())
+    with pytest.raises(updater.Cancelled):
+        download_update(info, tmp_path, public_key=pub, policy=_policy(), cancelled=lambda: True)
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+
+
+def test_a_cancel_stops_a_check(server):
+    _release(server, "0.2.0")
+    with pytest.raises(updater.Cancelled):
+        check_for_update("0.1.0", api_url=server.base + "/api/latest", policy=_policy(), cancelled=lambda: True)
+
+
+@pytest.mark.parametrize("body", ids=["5000-digit-tag", "unhashable-asset-name", "deeply-nested", "junk-assets"], argvalues=[
+    b'{"tag_name": "v' + b"9" * 5000 + b'", "assets": []}',                       # a 5000-digit tag
+    b'{"tag_name": "v9.9.9", "assets": [{"name": ["x"], "browser_download_url": "http://127.0.0.1/"}]}',
+    b"[" * 100000,                                                                # absurdly nested JSON
+    b'{"tag_name": "v9.9.9", "assets": [1, null, {"name": 5}]}',
+])
+def test_hostile_json_is_an_update_error_never_another_exception(server, body):
+    server.files["/api/latest"] = body
+    with pytest.raises(UpdateError):
+        check_for_update("0.1.0", api_url=server.base + "/api/latest", policy=_policy())
+
+
+def test_server_text_in_an_error_is_short_and_printable():
+    long_tag = "v" + "<b>evil</b>\x00" * 500
+    with pytest.raises(UpdateError) as exc:
+        parse_version(long_tag)
+    assert len(str(exc.value)) < 200 and "\x00" not in str(exc.value)
+    assert updater._short("a\x00b\x1bc") == "'a?b?c'"
+
+
+def test_a_new_download_removes_earlier_attempts_but_nothing_else(server, tmp_path):
+    _priv, pub, _p = _release(server, "0.2.0")
+    old = tmp_path / "update-old"
+    old.mkdir()
+    (old / "ExtremeCompressor-0.1.9-setup.exe").write_bytes(b"x" * 1000)
+    keep = tmp_path / "somebody-elses-folder"
+    keep.mkdir()
+    (keep / "file.txt").write_text("mine")
+    info = check_for_update("0.1.0", api_url=server.base + "/api/latest", policy=_policy())
+    path = download_update(info, tmp_path, public_key=pub, policy=_policy())
+    assert not old.exists() and (keep / "file.txt").read_text() == "mine" and path.is_file()

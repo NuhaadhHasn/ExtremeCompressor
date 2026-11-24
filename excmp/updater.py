@@ -52,6 +52,8 @@ PUBLIC_KEY = bytes.fromhex("5be23de6b75939d2d746476fc08e5eaf0ae3ce324785947371e1
 MAX_INSTALLER_BYTES = 600 * 1024 ** 2
 MAX_SMALL_BYTES = 256 * 1024            # the API reply, the checksum file and the signature
 CHECK_EVERY_HOURS = 24
+MAX_CHECK_SECONDS = 30.0                # the whole look: the API reply, however slowly it arrives
+MAX_DOWNLOAD_SECONDS = 1800.0           # the whole download: 600 MB at 0.33 MB/s
 
 
 class UpdateError(Exception):
@@ -81,6 +83,13 @@ class UpdateInfo:
     notes: str = ""
 
 
+def _short(value: object, limit: int = 60) -> str:
+    """Server-controlled text, shortened and made printable before it can reach a message."""
+    text = value if isinstance(value, str) else repr(value)
+    text = "".join(ch if ch.isprintable() else "?" for ch in text)
+    return repr(text[:limit] + ("…" if len(text) > limit else ""))
+
+
 # -- versions --------------------------------------------------------------------------------------
 
 _VERSION = re.compile(r"[vV]?(\d+(?:\.\d+){0,3})")
@@ -88,8 +97,8 @@ _VERSION = re.compile(r"[vV]?(\d+(?:\.\d+){0,3})")
 
 def parse_version(text: object) -> tuple[int, ...]:
     """``"v1.2.3"`` -> ``(1, 2, 3)``. Plain numbers only: a tag like ``1.2.3-beta`` is not an update."""
-    if not isinstance(text, str) or (m := _VERSION.fullmatch(text)) is None:
-        raise UpdateError(f"not a version number: {text!r}")
+    if not isinstance(text, str) or len(text) > 32 or (m := _VERSION.fullmatch(text)) is None:
+        raise UpdateError(f"not a version number: {_short(text)}")
     nums = [int(p) for p in m.group(1).split(".")]
     while len(nums) < 3:
         nums.append(0)
@@ -151,7 +160,7 @@ def _check_url(url: object, policy: Policy) -> str:
     parts = urllib.parse.urlsplit(url)
     scheme_ok = parts.scheme == "https" or (not policy.https_only and parts.scheme in ("http", "https"))
     if not scheme_ok or parts.username or parts.password or (parts.hostname or "") not in policy.hosts:
-        raise UpdateError(f"refusing to fetch from {parts.hostname or url!r}: not an allowed address")
+        raise UpdateError(f"refusing to fetch from {_short(parts.hostname or url)}: not an allowed address")
     return url
 
 
@@ -174,14 +183,35 @@ def _open(url: str, policy: Policy, timeout: float):
     except UpdateError:
         raise
     except urllib.error.HTTPError as exc:
-        raise UpdateError(f"the update server answered {exc.code} for {Path(urllib.parse.urlsplit(url).path).name}") from None
+        raise UpdateError(f"the update server answered {exc.code} for {_short(Path(urllib.parse.urlsplit(url).path).name)}") from None
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise UpdateError(f"could not reach the update server: {getattr(exc, 'reason', exc)}") from None
 
 
-def _get_small(url: str, policy: Policy, timeout: float) -> bytes:
+class Cancelled(UpdateError):
+    """The caller asked to stop (the window is closing)."""
+
+
+def _guard(deadline: float, cancelled: Callable[[], bool] | None) -> None:
+    if cancelled is not None and cancelled():
+        raise Cancelled("cancelled")
+    if time.monotonic() > deadline:
+        raise UpdateError("the update server is too slow: gave up")
+
+
+def _get_small(url: str, policy: Policy, timeout: float, deadline: float | None = None,
+               cancelled: Callable[[], bool] | None = None) -> bytes:
+    """A small reply, read in pieces so a server that trickles bytes cannot hold the thread: the
+    per-read ``timeout`` alone would let one byte every few seconds go on for hours."""
+    deadline = time.monotonic() + MAX_CHECK_SECONDS if deadline is None else deadline
+    data = b""
     with _open(url, policy, timeout) as resp:
-        data = resp.read(MAX_SMALL_BYTES + 1)
+        while len(data) <= MAX_SMALL_BYTES:
+            _guard(deadline, cancelled)
+            chunk = resp.read1(8192)          # what has arrived, not 'wait for 8 KB': the deadline must run
+            if not chunk:
+                break
+            data += chunk
     if len(data) > MAX_SMALL_BYTES:
         raise UpdateError("the update server sent an unexpectedly large reply")
     return data
@@ -190,12 +220,22 @@ def _get_small(url: str, policy: Policy, timeout: float) -> bytes:
 # -- checking and downloading ----------------------------------------------------------------------
 
 def check_for_update(current: str = __version__, api_url: str = API_URL, policy: Policy = DEFAULT_POLICY,
-                     timeout: float = 10.0) -> UpdateInfo | None:
+                     timeout: float = 10.0, cancelled: Callable[[], bool] | None = None) -> UpdateInfo | None:
     """The newer release, or ``None`` when this is the latest. Raises :class:`UpdateError` for anything else."""
+    try:
+        return _check(current, api_url, policy, timeout, cancelled)
+    except UpdateError:
+        raise
+    except Exception as exc:                  # noqa: BLE001 - whatever the server sent, it is an UpdateError
+        raise UpdateError(f"the update server sent something unusable ({type(exc).__name__})") from None
+
+
+def _check(current: str, api_url: str, policy: Policy, timeout: float,
+           cancelled: Callable[[], bool] | None) -> UpdateInfo | None:
     _check_url(api_url, policy)
     try:
-        body = json.loads(_get_small(api_url, policy, timeout).decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+        body = json.loads(_get_small(api_url, policy, timeout, cancelled=cancelled).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, RecursionError):
         raise UpdateError("the update server sent something that is not a release") from None
     if not isinstance(body, dict):
         raise UpdateError("the update server sent something that is not a release")
@@ -206,7 +246,7 @@ def check_for_update(current: str = __version__, api_url: str = API_URL, policy:
     assets = body.get("assets")
     if not isinstance(assets, list):
         raise UpdateError("the release lists no files")
-    by_name = {a.get("name"): a for a in assets if isinstance(a, dict)}
+    by_name = {a.get("name"): a for a in assets if isinstance(a, dict) and isinstance(a.get("name"), str)}
     text = _version_text(version)
     installer_name = f"ExtremeCompressor-{text}-setup.exe"
     if "SHA256SUMS.sig" not in by_name:
@@ -226,28 +266,43 @@ def check_for_update(current: str = __version__, api_url: str = API_URL, policy:
         notes=str(body.get("body") or "")[:4000])
 
 
+def _prune(dest_root: Path) -> None:
+    """Remove earlier attempts' folders (a verified installer is up to 600 MB, and one is left after every
+    successful update: it cannot be deleted while it runs). Only folders this module made."""
+    for old in dest_root.glob("update-*"):
+        if old.is_dir() and not old.is_symlink():
+            shutil.rmtree(old, ignore_errors=True)
+
+
 def download_update(info: UpdateInfo, dest_root: Path, public_key: bytes = PUBLIC_KEY,
                     policy: Policy = DEFAULT_POLICY, timeout: float = 30.0,
-                    progress: Callable[[int, int], None] | None = None) -> Path:
+                    progress: Callable[[int, int], None] | None = None,
+                    cancelled: Callable[[], bool] | None = None,
+                    max_seconds: float = MAX_DOWNLOAD_SECONDS) -> Path:
     """Download and verify ``info``'s installer into a fresh folder under ``dest_root``; return its path.
 
-    Everything is checked before the file gets its final name, and on any failure the folder is removed."""
+    Everything is checked before the file gets its final name, and on any failure the folder is removed.
+    The whole download has a deadline (``max_seconds``) and stops at once when ``cancelled()`` is true."""
     if not 0 < info.installer_size <= MAX_INSTALLER_BYTES:
         raise UpdateError(f"refusing an installer of {info.installer_size:,} bytes (size limit {MAX_INSTALLER_BYTES:,})")
     dest_root = Path(dest_root)
     dest_root.mkdir(parents=True, exist_ok=True)
+    _prune(dest_root)
     workdir = Path(tempfile.mkdtemp(prefix="update-", dir=dest_root))
+    deadline = time.monotonic() + max_seconds
     try:
-        sums = _get_small(info.sums_url, policy, timeout)
-        verify_signature(sums, _get_small(info.sig_url, policy, timeout).decode("ascii", "replace"), public_key)
+        sums = _get_small(info.sums_url, policy, timeout, deadline, cancelled)
+        sig = _get_small(info.sig_url, policy, timeout, deadline, cancelled)
+        verify_signature(sums, sig.decode("ascii", "replace"), public_key)
         want = parse_sums(sums.decode("utf-8", "replace")).get(info.installer_name)
         if want is None:
-            raise UpdateError(f"{info.installer_name} is not listed in the signed checksums")
+            raise UpdateError(f"{_short(info.installer_name)} is not listed in the signed checksums")
         part = workdir / (info.installer_name + ".part")
         digest, done = hashlib.sha256(), 0
         with _open(info.installer_url, policy, timeout) as resp, open(part, "wb") as out:
             while True:
-                chunk = resp.read(1 << 16)
+                _guard(deadline, cancelled)
+                chunk = resp.read1(1 << 16)       # likewise: a trickle must reach the deadline check
                 if not chunk:
                     break
                 done += len(chunk)

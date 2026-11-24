@@ -69,12 +69,14 @@ MERGE((a_gui, "ExtremeCompressor", "ExtremeCompressor"), (a_cli, "excmp", "excmp
 pyz_gui = PYZ(a_gui.pure)  # noqa: F821
 exe_gui = EXE(  # noqa: F821
     pyz_gui, a_gui.scripts, [], exclude_binaries=True,
-    name="ExtremeCompressor", console=False, upx=False)
+    name="ExtremeCompressor", console=False, upx=False,
+    icon=str(ROOT / "assets" / "app.ico"))
 
 pyz_cli = PYZ(a_cli.pure)  # noqa: F821
 exe_cli = EXE(  # noqa: F821
     pyz_cli, a_cli.scripts, [], exclude_binaries=True,
-    name="excmp", console=True, upx=False)
+    name="excmp", console=True, upx=False,
+    icon=str(ROOT / "assets" / "app.ico"))
 
 coll = COLLECT(  # noqa: F821
     exe_gui, a_gui.binaries, a_gui.datas,

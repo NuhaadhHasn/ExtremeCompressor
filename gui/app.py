@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, QTranslator
+from PySide6.QtCore import QLocale, QTimer, QTranslator
 from PySide6.QtWidgets import QApplication
 
 from excmp.intake import parse_intake
@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     batcher = IntakeBatcher(window.handle_intake, parent=window)
     server.received.connect(batcher.push)
     window.show()
+    QTimer.singleShot(4000, window.auto_update_check)       # E5: after the window is up, never before
     if intake is not None:
         batcher.push(intake)
     return app.exec()

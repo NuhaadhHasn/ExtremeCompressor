@@ -232,6 +232,11 @@ class MainWindow(QMainWindow):
         self.settings_tab = SettingsTab(self.tools, DEFAULT_TEMP, self)
         self.settings_tab.load()
         self.tabs.addTab(self.settings_tab, self.tr("Settings"))
+        # E5: a found update raises the banner; a verified download starts the installer and closes this
+        # window (the installer will not touch a running program). The daily check itself is started by
+        # app.main(), never by a bare MainWindow, so no test ever reaches the network.
+        self.settings_tab.updates.available.connect(self._update_available)
+        self.settings_tab.updates.readyToLaunch.connect(self._launch_update)
 
         # The window shell (W1-2): the action bar carrying the commit button
         # and the resolved destination NEVER scrolls - it sits between the tab
@@ -1545,6 +1550,39 @@ class MainWindow(QMainWindow):
     def _confirm_close(self) -> None:
         self._force_close = True
         self.banner.hide_banner()
+        self.close()
+
+    # -- updates (E5) ---------------------------------------------------------------
+    def auto_update_check(self) -> None:
+        """The daily look. Skipped when the user turned it off, when it is not due yet, or by
+        ``EXCMP_NO_UPDATE_CHECK`` (a test machine, an offline demo)."""
+        import os
+        updates = self.settings_tab.updates
+        if (os.environ.get("EXCMP_NO_UPDATE_CHECK") or not self.settings_tab.update_toggle.isChecked()
+                or not updates.due()):
+            return
+        updates.check(silent=True)
+
+    def _update_available(self, info) -> None:
+        updates = self.settings_tab.updates
+        self.banner.show_message(
+            self.tr("Version %s is available.") % info.version, tone="info",
+            actions=[(self.tr("Download and install"), updates.install),
+                     (self.tr("Later"), self.banner.hide_banner)])
+
+    def _launch_update(self, installer) -> None:
+        from excmp import updater
+        if self.queue.is_busy:
+            self.banner.show_message(
+                self.tr("The update is downloaded and verified. Finish or cancel the running job, then "
+                        "press “Install now” in Settings."), tone="warn")
+            return
+        try:
+            updater.launch_installer(installer)
+        except Exception as exc:                                  # noqa: BLE001
+            self.banner.show_message(self.tr("Could not start the installer: %s") % exc, tone="warn")
+            return
+        self._force_close = True
         self.close()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt naming

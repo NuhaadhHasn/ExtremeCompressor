@@ -161,8 +161,9 @@
 - **One PNG rate covers a 17x spread** (6x per byte in the ODT, up to 106x in an
   EPUB). A container of large-canvas PNGs will run past its expected; the 4x high
   side held the worst EPUB row (1,020 s).
-- **A nested archive (a jar inside an AAR) expands again**: `aar-01` was 0.50 of
-  its `.pcf`, priced about 2x low.
+- **A nested archive (a jar inside an AAR) expands again** (`aar-01` was 0.50 of its `.pcf`, priced about 2x
+  low): **fixed by B28**. Three nested corpora now sit inside their ranges, 0.86x-1.16x, even when the same bytes
+  carry the chain-priced `.zip` suffix (checked 2026-11-24).
 - **"Out of sample" is true only for the PNG rate** (B22's corpora). The 1.7x band
   and the ODT low-end pin in the tests were set after seeing the results.
 - **JPEG-in-zip rests on three corpora (B30)**: the first album ran within 16% of B22's JPEG rate, a second
@@ -268,7 +269,7 @@ Recommended order, each one branch and one merge:
 
 | item | what |
 |---|---|
-| **Estimator** | per-file only (near-duplicates, and two apps sharing their expansion, come out under the range); a piped file under 3 MiB is one probe sample, so `low` = `expected`; the store-only overhead estimate misses by a few bytes both ways; **the 80 KB tiny job at Insane is ~1.4x high**; **a nested archive in a zip is ~2x low**; **one PNG rate covers 6-106x** |
+| **Estimator** | per-file only (near-duplicates, and two apps sharing their expansion, come out under the range); a piped file under 3 MiB is one probe sample, so `low` = `expected`; the store-only overhead estimate misses by a few bytes both ways; the tiny jobs at Insane (20 x 4 KB: 3.7 s expected against runs of 2.2-3.5 s) are inside their range and cost seconds, so no constant is changed; **one PNG rate covers 6-106x** |
 | **Calibration** | learns rates only since B19; learning a proper slope needs the probe readings behind each job; `probe_piped_bytes` overstates what was piped when `_plan_that_fits` turns probe piping off (it only skips learning) |
 | **Insane's bar** | the creep assumes the plan's chain ran: if a tool is missing or degrades the chain, it creeps a zpaqfranz band that never runs |
 | **B26 corpora** | GIF members and stored members of a container are priced at the chain's rate, unmeasured; `.png` is matched by name |

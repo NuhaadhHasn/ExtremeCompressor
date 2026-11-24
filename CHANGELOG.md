@@ -159,6 +159,8 @@ it.
 
 ### Fixed
 
+- **An application icon (E6, 2026-11-25).** `assets/app-icon.svg` and the `assets/app.ico` built from it
+  (`packaging/make_icon.py`), on the window, both programs, the installer and the Explorer menu.
 - **A JPEG inside a container is priced 1.45x slower than a JPEG file (B30, 2026-11-24).** A second album ran 1.77x
   and six JPEG EPUBs 1.53x over the old rate; one factor fitted on the three pure-JPEG corpora. Plain `.jpg` files are
   unchanged. Three more corpora were measured and changed nothing (nested archives 1.10x, a second `.pptx`, a second PNG-heavy

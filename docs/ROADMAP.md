@@ -655,6 +655,9 @@ OSI rule comes back before anything ships.
   pure-JPEG corpora). `.pptx` not lifted (a second corpus ran 0.52x of the chain model, the first 1.64x the other way).
   PNG rate unchanged (0.67x on 61 MB). A slept row (png2 round 1) was discarded: an unbiased clock is not enough.
   Record: the last section of `docs/benchmarks/2026-11-21-b27-b5-types.md`.
+- [x] E6. ✅ **2026-11-25** - **an application icon.** `assets/app-icon.svg` is the source (a blue tile, four arrows pressing a
+  document in), `packaging/make_icon.py` renders `assets/app.ico` (16-256 px, PNG entries) with PySide6 alone. The window,
+  both executables, the installer and the Explorer menu show it; a real build and the installer smoke test passed.
 - [x] B28. ✅ **MERGED 2026-11-21** (`cfa2a83`) - **archives inside archives.** A `.war` of `.jar`
       files ran past the container model's high: Precomp expands the inner streams too. The probe
       counts nested members (`zip_nested_bytes`) and the estimator charges each

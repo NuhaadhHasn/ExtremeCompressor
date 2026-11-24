@@ -62,3 +62,9 @@ Shipping this folder ships PySide6, which is LGPL-3.0. The one-folder build keep
 separate DLLs under `_internal\PySide6`, which can be replaced - what the LGPL asks of a dynamically
 linked use. The Qt notices belong in the installer's licence page before anything is distributed
 (`THIRD-PARTY-NOTICES.md`). The repo is private and nothing is distributed today.
+
+## The icon
+
+`assets/app-icon.svg` is the source; `python packaging\make_icon.py` renders `assets/app.ico` from it (add `--preview` for
+PNGs to look at). Both executables and the installer carry the `.ico`; the window loads the SVG. Edit the SVG, rerun the
+script, commit both.

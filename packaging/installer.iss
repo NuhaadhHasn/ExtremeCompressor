@@ -30,6 +30,8 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\ExtremeCompressor.exe
+; The wizard and the installer file itself (assets\app.ico is made from assets\app-icon.svg by packaging\make_icon.py).
+SetupIconFile=..\assets\app.ico
 
 [Tasks]
 Name: contextmenu; Description: "Add ""Compress with ExtremeCompressor"" to the Explorer right-click menu"; GroupDescription: "Explorer:"

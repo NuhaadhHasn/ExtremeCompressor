@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QLocale, QTranslator
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from excmp.intake import parse_intake
@@ -32,6 +33,12 @@ def _install_translator(app: QApplication) -> QTranslator | None:
     return None
 
 
+def _app_icon() -> QIcon:
+    """The window, taskbar and Alt-Tab icon: the SVG (any size, sharp), from the assets folder, which
+    the frozen build bundles. An empty icon if the file is missing - the window still opens."""
+    return QIcon(str(Path(__file__).resolve().parent.parent / "assets" / "app-icon.svg"))
+
+
 def build_app(argv: list[str] | None = None) -> QApplication:
     """Create (or reuse) the QApplication with our theme applied."""
     app = QApplication.instance()
@@ -40,6 +47,7 @@ def build_app(argv: list[str] | None = None) -> QApplication:
     app.setApplicationName("ExtremeCompressor")
     app.setOrganizationName("NuhaadhHasn")
     app.setApplicationDisplayName("ExtremeCompressor")
+    app.setWindowIcon(_app_icon())
     app.setStyleSheet(qss("dark"))
     _install_translator(app)
     return app

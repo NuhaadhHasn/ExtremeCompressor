@@ -34,9 +34,10 @@ def _install_translator(app: QApplication) -> QTranslator | None:
 
 
 def _app_icon() -> QIcon:
-    """The window, taskbar and Alt-Tab icon: the SVG (any size, sharp), from the assets folder, which
-    the frozen build bundles. An empty icon if the file is missing - the window still opens."""
-    return QIcon(str(Path(__file__).resolve().parent.parent / "assets" / "app-icon.svg"))
+    """The window, taskbar and Alt-Tab icon: the 512 px master (Qt scales it down to what is asked), from the
+    assets folder, which the frozen build bundles. An empty icon if the file is missing - the window still
+    opens."""
+    return QIcon(str(Path(__file__).resolve().parent.parent / "assets" / "app-icon-512.png"))
 
 
 def build_app(argv: list[str] | None = None) -> QApplication:

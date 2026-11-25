@@ -312,21 +312,21 @@ class ExtractTab(QWidget):
                     % ", ".join(gap))
             else:
                 self.status.setText(self.tr(
-                    "Archive is %s in %d parts. Every file will be checked against its SHA-256 ledger as it "
+                    "Archive is %s in %d parts. Every file will be checked against its saved fingerprint as it "
                     "is restored.") % (fmt_size(size), len(self._split_parts)))
         elif locked:
             self.status.setText(self.tr(
                 "Archive is %s and password-protected: you will be asked for the password. Every file is then "
-                "checked against its SHA-256 ledger as it is restored.") % fmt_size(archive.stat().st_size))
+                "checked against its saved fingerprint as it is restored.") % fmt_size(archive.stat().st_size))
         elif ours:
             self.status.setText(self.tr(
-                "Archive is %s. Every file will be checked against its SHA-256 "
-                "ledger as it is restored.") % fmt_size(archive.stat().st_size))
+                "Archive is %s. Every file will be checked against its saved "
+                "fingerprint as it is restored.") % fmt_size(archive.stat().st_size))
         elif exists:
             self.status.setText(self.tr(
                 "Archive is %s. This one was not created by ExtremeCompressor, "
-                "so it has no SHA-256 ledger — the files can be extracted, but "
-                "nothing can be checked against one.")
+                "so it has no saved fingerprints: the files can be restored, but "
+                "nothing can be checked.")
                 % fmt_size(archive.stat().st_size))
 
     def _blurb_text(self, ours: bool) -> str:

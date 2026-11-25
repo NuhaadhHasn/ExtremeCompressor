@@ -63,6 +63,20 @@ def _dict_bytes(text: str) -> int:
     number = text[:-1] if text[-1:] in "kmg" else text
     return int(number or 0) * unit
 
+def _breaks_a_list(name: str) -> bool:
+    """True when ``name`` cannot be one line of a 7-Zip list file.
+
+    A list file is one name per line, so a name holding a line separator
+    would be read as two names - 7-Zip would be asked for files nobody
+    listed. Any control character is refused with it (NUL ends a string for
+    the tool that reads it), and so is everything `str.splitlines` breaks on,
+    which includes the Unicode separators U+0085, U+2028 and U+2029. NTFS
+    allows most of these in a name even though Explorer does not.
+    """
+    return (len(name.splitlines()) != 1
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in name))
+
+
 class SevenZipStage(Stage):
     id = "sevenzip"
 
@@ -162,7 +176,7 @@ class SevenZipStage(Stage):
             if len(whole) <= len(parts) or whole[-len(parts):] != parts:
                 return None
             if any(p != p.strip() or p[:1] in "@-" or '"' in p
-                   or "*" in p or "?" in p for p in parts):
+                   or "*" in p or "?" in p or _breaks_a_list(p) for p in parts):
                 return None
             here = Path(*whole[:-len(parts)])
             if base is None:
@@ -203,6 +217,13 @@ class SevenZipStage(Stage):
         base = self.source_base(entries)
         if base is None:
             raise NeedsStaging("the sources do not share one folder")
+        # Checked again here, on the names that will actually be written, and
+        # before anything is hashed, written or run: `source_base` already
+        # refuses these, and a list file is the one place where a name that
+        # holds a line break stops being one name.
+        if any(_breaks_a_list(arcname) for _, arcname in entries):
+            raise NeedsStaging("a file name holds a line break or control "
+                               "character, which a list file cannot carry")
         listed: list[str] = []
         for path, arcname in entries:
             if ctx.cancel.is_set():

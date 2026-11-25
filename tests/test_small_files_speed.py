@@ -797,3 +797,75 @@ def test_every_piped_file_unreadable_in_place_is_still_a_clean_outcome(tmp_path,
     result = engine.compress([src], out, Profile.NORMAL, ctx)
     assert len(result.skipped) == len(made)
     assert _restore(out, tmp_path) == {"src/rand.bin": blob}
+
+
+# A list file is one name per line, so a name that holds a line separator or
+# any other control character must never be written into one (review,
+# 2026-11-25): "a\nb.txt" would reach 7-Zip as two entries, "a" and "b.txt".
+
+@pytest.mark.parametrize("bad", ["a\nb.txt", "a\rb.txt", "a\r\nb.txt", "a\x00b.txt",
+                                 "a\tb.txt", "a\x1fb.txt", "a\x7fb.txt",
+                                 "a\x85b.txt", "a\u2028b.txt", "a\u2029b.txt"])
+@pytest.mark.parametrize("where", ["file", "folder"])
+def test_a_name_with_a_control_character_is_left_to_staging(tmp_path, bad, where):
+    from excmp.stages.sevenzip import SevenZipStage
+    ok = [(tmp_path / "d" / "a.txt", "d/a.txt")]
+    arc = f"d/{bad}" if where == "file" else f"d/{bad}/x.txt"
+    # Built with PurePath semantics only: Windows will not create such a name.
+    entry = (tmp_path.joinpath(*arc.split("/")), arc)
+    assert SevenZipStage.source_base(ok) == tmp_path
+    assert SevenZipStage.source_base(ok + [entry]) is None
+
+
+def test_the_list_file_is_never_written_with_a_split_name(tmp_path, monkeypatch):
+    """The second lock on the same door: even if `source_base` were to let
+    such a name through, the list is refused before it is written and before
+    7-Zip is started, and the files are staged."""
+    from excmp.stages import sevenzip
+    from excmp.stages.base import NeedsStaging
+    real = tmp_path / "d" / "real.txt"
+    real.parent.mkdir()
+    real.write_bytes(b"payload")
+    ran, written = [], []
+    monkeypatch.setattr(sevenzip.SevenZipStage, "source_base",
+                        staticmethod(lambda entries: tmp_path))
+    monkeypatch.setattr(sevenzip.SevenZipStage, "_exe", lambda self: "7z.exe")
+    monkeypatch.setattr(sevenzip, "run_tool", lambda *a, **k: ran.append(a))
+    real_write = Path.write_text
+
+    def spy(self, *a, **k):
+        written.append(self.name)
+        return real_write(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", spy)
+    stage = sevenzip.SevenZipStage()
+    for bad in ("d/real.txt\nd/other.txt", "d/real.txt\rother", "d/re\u2028al.txt"):
+        with pytest.raises(NeedsStaging, match="line"):
+            stage.compress_files([(real, bad)], tmp_path / "s0.7z",
+                                 StageContext(temp_dir=tmp_path / "t"),
+                                 lambda *a: None, lambda *a: None)
+    assert ran == [] and written == []
+    assert not list(tmp_path.glob("s0.7z*"))
+
+
+@needs_7z
+def test_a_job_whose_names_cannot_be_listed_still_archives_through_staging(tmp_path, monkeypatch):
+    """End to end through the fallback: 7-Zip is never given a list, every
+    file is staged, and the restore is byte-identical."""
+    from excmp.stages import sevenzip
+    src = tmp_path / "src"
+    made = _tree(src)
+    copied = _spy_staging(monkeypatch)
+    monkeypatch.setattr(sevenzip.SevenZipStage, "source_base",
+                        staticmethod(lambda entries: None))
+    lists = []
+    real = sevenzip.run_tool
+
+    def watch(cmd, *a, **k):
+        lists.extend(c for c in cmd if str(c).startswith("@"))
+        return real(cmd, *a, **k)
+
+    monkeypatch.setattr(sevenzip, "run_tool", watch)
+    out, result = _compress(src, tmp_path, Profile.NORMAL)
+    assert lists == [] and len(copied) == len(made) and not result.skipped
+    assert _restore(out, tmp_path) == made

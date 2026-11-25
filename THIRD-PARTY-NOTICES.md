@@ -222,3 +222,11 @@ be read from a file belongs in the ⚠️ category above, not in a table.
 ## Where a binary release carries these texts
 
 The installer puts `LICENSE`, this file and the full licence texts (`licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt`, fetched from gnu.org on 2026-11-25) next to the program, which is what PySide6's LGPL branch asks of a dynamically linked, replaceable Qt (the one-folder build keeps the Qt DLLs as separate files).
+
+### The one GPL program in the installer: `par2.exe`
+
+The installer includes **par2cmdline-turbo 1.4.0** (`par2.exe`, GPL-2.0-or-later) for the recovery-data feature. It is run as a
+separate program and never linked into this app. Its licence text is `licenses/GPL-2.0-par2cmdline-turbo.txt` (installed beside the
+program). Its source code is available at https://github.com/animetosho/par2cmdline-turbo (the Windows build comes from the
+`par2cmdline-turbo` 1.4.0 Python wheel on PyPI, whose packaging is at https://github.com/brenthuisman/par2cmdline-turbo.py).
+You may replace that file with your own build of the same program.

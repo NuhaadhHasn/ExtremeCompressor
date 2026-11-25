@@ -82,7 +82,7 @@ def test_the_tabs_are_compress_extract_activity_settings(window):
     wave 3c. Four destinations is exactly WinUI's ceiling for top navigation,
     which is why the tab bar was chosen over a nav rail in the first place."""
     labels = [window.tabs.tabText(i).split(" (")[0] for i in range(window.tabs.count())]
-    assert labels == ["Compress", "Extract", "Activity", "Settings"]
+    assert labels == ["Compress", "Restore", "Activity", "Settings"]
     assert window.tabs.widget(window._activity_index) is window.activity_page
 
 

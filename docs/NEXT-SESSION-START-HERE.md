@@ -1,5 +1,10 @@
 # 🚦 START HERE — handoff (rewritten 2026-11-25: B29, B30, E5 updater, E6 icon, licences; older text below is 2026-11-21)
 
+> **The repository went public on 2026-11-25 with a rewritten history** (the author's private working notes, `CLAUDE.md`,
+> were removed from every commit, which changes every commit hash). **Commit hashes quoted in the docs written before that date
+> refer to the old private history and will not resolve here**; the old repository is kept privately by the owner.
+> `CLAUDE.md` is git-ignored: each clone keeps its own local copy.
+
 > **2026-11-23 to 25 (merge commits on `main`: B29 `3cf08e9`, B30 `3b64127`, E6 `1e0761e`, E5 `c3cd35a`, licences `e93d785`):**
 > a `.docx` is priced by its contents at Insane (B29), a JPEG inside a container x1.45 (B30), the app has an **icon** (E6),
 > an **update checker** (E5: signed GitHub releases only, a Settings row, a banner; `packaging/RELEASING.md` is the

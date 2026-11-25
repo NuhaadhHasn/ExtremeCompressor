@@ -90,7 +90,9 @@ def test_the_first_run_notice_appears_once(qtbot):
     qtbot.addWidget(first)
     assert first.banner.isVisibleTo(first)
     text = first.banner.text().lower()
-    assert "never" in text and ("original" in text or "input" in text)
+    # (the notice now says "Your files are never changed", in plain words; it used to say "originals")
+    assert "never" in text and ("files" in text or "original" in text or "input" in text)
+    assert "dropping a folder" in text                      # and it now says what to do first
     first.close()
     first.queue.shutdown()
 

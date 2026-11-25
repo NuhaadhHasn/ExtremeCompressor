@@ -10,7 +10,7 @@ are only examples.
 2. [Install and first run](#2-install-and-first-run)
 3. [The window at a glance](#3-the-window-at-a-glance)
 4. [The Compress tab](#4-the-compress-tab)
-5. [The Extract tab](#5-the-extract-tab)
+5. [The Restore tab](#5-the-restore-tab)
 6. [The Activity tab](#6-the-activity-tab)
 7. [The Settings tab](#7-the-settings-tab)
 8. [Notifications, tray and taskbar](#8-notifications-tray-and-taskbar)
@@ -19,7 +19,7 @@ are only examples.
 11. [The command line](#11-the-command-line)
 12. [Keyboard shortcuts](#12-keyboard-shortcuts)
 13. [Troubleshooting and FAQ](#13-troubleshooting-and-faq)
-14. [Known limits in version 0.1.0](#14-known-limits-in-version-010)
+14. [Known limits](#14-known-limits)
 15. [Words explained](#15-words-explained)
 
 ---
@@ -117,7 +117,7 @@ The app can look for a newer version once a day. See [10.9](#109-update-the-app)
 There is one window. There are no pop-up dialogs. Questions and warnings appear in a strip at the top
 (see [6.6](#66-the-banner-the-strip-at-the-top)).
 
-**Four tabs:** Compress, Extract, Activity, Settings.
+**Four tabs:** Compress, Restore, Activity, Settings.
 
 **The "≡" button** at the right end of the tab bar opens a menu:
 Add files…, Add folder…, Open archive (Extract)…, Pause/resume queue, Clear finished jobs,
@@ -209,7 +209,7 @@ selected. Pick by clicking a row, or press **Tab** to reach a row and then **Ent
 
 | Profile | What runs | Good for |
 |---|---|---|
-| **Fast** | Zstandard, single pass | Seconds per gigabyte. Modest ratio. Use it when data is already compressed (video, photos, installers) or when you are in a hurry. |
+| **Fast** | Zstandard (level 12), single pass | The quickest by far: measured about 13 MB a second from start to finish on big files, with the final check included (thousands of tiny files are slower, because every file costs time). Modest ratio. Use it when data is already compressed (video, photos, installers) or when you are in a hurry. |
 | **Normal** | 7-Zip, LZMA2 at maximum | The sensible everyday choice. |
 | **Extreme** | tar, then Precomp, then 7-Zip | Best ratio for game and program data that hides compressed parts inside. Slow. Needs a lot of temporary disk space. |
 | **Insane** | Extreme, but with a stronger last step (zpaqfranz) | The smallest archives this app makes. An overnight job on a laptop. Without zpaqfranz it runs as Extreme. |
@@ -257,15 +257,15 @@ shows numbers for **your** files:
 - **Long jobs.** If the chosen profile is estimated at 45 minutes or more, a warning appears: "This job is about
   N minutes on this machine - worth starting before you step away." At 90 minutes or more it says hours.
 
-![The profile table after Measure presets](images/guide/05-presets-measured.png)
+![The profile table after Test all four](images/guide/05-presets-measured.png)
 
-### 4.4 Measure presets (real numbers instead of estimates)
+### 4.4 Test all four (real numbers instead of estimates)
 
-An estimate can be wrong. **Measure presets** (button in the bottom bar) runs the real profiles on a
+An estimate can be wrong. **Test all four** (button in the bottom bar) runs the real profiles on a
 **sample** of your files and reports what each one really saved.
 
 1. Add your files and wait for the analysis to finish. (The button is grey until then.)
-2. Press **Measure presets**. The profiles run one after another as short jobs. Their test archives are
+2. Press **Test all four**. The profiles run one after another as short jobs. Their test archives are
    deleted right after the size is read.
 3. As each profile finishes, its **Saved** cell changes to the measured percentage, with the word
    "measured" under it. The line above the table says what was measured, for example "Measured on 13
@@ -293,7 +293,7 @@ The bar at the bottom never scrolls away.
 | **→ C:\...\name.excmp** | The exact file that will be written. If that name is taken, the app adds " (2)" and shows it here. Before you add files it says "add files to choose a destination". |
 | **archive name** box + **.excmp** | Type a name for the archive. Leave empty to use the name of the first item. Only a plain name is allowed, with no folders in it. Otherwise "invalid name" appears in red and Compress is disabled. The extension label follows the Format box (.excmp, .7z or .zip). |
 | **Advanced** | Opens or closes the Advanced panel (below). |
-| **Measure presets** / **Stop measuring** | See 4.4. |
+| **Test all four** / **Stop measuring** | See 4.4. |
 | **Clear** | Removes everything you added. |
 | **Compress** / **Compress 1 item** / **Compress N items** | Puts the job in the queue. Ctrl+Return does the same. |
 
@@ -313,13 +313,13 @@ default. Nothing in this panel is remembered after you close the app.
 | Field | What it does |
 |---|---|
 | **Threads** | How many worker threads. "auto (2 cores)" gives one per physical core. Lower it to keep the computer usable during a long job. |
-| **Temp folder** + **Browse…** | Where scratch files go while the job runs. Precomp can swell data 2-5 times in the middle of the work. Point it at a drive with room. See the [known limit](#14-known-limits-in-version-010) about Settings. |
+| **Temp folder** + **Browse…** | Where scratch files go while the job runs. Precomp can swell data 2-5 times in the middle of the work. Point it at a drive with room. The box starts empty and shows, greyed, the folder **Settings > Temporary folder** names. Type a folder here to use it for the next job only. |
 | **Output folder** + **Browse…** | Where the archive is written. Empty means next to the first input. **The folder must already exist.** |
 | **Level** | 0-9. "profile default" lets the profile decide. Higher is smaller and slower. |
 | **Dictionary** | The size of the 7-Zip (LZMA2) memory window. Bigger finds repeats that are further apart, but costs about 13 times its size in memory. The list stops where your machine would run out. |
 | **Parameters** | Extra 7-Zip switches, for example `-mqs`. Method switches only. `-p`, `-o`, `-w` and `@listfile` are refused. A refused line stops the job with a notice: "That Parameters line was not accepted: ...". |
 | (grey line) | After you pick a Dictionary: "About X of memory while compressing, Y to extract." |
-| **Format** | **.excmp (verified)**: the app's own archive, with a fingerprint list so the restore can be re-checked at any time. **.7z (compatible)** and **.zip (compatible)**: ordinary archives that any program opens. They are still checked when written, but carry no fingerprint list, so **Verify only** cannot check them later. They cannot be password-protected. |
+| **Format** | **.excmp (verified)**: the app's own archive, with a fingerprint list so the restore can be re-checked at any time. **.7z (compatible)** and **.zip (compatible)**: ordinary archives that any program opens. They are still checked when written, but carry no fingerprint list, so **Check without restoring** cannot check them later. They cannot be password-protected. |
 | **Password** + **type it again** | Encrypts the whole archive, including file names. See 4.7. |
 | **Recovery** | **none**, or **1% / 3% / 5% / 10% of the archive**. See 4.8. |
 | **Split into** | Cuts the finished archive into numbered parts of this size, for example `100m` or `4g`. See 4.9. Empty means "one file". |
@@ -344,8 +344,8 @@ What you must know:
   unless you type a password again.
 - The password is never written to the history file.
 - A password cannot be combined with the .7z or .zip format. The job fails and says to use .excmp.
-- Opening a password-protected archive in the window has limits. See [14](#14-known-limits-in-version-010).
-  The command line always works ([10.5](#105-open-an-encrypted-archive)).
+- A password-protected `.excmp` archive opens in the Restore tab: press **Restore** or **Check without restoring**
+  and the notice asks for the password ([10.5](#105-open-an-encrypted-archive)). The command line works too.
 
 ### 4.8 Recovery records (repair data)
 
@@ -372,24 +372,24 @@ Choose a size under **Split into**, for example `4g` for a FAT32 drive or `100m`
 
 ---
 
-## 5. The Extract tab
+## 5. The Restore tab
 
 Use it to restore an archive, to check one, and to look inside. It opens `.excmp` archives and also other
 people's archives.
 
-![The Extract tab](images/guide/07-extract.png)
+![The Restore tab](images/guide/07-extract.png)
 
 | Part | What it does |
 |---|---|
-| Intro text | Changes with the archive. For ours: every file's SHA-256 was recorded and is re-checked. For others: no fingerprints exist, so nothing can be checked. |
+| Intro text | Changes with the archive. For ours: every file is checked against the fingerprint saved when the archive was made, and one different byte fails the restore. For others: no fingerprints exist, so files can be restored but not checked. |
 | **Archive** + **Browse…** | The archive. Type or paste a path, use Browse…, or **drop a file on the tab**. The file chooser filter is "Archives (*.excmp *.zip *.7z *.rar *.tar *.gz *.tgz *.bz2 *.xz *.zst *.iso *.cab *.msi *.wim *.lzh *.arj)". Choose "All files" for other names, such as a `.001` part. |
 | **Restore to** + **Browse…** | The destination folder. Filled in for you. If everything in the archive is inside one top folder, it suggests the folder next to the archive. Otherwise it suggests a new folder named like the archive. You can change it. |
 | **Restore and verify** | Restores every file to the destination. For our archives, it also re-checks every SHA-256. |
-| **Verify only** | Restores to a temporary folder, checks every file, then deletes it again. **Nothing is written to your destination.** Grey for other people's archives (they have no fingerprints). |
-| Status line | For example: "Archive is 226.1 KB. Every file will be checked against its SHA-256 ledger as it is restored." |
+| **Check without restoring** | Restores to a temporary folder, checks every file, then deletes it again. **Nothing is written to your destination.** Grey for other people's archives (they have no fingerprints). |
+| Status line | For example: "Archive is 226.1 KB. Every file will be checked against its saved fingerprint as it is restored." |
 | progress bar | Shows while a restore runs. |
 | **What’s inside** | Opens a list of the archive's contents, without extracting anything. |
-| **Extract selected** | Restores only the ticked files (see below). |
+| **Restore selected** | Restores only the ticked files (see below). |
 
 **What’s inside, for an .excmp archive.** Columns:
 
@@ -397,8 +397,8 @@ people's archives.
 |---|---|
 | File | The path inside the archive. Hover over a name to see its SHA-256. |
 | Size | Original size. |
-| Route | **pipeline** (it was compressed) or **store** (kept as it was). |
-| Why it was stored | The reason a file was not compressed, for example "high-entropy data (8.00 bits/byte): already compressed or encrypted; recompression would gain ~0%". Empty for compressed files. |
+| How | **Compressed**, or **Kept as is** (not changed because it could not shrink). |
+| Why it was not compressed | The reason a file was not compressed, for example "high-entropy data (8.00 bits/byte): already compressed or encrypted; recompression would gain ~0%". Shows "—" for compressed files. |
 
 **For somebody else's archive** the columns are File, Size, **Packed** and **Modified**. A caption explains
 that these are the archive's own numbers and that the CRC-32 (hover over a name) is an error check, not
@@ -406,7 +406,7 @@ a SHA-256. A big archive may be cut at its first entries, and the caption says s
 
 ![A foreign archive, one file ticked](images/guide/08-extract-foreign.png)
 
-**Extract selected.** Tick the boxes in front of the files you want. The button changes to "Extract 1
+**Restore selected.** Tick the boxes in front of the files you want. The button changes to "Extract 1
 selected". Press it. If the archive is **solid** (all files compressed as one block), reaching a single
 file means decompressing much of the block. The app tells you first, with a notice: "N file(s) selected,
 but this archive is solid: reaching them replays X of compressed data." Choose **Extract anyway** or
@@ -420,11 +420,12 @@ password:
 Type it in the box, then press **Unlock** (or Enter). The list then opens. The password is kept only for
 that archive.
 
-> Password-protected `.excmp` archives are handled by the command line. See
-> [14](#14-known-limits-in-version-010).
+> A password-protected `.excmp` archive is recognised: the status line says so, and pressing **Restore** or
+> **Check without restoring** asks for the password in the notice (the list under **What’s inside** is not
+> available for it).
 
 **After a restore.** The Activity tab shows "Restored N files" and "N SHA-256 hashes verified —
-byte-identical to the originals". The Extract tab status says "Restored N file(s); N hash(es) verified
+byte-identical to the originals". The Restore tab status says "Restored N file(s); N hash(es) verified
 byte-identical." For somebody else's archive the wording is different on purpose: the files came out,
 but nothing could be checked.
 
@@ -462,7 +463,7 @@ For a **compression**:
 - **Open output folder**: opens Explorer at the archive.
 - **Compress something else**: closes the panel and clears the Compress tab.
 
-After a **restore**: "Restored N files". After **Verify only**: "Verified N files", with the sentence that
+After a **restore**: "Restored N files". After **Check without restoring**: "Verified N files", with the sentence that
 nothing was written to disk. After a **failure**: "That job failed" in red, with the reason.
 
 ![A failed job](images/guide/13-failed.png)
@@ -561,11 +562,13 @@ close the window.**
 | Setting | What it does | Default |
 |---|---|---|
 | **Worker threads** | Threads for 7-Zip and zpaqfranz. "auto (2 cores)" is one per physical core. Lower it to keep the machine usable. Used when Advanced > Threads is on auto. | auto |
-| **Temporary folder** + **Browse…** | Scratch space. Precomp can swell data 2-5 times, and the self-test restores the whole archive here. See the [known limit](#14-known-limits-in-version-010). | `C:\Users\<you>\.excmp\tmp` |
+| **Temporary folder** + **Browse…** | Where work files go while a job runs. They can be several times the size of your files, so choose a drive with free space. Every job uses it unless you type another folder in **Advanced > Temp folder** (that is for one job only). | your user folder, `.excmp	mp` |
 | **Write a .sha256 file beside the archive** | Writes `name.excmp.sha256` next to each new archive. Anyone can check the archive with `sha256sum` or QuickSFV, without this app. | off |
 | **Open the folder after extracting** | Opens Explorer on the restored files as soon as a restore ends. | off |
 | **Notify when a job finishes** | A Windows notification when a compression ends. | on |
 | **Minimize to the system tray while running** | When you minimize while a job runs, the window hides to the tray. The queue keeps going. | off |
+| **Keep the PC awake while a job runs** | Stops Windows sleeping in the middle of a long job (the screen may still turn off). Released as soon as the queue is empty. | on |
+| **When the whole queue has finished** | **Do nothing**, **Sleep**, **Hibernate** or **Shut down** after the last job, so an overnight run can end by itself. It only happens if every job succeeded, and after a 60-second countdown in the banner that you can **Cancel** (or **Do it now**). | Do nothing |
 | **Appearance** > **Switch theme** | Dark or light. | dark |
 | **Explorer right-click menu** > **Add / Remove / Repair** | See [9](#9-the-explorer-right-click-menu). | not added |
 | **Updates** > **Check for updates** and **Look once a day** | See [10.9](#109-update-the-app). | on |
@@ -597,7 +600,7 @@ administrator rights.
 | Where | Entry | What happens |
 |---|---|---|
 | On any file or folder | **Compress with ExtremeCompressor** | The app opens on the Compress tab with the items added and analysed. You still choose a profile and press Compress. Select many items and right-click once: they all arrive in one window. |
-| On a `.excmp` file (double-click too) | **Extract with ExtremeCompressor** | Opens the Extract tab with the archive filled in. You press Restore. |
+| On a `.excmp` file (double-click too) | **Extract with ExtremeCompressor** | Opens the Restore tab with the archive filled in. You press Restore. |
 | On a `.excmp` file | **Extract here** | Starts the restore at once. It goes to the suggested folder. If that would overwrite a name that already exists there, it uses a fresh folder next to the archive named `name (2)` instead. |
 | On a `.excmp` file | **Verify archive** | Starts the check at once. |
 
@@ -646,7 +649,7 @@ itself. You never get two windows.
 3. Click the **Insane** row. If the table says "zpaqfranz missing — runs as Extreme", Insane is not
    available on this machine. You will get Extreme.
 4. Read the **Estimated time**. If it is long, a warning appears. Insane can take hours.
-5. Optional: press **Measure presets** first to see real numbers for every profile.
+5. Optional: press **Test all four** first to see real numbers for every profile.
 6. Press **Compress** and leave the computer running. You can minimize the window.
    Turn on **Settings > Notify when a job finishes** to be told when it ends.
 7. When it finishes, read the result panel. If the saving is small, see
@@ -654,7 +657,7 @@ itself. You never get two windows.
 
 ### 10.3 Extract (restore) an archive
 
-1. Open the **Extract** tab. (Ctrl+E also works.)
+1. Open the **Restore** tab. (Ctrl+E also works.)
 2. Drop the archive on the tab, or press **Browse…** next to **Archive**.
 3. Check **Restore to**. Change it if you want another folder.
 4. Press **Restore and verify**.
@@ -670,8 +673,8 @@ For a split archive, choose the `.001` part. Keep all parts in one folder.
 
 Use this on an archive that has been sitting on a drive for a long time, or before you delete originals.
 
-1. Open the **Extract** tab. Choose the archive.
-2. Press **Verify only**.
+1. Open the **Restore** tab. Choose the archive.
+2. Press **Check without restoring**.
 3. The Activity tab ends with "Verified N files" and "nothing was written to disk".
 
 It does a full restore into the temp folder and compares every SHA-256, then deletes the temp files. It
@@ -682,13 +685,14 @@ your original files, see [11](#11-the-command-line).
 
 **In the window** (works for other people's encrypted archives, and to look inside ours):
 
-1. Extract tab: choose the archive.
+1. Restore tab: choose the archive.
 2. Press **What’s inside**. A notice asks for the password.
 3. Type it and press **Unlock**.
-4. Tick the files you want and press **Extract N selected**.
+4. Tick the files you want and press **Restore N selected**.
 
-**For an encrypted `.excmp` archive made by this app, use the command line.** In version 0.1.0 the window
-cannot restore or verify those. See [14](#14-known-limits-in-version-010).
+**For an encrypted `.excmp` archive made by this app**, choose it in the Restore tab and press **Restore** (or
+**Check without restoring**). The status line says it is password-protected, and the notice asks for the password; it
+is used for that one job and then forgotten. The command line does the same:
 
 ```
 excmp extract secret.excmp -o restored --password
@@ -965,7 +969,7 @@ See [9](#9-the-explorer-right-click-menu).
 |---|---|
 | **Ctrl+K** | Command search: type to find any command |
 | **Ctrl+Shift+O** | Add folder… |
-| **Ctrl+E** | Go to the Extract tab ("Open archive") |
+| **Ctrl+E** | Go to the Restore tab ("Open archive") |
 | **Ctrl+P** | Pause or resume the queue |
 | **Ctrl+Return** | Compress what is on the Compress tab |
 | **F1** | Show or hide the About card |
@@ -976,9 +980,7 @@ See [9](#9-the-explorer-right-click-menu).
 | Arrow keys, **Enter**, **Esc** | In the command search: move, run, close |
 | **Enter** | In the password notice: Unlock |
 
-**Ctrl+O** is shown as the shortcut for "Add files…" (in the command search and the About card). In our
-test it did **not** open the file chooser, because two shortcuts claim the same keys. Use the **Add
-files...** button, or Ctrl+K and type "add files". See [14](#14-known-limits-in-version-010).
+**Ctrl+O** opens the file chooser for "Add files…" (it is also shown in the command search and the About card).
 
 ---
 
@@ -995,7 +997,7 @@ files...** button, or Ctrl+K and type "add files". See [14](#14-known-limits-in-
 | "not enough free space in ..." / "not enough free disk space ..." | The disk is too full for the job, or for the temp work. | Free space, or set **Advanced > Temp folder** to a drive with room. See 13.5. |
 | "[Errno 2] No such file or directory ...\name.excmp.tmp" | The **Output folder** does not exist. | Create it, or pick one with **Browse…**. |
 | "precomp exited with code 1 while recompressing ..." (a tool name and a code) | A helper tool failed on a file. | Try **Normal** or **Fast**. Keep the log text. |
-| "... is password-protected; supply the password" | An encrypted archive was opened without its password. | Use the command line with `--password` ([10.5](#105-open-an-encrypted-archive)). |
+| "... is password-protected; supply the password" | An encrypted archive was opened without its password. | Enter it when the notice asks, or use the command line with `--password` ([10.5](#105-open-an-encrypted-archive)). |
 | "a plain .7z/.zip cannot carry our encryption ..." | You asked for a password with the .7z or .zip format. | Use the **.excmp** format, or remove the password. |
 | "That Parameters line was not accepted: ..." | A switch is not allowed (`-p`, `-o`, `-w`, `@`). | Empty the Parameters box. |
 | A file could not be read | The file is open in another program (for example Excel). | Close it, or ignore the warning in the analysis card's Details. |
@@ -1018,7 +1020,7 @@ images, GIF, EPUB) that Fast and Normal leave alone.
 Insane does what Extreme does, then compresses the result with a much stronger method (zpaqfranz). That
 method compares a huge amount of data with itself and uses a lot of computing. It is the slowest, smallest
 choice, made for an overnight job. The app also restores and checks the whole archive at the end. That
-check can take a large share of the total time. Use **Measure presets** to see if Insane is worth it for
+check can take a large share of the total time. Use **Test all four** to see if Insane is worth it for
 your data. For already-compressed data, it is not.
 
 ### 13.4 The profile table shows nearly the same size for every profile. Why?
@@ -1029,8 +1031,7 @@ in far less time.
 ### 13.5 Where do temporary files go, and how do I free space?
 
 - **Where**: `C:\Users\<you>\.excmp\tmp` by default. Each job makes a folder starting with `excmp-` in
-  there and removes it when it ends. Change the place in **Advanced > Temp folder** (see the
-  [known limit](#14-known-limits-in-version-010) about the Settings box).
+  there and removes it when it ends. Change it for good in **Settings > Temporary folder**, or for one job in **Advanced > Temp folder**.
 - **How much**: Extreme and Insane can need two to five times the size of your data while they work, and the
   final check restores the whole archive there too. The app checks free space before it starts.
 - **To free space**:
@@ -1039,7 +1040,7 @@ in far less time.
      crashed during a job.
   3. Move the temp folder to a bigger drive.
   4. Delete old `.sha256` and `.par2` files only if you also delete the archive they belong to.
-- The app never deletes your originals. Delete them yourself, and only after you have run **Verify only**
+- The app never deletes your originals. Delete them yourself, and only after you have run **Check without restoring**
   on the archive and kept a second copy.
 
 ### 13.6 I lost the password
@@ -1047,7 +1048,7 @@ in far less time.
 There is no way to recover the data. This is the whole point of the encryption. Keep passwords somewhere
 safe.
 
-### 13.7 "Verify only" is grey
+### 13.7 "Check without restoring" is grey
 
 The archive is not an `.excmp` archive the window can read. It may be somebody else's archive (no
 fingerprints), a plain .7z/.zip you made, or a password-protected `.excmp`. For the last one use
@@ -1080,29 +1081,15 @@ the name it will use before you press Compress.
 
 ---
 
-## 14. Known limits in version 0.1.0
+## 14. Known limits
 
-These are real behaviours found while preparing this guide. They are listed so you are not surprised.
+1. **Repair is command line only.** The window has no repair button (`excmp repair`, see section 11).
+2. **Shrink mode** (lossy re-encoding) does not exist: the app is lossless only.
+3. **The first release.** An update can only be found once a release has been published on GitHub.
 
-1. **Password-protected `.excmp` archives in the window.** The Extract tab cannot restore or verify them.
-   "Restore and verify" fails with "... is password-protected; supply the password", "Verify only" is
-   grey, and the status line wrongly says the archive was "not created by ExtremeCompressor". You can
-   unlock and list the contents, but "Extract N selected" does not work either. **Use the command line**
-   (`excmp extract ... --password`, `excmp verify ... --password`). Compressing **with** a password in the
-   window works.
-2. **Settings > Temporary folder is not used.** The Advanced panel's **Temp folder** box starts filled with
-   `C:\Users\<you>\.excmp\tmp`, and a filled box always wins. Change the folder in **Advanced > Temp
-   folder** for each job, or clear that box so that Settings is used. Extract and verify jobs use the
-   temp folder of the last compression in this session, or the default.
-3. **Ctrl+O** does not open the file chooser (see 12).
-4. **Output folder** must exist. A missing folder makes the job fail with a raw "No such file or
-   directory" message.
-5. **Split archives in the window.** Choosing the `.001` part works and is verified, but the status line
-   says the archive was not created by ExtremeCompressor. Ignore that line. The result panel
-   shows the true count of verified hashes.
-6. **Repair is command line only.** The window has no repair button.
-7. **Shrink mode** (lossy re-encoding) does not exist.
-8. **The first release.** An update can only be found once a release has been published on GitHub.
+Five problems found while preparing this guide were fixed on 2026-11-25 and are no longer limits: password-protected
+`.excmp` archives and split archives now restore and check from the Restore tab, Settings > Temporary folder is
+used, a missing output folder is created, and Ctrl+O works.
 
 ---
 

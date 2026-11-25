@@ -756,6 +756,17 @@ def _hash_tree(root: Path) -> dict[str, str]:
             for p in Path(root).rglob("*") if p.is_file()}
 
 
+def _ensure_output_folder(out_path: Path) -> None:
+    """Create the folder the archive goes in, if it is missing (found by the user guide: a missing folder
+    failed with Python's raw ``[Errno 2] ... a.excmp.tmp``). Called only once there is something to write, so
+    a job with no readable input leaves no empty folder behind."""
+    folder = Path(out_path).parent
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(f"cannot create the output folder {folder}: {exc.strerror or exc}") from None
+
+
 def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
                       ctx: StageContext,
                       tools: dict[str, ToolInfo | None] | None = None,
@@ -804,6 +815,7 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
     infos, _relmap, _dirs, skipped = _collect([Path(p) for p in inputs])
     if not infos:
         raise ValueError(_nothing_readable(skipped))
+    _ensure_output_folder(out_path)
     orig = sum(i.size for i in infos)
 
     job_dir = Path(tempfile.mkdtemp(prefix="excmp-std-", dir=ctx.temp_dir))
@@ -902,6 +914,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
     infos, relmap, empty_dirs, skipped = _collect([Path(p) for p in inputs])
     if not infos:
         raise ValueError(_nothing_readable(skipped))
+    _ensure_output_folder(out_path)
     # Before copying a single byte: will this fit? (J4 - the compression-side
     # twin of the check extract() has done since D0.) B21b: if it only fits
     # with the probe-flagged media stored, it runs that way and says so.

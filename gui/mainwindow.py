@@ -245,6 +245,8 @@ class MainWindow(QMainWindow):
         # (Not a Qt.Popup: its Browse buttons open QFileDialogs, which would
         # dismiss a popup, returning the user to a vanished panel.)
         self.advanced_panel = AdvancedPanel(DEFAULT_TEMP, self)
+        self._sync_temp_hint()
+        self.settings_tab.temp_dir.textChanged.connect(lambda _t: self._sync_temp_hint())
         self.advanced_panel.fallback_threads = self.settings_tab.threads.value
         self.settings_tab.threads.valueChanged.connect(
             lambda _value: self.advanced_panel._show_ram())
@@ -638,7 +640,8 @@ class MainWindow(QMainWindow):
         self.extract_tab.extractSelectedRequested.connect(
             self._start_selected_extract)
 
-        QShortcut(QKeySequence.StandardKey.Open, self, self.drop_zone._pick_files)
+        # (Ctrl+O belongs to the "Add files…" action above. A second QShortcut for the standard Open key made
+        # the key ambiguous, and Qt fires neither of two claimants: tests/test_shortcuts_unique.py.)
         QShortcut(QKeySequence("Ctrl+Return"), self, self.start_compression)
 
     def _apply_theme(self) -> None:
@@ -1081,9 +1084,7 @@ class MainWindow(QMainWindow):
         inputs = list(self._pending)
         # Advanced (per-job) wins over Settings (the remembered default), so a
         # one-off override does not silently rewrite the preference.
-        self.queue.temp_dir = Path(self.advanced_panel.temp_dir.text().strip('" ')
-                                   or self.settings_tab.temp_dir.text().strip('" ')
-                                   or DEFAULT_TEMP)
+        self.queue.temp_dir = self.effective_temp()
         self.queue.threads = (self.advanced_panel.threads.value()
                               or self.settings_tab.threads.value())
         # A bad Parameters line stops the job here, in the banner, rather than
@@ -1139,8 +1140,21 @@ class MainWindow(QMainWindow):
         self._summary = None
         self._refresh_actions()
 
+    def settings_tab_temp(self) -> Path:
+        """The folder Settings names, or the default."""
+        return Path(self.settings_tab.temp_dir.text().strip('" ') or DEFAULT_TEMP)
+
+    def effective_temp(self) -> Path:
+        """What the next job uses: a folder typed in Advanced (a one-off) wins, then Settings, then the default."""
+        return Path(self.advanced_panel.temp_dir.text().strip('" ') or self.settings_tab_temp())
+
+    def _sync_temp_hint(self) -> None:
+        self.advanced_panel.temp_dir.setPlaceholderText(str(self.settings_tab_temp()))
+
     def _start_extract(self, archive: object, dest: object) -> None:
-        self.queue.add_extract(Path(archive), Path(dest))
+        self.queue.temp_dir = self.effective_temp()
+        tab = self.extract_tab
+        self.queue.add_extract(Path(archive), Path(dest), tab.take_password() if tab.is_locked() else None)
 
     # -- G2 --------------------------------------------------------------
     def _ask_archive_password(self, archive: object) -> None:
@@ -1148,9 +1162,11 @@ class MainWindow(QMainWindow):
         timing). The Banner owns the field and wipes it on submit, so this
         window never holds the secret in a widget of its own.
         """
+        locked = self.extract_tab.is_locked()
         self.banner.ask_secret(
-            self.tr("%s keeps its file names encrypted. Enter its password to "
-                    "see what is inside.") % Path(archive).name,
+            self.tr("%s is password-protected. Enter its password to continue.") % Path(archive).name if locked
+            else self.tr("%s keeps its file names encrypted. Enter its password to "
+                         "see what is inside.") % Path(archive).name,
             self.tr("Unlock"),
             self.extract_tab.unlock_with)
 
@@ -1194,6 +1210,7 @@ class MainWindow(QMainWindow):
 
     def _run_selected(self, archive: Path, names: list, dest: Path) -> None:
         self.banner.hide_banner()
+        self.queue.temp_dir = self.effective_temp()
         self.queue.add_extract_selected(
             archive, dest, names, self.extract_tab.current_password())
 
@@ -1206,7 +1223,9 @@ class MainWindow(QMainWindow):
     def start_verification(self, archive: object) -> None:
         """Queue a verify. Deliberately ignores the destination field - the
         whole promise of this verb is that nothing is produced."""
-        self.queue.add_verify(Path(archive))
+        self.queue.temp_dir = self.effective_temp()
+        tab = self.extract_tab
+        self.queue.add_verify(Path(archive), tab.take_password() if tab.is_locked() else None)
 
     def _toggle_pause(self) -> None:
         self.queue.toggle_pause()

@@ -1,4 +1,4 @@
-"""The application icon: one SVG source, an .ico built from it, and every place that must show it."""
+"""The application icon: one 512 px master PNG, an .ico built from it, and every place that must show it."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 ICO = ROOT / "assets" / "app.ico"
-SVG = ROOT / "assets" / "app-icon.svg"
+MASTER = ROOT / "assets" / "app-icon-512.png"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
@@ -38,21 +38,31 @@ def test_each_png_is_really_that_size():
         assert (pw, ph) == (w, h)
 
 
-def test_the_svg_source_parses_and_is_not_blank():
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QImage, QPainter
-    from PySide6.QtSvg import QSvgRenderer
-    from PySide6.QtWidgets import QApplication
-    QApplication.instance() or QApplication(["t"])      # a QApplication: other tests need the widgets one
-    r = QSvgRenderer(str(SVG))
-    assert r.isValid()
-    img = QImage(64, 64, QImage.Format.Format_ARGB32)
-    img.fill(Qt.GlobalColor.transparent)
-    p = QPainter(img)
-    r.render(p)
-    p.end()
-    assert img.pixelColor(32, 32).alpha() == 255      # the white block in the middle
-    assert img.pixelColor(0, 0).alpha() == 0          # a rounded tile on a transparent ground
+def test_the_master_is_a_square_transparent_png_with_a_solid_tile():
+    from PySide6.QtGui import QImage
+    img = QImage(str(MASTER))
+    assert not img.isNull() and img.width() == img.height() == 512
+    assert img.hasAlphaChannel()
+    assert img.pixelColor(0, 0).alpha() == 0 and img.pixelColor(511, 511).alpha() == 0     # rounded corners are clear
+    assert img.pixelColor(256, 256).alpha() == 255                                         # the tile is solid
+    assert img.pixelColor(256, 40).alpha() == 255
+
+
+def test_the_small_sizes_are_not_blank_or_flat():
+    """Every size must carry the tile and some contrast (a flat square would mean the downscale lost the design)."""
+    _raw, entries = _entries()
+    from PySide6.QtGui import QImage
+    for w, _h, _bpp, blob in entries:
+        img = QImage.fromData(blob, "PNG")
+        assert img.width() == w
+        centre = img.pixelColor(w // 2, w // 2)
+        assert centre.alpha() == 255
+        lums = {img.pixelColor(x, y).lightness() // 24 for x in range(w // 4, w - w // 4) for y in range(w // 4, w - w // 4)}
+        assert len(lums) >= 3, w
+
+
+def test_the_old_vector_placeholder_is_gone():
+    assert not (ROOT / "assets" / "app-icon.svg").exists()
 
 
 def test_the_window_has_an_icon():

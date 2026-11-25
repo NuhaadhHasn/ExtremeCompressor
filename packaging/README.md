@@ -65,9 +65,11 @@ linked use. The Qt notices belong in the installer's licence page before anythin
 
 ## The icon
 
-`assets/app-icon.svg` is the source; `python packaging\make_icon.py` renders `assets/app.ico` from it (add `--preview` for
-PNGs to look at). Both executables and the installer carry the `.ico`; the window loads the SVG. Edit the SVG, rerun the
-script, commit both.
+`assets/app-icon-512.png` is the master: a transparent 512 px PNG of a file squeezed from both sides by two cyan wedges with an
+orange lightning bolt at the pinch. It was generated with Gemini on 2026-11-25 (the owner chose it among several) and cut out of its
+white background; replace it with any square transparent PNG if the design ever changes. `python packaging\make_icon.py` renders
+`assets/app.ico` from it (add `--preview` for the small sizes enlarged). Both executables and the installer carry the `.ico`; the
+window loads the PNG. Replace the master, rerun the script, commit both.
 
 ## Updates
 

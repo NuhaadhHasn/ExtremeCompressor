@@ -19,3 +19,16 @@ files must carry exactly those names. A copy that finds anything missing refuses
 `excmp/updater.py`. If the private key is lost or leaks: make a new pair (`python tools\release_sign.py keygen`),
 put the new public key in `updater.py`, build, and install that build **by hand** once; every copy updates by
 itself after that. The repository must be public for unauthenticated copies to read its releases.
+
+## winget (`winget install NuhaadhHasn.ExtremeCompressor`)
+
+After a release is public (step 5), make and check the manifest:
+
+    python tools\make_winget_manifest.py --version <version> --sums dist\SHA256SUMS
+    winget validate --manifest dist\winget\manifests\n\NuhaadhHasn\ExtremeCompressor\<version>
+
+It points only at this project's own release asset and uses its SHA-256. To publish it, fork
+`microsoft/winget-pkgs`, copy the `manifests\n\NuhaadhHasn\ExtremeCompressor\<version>` folder into the same place in
+the fork, and open a pull request; Microsoft's checks run on it. (The installer is not code-signed yet, so its
+checks may take a manual review. Each later release is the same three steps; the app's own updater and winget
+upgrade the same per-user install in place.)

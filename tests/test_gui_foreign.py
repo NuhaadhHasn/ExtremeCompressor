@@ -71,7 +71,7 @@ def test_a_foreign_archive_cannot_be_verified(window, foreign):
     explains itself is the thing this UI keeps refusing to ship."""
     window.extract_tab.set_archive(foreign)
     assert not window.extract_tab.verify_button.isEnabled()
-    assert "ledger" in window.extract_tab.verify_button.toolTip().lower()
+    assert "fingerprint" in window.extract_tab.verify_button.toolTip().lower()
 
 
 def test_a_foreign_extract_result_never_borrows_the_verified_wording(window,
@@ -150,7 +150,7 @@ def test_the_listing_shows_why_a_file_was_stored(window, tmp_path, qtbot):
 
     item = tab.contents.topLevelItem(0)
     row = " ".join(item.text(c) for c in range(tab.contents.columnCount()))
-    assert "store" in row.lower()
+    assert "kept as is" in row.lower()          # the plain-words name of the store route
     assert item.text(tab.COL_WHY), "a stored file with no explanation on screen"
 
 
@@ -177,10 +177,10 @@ def test_the_cards_own_promise_changes_with_the_archive(window, foreign, tmp_pat
     from excmp.stages.base import StageContext
 
     tab = window.extract_tab
-    assert "every file's sha-256" in tab._blurb.text().lower()
+    assert "checked against the fingerprint saved" in tab._blurb.text().lower()
 
     tab.set_archive(foreign)
-    assert "every file's sha-256" not in tab._blurb.text().lower()
+    assert "checked against the fingerprint saved" not in tab._blurb.text().lower()
     assert "other tools" in tab._blurb.text().lower()
 
     src = tmp_path / "src"
@@ -189,4 +189,4 @@ def test_the_cards_own_promise_changes_with_the_archive(window, foreign, tmp_pat
     ours = tmp_path / "ours.excmp"
     engine.compress([src], ours, Profile.FAST, StageContext(temp_dir=tmp_path / "t"))
     tab.set_archive(ours)
-    assert "every file's sha-256" in tab._blurb.text().lower()
+    assert "checked against the fingerprint saved" in tab._blurb.text().lower()

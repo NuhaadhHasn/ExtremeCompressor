@@ -43,14 +43,14 @@ def _parse_dict(text: str) -> int:
 # "high voltage Fast".
 PRESETS: list[tuple[Profile, str, str, str, tuple[str, ...]]] = [
     (Profile.FAST, "⚡", "Fast",
-     "Zstandard, single pass. Seconds per gigabyte, modest ratio.", ()),
+     "Quickest. Best when time matters more than size.", ()),
     (Profile.NORMAL, "⚖️", "Normal",
-     "7-Zip LZMA2 at maximum. The sensible everyday choice.", ("7z",)),
+     "The everyday choice. Small files in reasonable time.", ("7z",)),
     (Profile.EXTREME, "🔥", "Extreme",
-     "Precomp → LZMA2. Best ratio; slow, and hungry for temp space.",
+     "Smaller still. Slow, and needs free disk space while it works.",
      ("7z", "precomp")),
     (Profile.INSANE, "🌙", "Insane",
-     "Extreme plus a stronger final codec — an overnight job.",
+     "The smallest possible. Can take hours: leave it running overnight.",
      ("7z", "precomp", "zpaqfranz")),
 ]
 

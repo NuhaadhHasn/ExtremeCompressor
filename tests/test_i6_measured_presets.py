@@ -479,7 +479,7 @@ def window(qtbot):
 
 def test_there_is_nothing_to_measure_before_files_are_added(window):
     assert not window.measure_button.isEnabled()
-    assert window.measure_button.text() == "Measure presets"
+    assert window.measure_button.text() == "Test all four"
 
 
 def test_measuring_becomes_available_once_an_input_is_analysed(window, qtbot,

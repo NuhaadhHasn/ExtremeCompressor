@@ -118,9 +118,9 @@ class SettingsTab(QScrollArea):
         temp_box.addWidget(browse)
         column.addWidget(SettingsRow(
             self.tr("Temporary folder"),
-            self.tr("Precomp can inflate data 2–5× mid-pipeline, and the "
-                    "pre-publish self-test restores the whole archive here. "
-                    "Point it at a drive with room."),
+            self.tr("Work files go here while a job runs. They can be several "
+                    "times the size of your files, so choose a drive with free "
+                    "space."),
             temp_row, page))
 
         # G6. Opt-in, and remembered: a second file appearing beside every
@@ -131,9 +131,8 @@ class SettingsTab(QScrollArea):
         column.addWidget(SettingsRow(
             self.tr("Write a .sha256 file beside the archive"),
             self.tr("Lets anyone check the archive arrived intact after a "
-                    "download or a copy, using sha256sum or QuickSFV — no need "
-                    "for this app. Off by default; nothing extra is written "
-                    "unless you ask."),
+                    "download or a copy, without this app. Off by default; "
+                    "nothing extra is written unless you ask."),
             self.sidecar_toggle, page))
 
         self.open_after_extract = QCheckBox(page)
@@ -187,8 +186,7 @@ class SettingsTab(QScrollArea):
         self.theme_button.clicked.connect(self.themeToggled.emit)
         column.addWidget(SettingsRow(
             self.tr("Appearance"),
-            self.tr("Dark and light are both first-class — the token table "
-                    "changes, not the stylesheet."),
+            self.tr("Switch between dark and light."),
             self.theme_button, page))
 
         # I5. The switch for the Explorer right-click menu (the CLI and the installer could already

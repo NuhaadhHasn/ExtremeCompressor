@@ -16,7 +16,7 @@
 > free route is **SignPath Foundation**, which needs a public repo, an OSI licence (MIT, done), MFA and an automated build;
 > Microsoft's Artifact Signing is US/Canada only for individuals; a paid OV certificate is about $150-300 a year;
 > (3) **back up `C:\Users\nuhaa\.excmp\update-signing.key`** (no copy exists; lost = one manual reinstall).
-> The first release has never been published: nothing has been uploaded to GitHub.
+> **v0.1.0 was published on 2026-11-25** (https://github.com/NuhaadhHasn/ExtremeCompressor/releases/tag/v0.1.0: the installer, `SHA256SUMS` and `SHA256SUMS.sig`, signed with the owner's key). It was built from `main` at `d09b255`, passed the real install/uninstall smoke test, and was installed on the owner's laptop. The real update path was tested against it (check, download over https from GitHub, signature and SHA-256 verified). **To see an actual update happen a second release is needed** (bump `__version__`, follow `packaging/RELEASING.md`). `winget validate` accepts the 0.1.0 manifest; submitting it to microsoft/winget-pkgs (a fork and a pull request) is still to do. The repository was made public the same day with a rewritten history, so hashes older than that are gone.
 > Corpora for the next measurements: `C:\excmp-bench\b29\corpora` (nested3, jpeg2, png2, pptx2, docx2).
 
 > **Five branches merged on 2026-11-21** (merge commits `6f36989` B27, `cfa2a83` B28, `f50f45d`

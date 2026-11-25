@@ -50,14 +50,32 @@ def test_the_key_in_the_app_is_the_one_the_owner_generated_and_is_not_the_placeh
     assert updater.PUBLIC_KEY != bytes(32)
 
 
-def test_the_private_key_is_not_in_the_repo():
-    """The private key lives under the home folder, never in a tracked path. Guard against a 64-hex file
-    called *signing*key* appearing in the tree."""
-    hits = [p for p in ROOT.rglob("*") if p.is_file() and ".git" not in p.parts and ".venv" not in p.parts
-            and "signing" in p.name.lower() and "key" in p.name.lower() and p.suffix != ".py"]
-    assert hits == []
+def _git(*args):
+    import subprocess
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+
+
+def test_no_private_key_is_tracked_by_git():
+    """A backup of the signing key may sit in the project folder (`.secrets/`, so it travels with the folder), but
+    git must never see it: nothing tracked may be a key file, and the code must hold no private key."""
+    tracked = _git("ls-files")
+    if tracked.returncode != 0:
+        pytest.skip("not a git checkout")
+    bad = [f for f in tracked.stdout.splitlines()
+           if f.startswith(".secrets/") or ("signing" in Path(f).name.lower() and "key" in Path(f).name.lower()
+                                            and not f.endswith(".py"))]
+    assert bad == []
     for p in (ROOT / "excmp" / "updater.py", ROOT / "tools" / "release_sign.py"):
         assert not re.search(r"private_key\s*=\s*bytes\.fromhex", p.read_text(encoding="utf-8"))
+
+
+def test_the_secrets_folder_is_git_ignored():
+    """If this fails, a private key copied into `.secrets/` could be committed (and the repository is public)."""
+    probe = ".secrets/update-signing.key"
+    r = _git("check-ignore", "-q", probe)
+    if r.returncode not in (0, 1):
+        pytest.skip("not a git checkout")
+    assert r.returncode == 0, ".secrets/ must be listed in .gitignore"
 
 
 def test_a_key_that_is_not_the_apps_key_is_refused_before_a_release_is_made(tool, tmp_path):

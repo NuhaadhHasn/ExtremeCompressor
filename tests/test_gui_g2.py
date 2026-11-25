@@ -133,7 +133,7 @@ def test_our_own_archive_keeps_the_columns_only_we_can_fill(window, ours, qtbot)
     tab = window.extract_tab
     tab.set_archive(ours)
     open_contents(tab, qtbot)
-    assert "route" in headers(tab)
+    assert "how" in headers(tab)
     assert any("why" in h for h in headers(tab))
 
 

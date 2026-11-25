@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QFileDialog, QFrame, QHBoxLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QScrollArea,
                                QSpinBox, QVBoxLayout, QWidget)
 
@@ -161,6 +161,27 @@ class SettingsTab(QScrollArea):
             self.tr("Keeps a running job out of the taskbar. The queue keeps "
                     "going either way."),
             self.tray_toggle, page))
+
+        # E7. A long job must not be cut short by the laptop going to sleep, and an overnight one may end with
+        # the PC putting itself away. Both are explained inline; the action only ever follows a clean run.
+        self.awake_toggle = QCheckBox(page)
+        self.awake_toggle.setAccessibleName(self.tr("Keep the PC awake while a job runs"))
+        column.addWidget(SettingsRow(
+            self.tr("Keep the PC awake while a job runs"),
+            self.tr("Stops Windows sleeping in the middle of a long job (the screen may still turn off). "
+                    "Released as soon as the queue is empty."),
+            self.awake_toggle, page))
+
+        self.after_combo = QComboBox(page)
+        for label, key in ((self.tr("Do nothing"), "nothing"), (self.tr("Sleep"), "sleep"),
+                           (self.tr("Hibernate"), "hibernate"), (self.tr("Shut down"), "shutdown")):
+            self.after_combo.addItem(label, key)
+        self.after_combo.setAccessibleName(self.tr("When the whole queue has finished"))
+        column.addWidget(SettingsRow(
+            self.tr("When the whole queue has finished"),
+            self.tr("Sleep, hibernate or shut down the PC after the last job, so an overnight run can end by "
+                    "itself. Only if every job succeeded, after a 60-second countdown you can cancel."),
+            self.after_combo, page))
 
         self.theme_button = QPushButton(self.tr("Switch theme"), page)
         self.theme_button.clicked.connect(self.themeToggled.emit)
@@ -360,6 +381,8 @@ class SettingsTab(QScrollArea):
         "settings/notify": ("notify_toggle", bool, True),
         "settings/tray": ("tray_toggle", bool, False),
         "settings/update_check": ("update_toggle", bool, True),
+        "settings/keep_awake": ("awake_toggle", bool, True),
+        "settings/after_queue": ("after_combo", "combo", "nothing"),
     }
 
     @staticmethod
@@ -378,6 +401,9 @@ class SettingsTab(QScrollArea):
             widget = getattr(self, attr)
             if kind is bool:
                 widget.setChecked(self._as_bool(raw, default))
+            elif kind == "combo":
+                found = widget.findData(raw if isinstance(raw, str) else default)
+                widget.setCurrentIndex(found if found >= 0 else widget.findData(default))
             elif kind is int:
                 try:
                     widget.setValue(int(raw) if raw is not None else default)
@@ -391,6 +417,7 @@ class SettingsTab(QScrollArea):
         for key, (attr, kind, _default) in self._KEYS.items():
             widget = getattr(self, attr)
             settings.setValue(key, widget.isChecked() if kind is bool
+                              else widget.currentData() if kind == "combo"
                               else widget.value() if kind is int
                               else widget.text())
 

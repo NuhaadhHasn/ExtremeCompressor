@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
 from ctypes import HRESULT, c_int, c_ulonglong
 from ctypes.wintypes import HWND
 from pathlib import Path
@@ -91,6 +92,49 @@ except Exception:  # pragma: no cover - comtypes missing or not Windows
     _cc = None
     _ITaskbarList3 = None
     _CLSID_TASKBARLIST = None
+
+
+# E7: keep the system awake while a job runs, and what to do when the whole queue is done. The display may
+# still turn off (only ES_SYSTEM_REQUIRED is asked for). ES_CONTINUOUS makes the request last until it is
+# cleared; Windows keeps it per thread, so the GUI thread that sets it is the one that clears it.
+_ES_CONTINUOUS = 0x80000000
+_ES_SYSTEM_REQUIRED = 0x00000001
+
+
+def _set_execution_state(flags: int) -> int:
+    return ctypes.windll.kernel32.SetThreadExecutionState(ctypes.c_uint(flags))
+
+
+def keep_awake(on: bool) -> bool:
+    """Ask Windows not to sleep the system (``on``) or drop that request. Quiet False when it cannot."""
+    try:
+        _set_execution_state(_ES_CONTINUOUS | (_ES_SYSTEM_REQUIRED if on else 0))
+        return True
+    except Exception:                                    # noqa: BLE001 - not Windows, or blocked: no-op
+        return False
+
+
+#: The only commands this app will ever run to power the machine down: fixed lists, never built from input.
+_POWER = {
+    "sleep": ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
+    "hibernate": ["shutdown.exe", "/h"],
+    "shutdown": ["shutdown.exe", "/s", "/t", "0"],
+}
+
+
+def power_command(action: object) -> list[str] | None:
+    return list(_POWER[action]) if isinstance(action, str) and action in _POWER else None
+
+
+def run_power_action(action: object) -> bool:
+    cmd = power_command(action)
+    if cmd is None:
+        return False
+    try:
+        subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:                                    # noqa: BLE001
+        return False
+    return True
 
 
 def set_app_id(app_id: str = APP_ID) -> None:

@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Signal
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QFileDialog, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QScrollArea,
                                QSpinBox, QVBoxLayout, QWidget)
@@ -69,7 +69,7 @@ class SettingsTab(QScrollArea):
 
     def __init__(self, tools: dict[str, ToolInfo | None], default_temp: Path,
                  parent: QWidget | None = None, *, shell=None,
-                 shell_supported: bool | None = None) -> None:
+                 shell_supported: bool | None = None, updates=None) -> None:
         super().__init__(parent)
         self._tools = dict(tools)
         # I5: the Explorer menu's backend (excmp.shellmenu), injectable so a test can never write to
@@ -191,6 +191,32 @@ class SettingsTab(QScrollArea):
         column.addWidget(self.explorer_row)
         self.refresh_explorer_menu()
 
+        # E5. Updates: a daily background look at this project's GitHub releases (opt out here), and
+        # a button to look now. Signed releases only (excmp/updater.py); no modal dialog, the state is
+        # said inline under the button, and finding one raises the window's banner.
+        from ..updatecontroller import UpdateController
+        self.updates = updates if updates is not None else UpdateController(self)
+        self.update_toggle = QCheckBox(self.tr("Look once a day"), page)
+        self.update_toggle.setAccessibleName(self.tr("Look for updates once a day"))
+        self.update_button = QPushButton(self.tr("Check for updates"), page)
+        self.update_button.clicked.connect(self._update_clicked)
+        self.update_state = QLabel(self.tr("Version %s.") % self.updates.current, page)
+        self.update_state.setWordWrap(True)
+        self.update_state.setTextFormat(Qt.TextFormat.PlainText)      # server text is never markup
+        self.update_state.setStyleSheet("font-weight: 600;")
+        update_control = QWidget(page)
+        update_box = QVBoxLayout(update_control)
+        update_box.setContentsMargins(0, 0, 0, 0)
+        update_box.setSpacing(GAP_INTRA)
+        update_box.addWidget(self.update_button)
+        update_box.addWidget(self.update_toggle)
+        column.addWidget(SettingsRow(
+            self.tr("Updates"),
+            self.tr("Looks at this project's GitHub releases and installs a newer version only if it carries the "
+                    "owner's signature. It sends nothing but a normal web request."),
+            update_control, page, status=self.update_state))
+        self.updates.stateChanged.connect(self._refresh_updates)
+
         # The inventory the status strip elides at narrow widths.
         self._tools_label = QLabel("", page)
         self._tools_label.setObjectName("Subtitle")
@@ -254,6 +280,26 @@ class SettingsTab(QScrollArea):
             return
         self.refresh_explorer_menu()
 
+    # -- updates (E5) ----------------------------------------------------------
+    def _update_clicked(self) -> None:
+        if self.updates.state in ("available", "ready"):
+            self.updates.install()
+        else:
+            self.updates.check()
+
+    def _refresh_updates(self) -> None:
+        u = self.updates
+        busy = u.state in ("checking", "downloading")
+        self.update_button.setEnabled(not busy)
+        if u.state == "available" and u.info is not None:
+            self.update_button.setText(self.tr("Download and install %s") % u.info.version)
+        elif u.state == "ready":
+            self.update_button.setText(self.tr("Install now"))
+        else:
+            self.update_button.setText(self.tr("Check for updates"))
+        if u.message or u.state in ("error", "uptodate"):
+            self.update_state.setText(u.message or self.tr("Version %s.") % u.current)
+
     # -- tools ---------------------------------------------------------------
     def set_tools(self, tools: dict[str, ToolInfo | None]) -> None:
         """The full inventory — and what we will actually do with each entry.
@@ -313,6 +359,7 @@ class SettingsTab(QScrollArea):
         "settings/open_after_extract": ("open_after_extract", bool, False),
         "settings/notify": ("notify_toggle", bool, True),
         "settings/tray": ("tray_toggle", bool, False),
+        "settings/update_check": ("update_toggle", bool, True),
     }
 
     @staticmethod

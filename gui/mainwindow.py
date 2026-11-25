@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRect, QSettings, Qt, QThreadPool, Signal
+from PySide6.QtCore import QRect, QSettings, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import (QAction, QCloseEvent, QFontMetrics, QIcon,
                            QKeySequence, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
@@ -50,7 +50,8 @@ from .widgets.queue_table import QueueTable
 from .widgets.results import ResultsPanel
 from .widgets.settings_tab import SettingsTab
 from .winintegration import (TBPF_ERROR, TBPF_PAUSED, Notifier, TaskbarProgress,
-                             open_in_explorer, set_dark_titlebar)
+                             keep_awake, open_in_explorer, run_power_action,
+                             set_dark_titlebar)
 
 DEFAULT_TEMP = Path.home() / ".excmp" / "tmp"
 
@@ -626,6 +627,17 @@ class MainWindow(QMainWindow):
         self.queue.jobDone.connect(self._on_job_done)
         self.queue.jobFailed.connect(self._on_job_failed)
         self.queue.queueIdle.connect(self._on_queue_idle)
+        # E7: keep the PC awake while jobs run; an optional sleep / hibernate / shut down after a clean queue.
+        self._awake_held = False
+        self._in_run = False
+        self._run_failed = False
+        self._after_action: str | None = None
+        self._after_timer = QTimer(self)
+        self._after_timer.setSingleShot(True)
+        self._after_timer.timeout.connect(self._run_after_queue)
+        self.queue.jobStarted.connect(self._power_job_started)
+        self.queue.jobFailed.connect(self._power_job_failed)
+        self.queue.queueIdle.connect(self._power_queue_idle)
         self.queue.pausedChanged.connect(self._on_paused_changed)
 
         self.queue_table.cancelRequested.connect(self.queue.cancel)
@@ -1552,6 +1564,55 @@ class MainWindow(QMainWindow):
         self.banner.hide_banner()
         self.close()
 
+    # -- power (E7) -----------------------------------------------------------------
+    #: The countdown before an after-queue action runs; a test shortens it.
+    AFTER_QUEUE_DELAY_MS = 60_000
+
+    def _power_job_started(self, _job_id: str) -> None:
+        self._cancel_after()                              # a new job during the countdown: not finished after all
+        if not self._in_run:
+            self._in_run, self._run_failed = True, False  # a fresh run starts clean
+        if not self._awake_held and self.settings_tab.awake_toggle.isChecked():
+            self._awake_held = keep_awake(True)
+
+    def _power_job_failed(self, _job_id: str, _message: str) -> None:
+        self._run_failed = True
+
+    def _power_queue_idle(self) -> None:
+        if self._awake_held:                              # released even if the switch was turned off meanwhile
+            keep_awake(False)
+            self._awake_held = False
+        was_running, self._in_run = self._in_run, False
+        action = self.settings_tab.after_combo.currentData()
+        if not was_running or action in (None, "nothing"):
+            return
+        verb = {"sleep": self.tr("sleep"), "hibernate": self.tr("hibernate"),
+                "shutdown": self.tr("shut down")}.get(action, action)
+        if self._run_failed:
+            self.banner.show_message(
+                self.tr("The queue finished with a failed job, so the PC will not %s.") % verb, tone="warn")
+            return
+        self._after_action = action
+        self.banner.show_message(
+            self.tr("All jobs finished. The PC will %s in %d seconds.") % (verb, max(1, self.AFTER_QUEUE_DELAY_MS // 1000)),
+            tone="info",
+            actions=[(self.tr("Cancel"), self._cancel_after), (self.tr("Do it now"), self._run_after_queue)])
+        self._after_timer.start(self.AFTER_QUEUE_DELAY_MS)
+
+    def _cancel_after(self) -> None:
+        was_waiting = self._after_action is not None
+        self._after_timer.stop()
+        self._after_action = None
+        if was_waiting:
+            self.banner.hide_banner()
+
+    def _run_after_queue(self) -> None:
+        action, self._after_action = self._after_action, None
+        self._after_timer.stop()
+        if action and not self.queue.is_busy:
+            self.banner.hide_banner()
+            run_power_action(action)
+
     # -- updates (E5) ---------------------------------------------------------------
     def auto_update_check(self) -> None:
         """The daily look. Skipped when the user turned it off, when it is not due yet, or by
@@ -1604,6 +1665,10 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.settings_tab.updates.cancel()
+        self._cancel_after()
+        if self._awake_held:
+            keep_awake(False)
+            self._awake_held = False
         self.settings_tab.save()
         QSettings().setValue("window/geometry", self.saveGeometry())
         self.queue.shutdown()

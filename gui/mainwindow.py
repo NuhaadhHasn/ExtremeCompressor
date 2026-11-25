@@ -157,11 +157,10 @@ class MainWindow(QMainWindow):
             return
         settings.setValue("settings/seen_first_run", True)
         self.banner.show_message(
-            self.tr("Your originals are never modified — archives are written "
-                    "to a temporary file and only renamed into place once a "
-                    "full restore has verified every SHA-256. Anything that "
-                    "cannot shrink is stored byte-for-byte, and the app tells "
-                    "you why."),
+            self.tr("Your files are never changed. Every archive is restored "
+                    "and checked before it is saved. Files that cannot shrink "
+                    "are kept as they are, and you are told why. Start by "
+                    "dropping a folder below."),
             tone="info",
             actions=[(self.tr("Got it"), self.banner.hide_banner)])
 
@@ -224,7 +223,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._scroll, self.tr("Compress"))
 
         self.extract_tab = ExtractTab(self)
-        self.tabs.addTab(self.extract_tab, self.tr("Extract"))
+        self.tabs.addTab(self.extract_tab, self.tr("Restore"))
 
         self._build_activity_tab()
 
@@ -472,11 +471,14 @@ class MainWindow(QMainWindow):
         # inside Advanced, because it is the answer to the question the whole
         # Compress page is asking, and secondary-styled because it costs
         # minutes — the estimate is still the default way to decide.
-        self.measure_button = QPushButton(self.tr("Measure presets"),
+        self.measure_button = QPushButton(self.tr("Test all four"),
                                           self.action_bar)
+        self.measure_button.setToolTip(self.tr(
+            "Runs every profile on a sample of your files and shows what each "
+            "really saves. Takes a few minutes."))
         self.measure_button.setAccessibleName(
-            self.tr("Measure presets — run every profile on a sample of these "
-                    "files and report what each really saved"))
+            self.tr("Test all four — run every profile on a sample of these "
+                    "files and report what each really saves"))
         self.measure_button.setEnabled(False)
         self.clear_button = QPushButton(self.tr("Clear"), self.action_bar)
         self.compress_button = QPushButton(self.tr("Compress"), self.action_bar)
@@ -925,7 +927,7 @@ class MainWindow(QMainWindow):
         running = (self._comparison is not None
                    and self._comparison.is_running())
         self.measure_button.setText(
-            self.tr("Stop measuring") if running else self.tr("Measure presets"))
+            self.tr("Stop measuring") if running else self.tr("Test all four"))
         self.measure_button.setEnabled(running or bool(self._infos))
 
     def toggle_measurement(self) -> None:

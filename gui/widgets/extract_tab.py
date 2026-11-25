@@ -112,11 +112,11 @@ class ExtractTab(QWidget):
         # Verification without extraction: the honest answer to "is this
         # archive still good?" about a file that has been sitting on a drive
         # for a year. It needs no destination, and writes nothing.
-        self.verify_button = QPushButton(self.tr("Verify only"), card)
+        self.verify_button = QPushButton(self.tr("Check without restoring"), card)
         self.verify_button.setEnabled(False)
         self.verify_button.setToolTip(self.tr(
             "Restore every file to a temporary folder, check it against the "
-            "archive’s SHA-256 ledger, then delete it again. Nothing is "
+            "archive’s saved fingerprints (SHA-256), then delete it again. Nothing is "
             "written to your destination folder."))
         self.verify_button.setAccessibleDescription(self.verify_button.toolTip())
         self.verify_button.clicked.connect(self._emit_verify)
@@ -161,8 +161,8 @@ class ExtractTab(QWidget):
         self.contents = QTreeWidget(card)
         self.contents.setColumnCount(4)
         self.contents.setHeaderLabels([self.tr("File"), self.tr("Size"),
-                                       self.tr("Route"),
-                                       self.tr("Why it was stored")])
+                                       self.tr("How"),
+                                       self.tr("Why it was not compressed")])
         self.contents.setRootIsDecorated(False)
         self.contents.setAlternatingRowColors(True)
         self.contents.setMaximumHeight(220)
@@ -174,7 +174,7 @@ class ExtractTab(QWidget):
         grid.addWidget(self.contents, 9, 0, 1, 3)
 
         self.extract_selected_button = QPushButton(
-            self.tr("Extract selected"), card)
+            self.tr("Restore selected"), card)
         self.extract_selected_button.setEnabled(False)
         self.extract_selected_button.setToolTip(self.tr(
             "Restore only the ticked files. In a solid archive that still "
@@ -280,10 +280,10 @@ class ExtractTab(QWidget):
         self.verify_button.setEnabled(ours)
         self.verify_button.setToolTip(self.tr(
             "Restore every file to a temporary folder, check it against the "
-            "archive’s SHA-256 ledger, then delete it again. Nothing is "
+            "archive’s saved fingerprints (SHA-256), then delete it again. Nothing is "
             "written to your destination folder.") if ours else self.tr(
             "Only ExtremeCompressor archives can be verified: this one carries "
-            "no SHA-256 ledger to check against."))
+            "no saved fingerprints to check against."))
         self.verify_button.setAccessibleDescription(self.verify_button.toolTip())
 
         # G2: anything 7-Zip can open can now be listed. Before this phase
@@ -332,14 +332,13 @@ class ExtractTab(QWidget):
     def _blurb_text(self, ours: bool) -> str:
         if ours:
             return self.tr(
-                "Every file's SHA-256 was recorded when the archive was written. "
-                "Restoring replays the stage chain backwards and re-checks each "
-                "hash — if a single byte differs, this fails loudly instead of "
-                "quietly.")
+                "Every file is checked against the fingerprint saved when the "
+                "archive was made. If even one byte differs, the restore fails "
+                "and says so.")
         return self.tr(
             "This tab also opens archives made by other tools — zip, 7z, rar, "
-            "tar, iso and the rest. Those carry no SHA-256 ledger, so the files "
-            "come out but nothing can be checked against one.")
+            "tar, iso and the rest. They carry no saved fingerprints, so the "
+            "files can be restored but not checked.")
 
     def _set_contents_open(self, open_: bool) -> None:
         self.contents_toggle.setText(self.tr("▾  What’s inside") if open_
@@ -435,8 +434,8 @@ class ExtractTab(QWidget):
         ours = listing.ledger_backed
 
         self.contents.setHeaderLabels(
-            [self.tr("File"), self.tr("Size"), self.tr("Route"),
-             self.tr("Why it was stored")] if ours else
+            [self.tr("File"), self.tr("Size"), self.tr("How"),
+             self.tr("Why it was not compressed")] if ours else
             [self.tr("File"), self.tr("Size"), self.tr("Packed"),
              self.tr("Modified")])
 
@@ -466,8 +465,10 @@ class ExtractTab(QWidget):
             item.setText(self.COL_NAME, name)
             item.setText(self.COL_SIZE, fmt_size(entry.size))
             if ours:
-                item.setText(self.COL_ROUTE, entry.route)
-                item.setText(self.COL_WHY, entry.reason)
+                # plain words for what the engine calls the route (the data keeps its own names)
+                item.setText(self.COL_ROUTE, {"store": self.tr("Kept as is"),
+                                              "pipeline": self.tr("Compressed")}.get(entry.route, entry.route))
+                item.setText(self.COL_WHY, entry.reason or "—")
                 # The SHA-256 is the evidence; too wide for a column, but it
                 # belongs one hover away rather than nowhere.
                 item.setToolTip(self.COL_NAME,
@@ -535,8 +536,8 @@ class ExtractTab(QWidget):
         count = len(self.selected_names())
         self.extract_selected_button.setEnabled(count > 0)
         self.extract_selected_button.setText(
-            self.tr("Extract %d selected") % count if count
-            else self.tr("Extract selected"))
+            self.tr("Restore %d selected") % count if count
+            else self.tr("Restore selected"))
 
     def _emit_selected(self) -> None:
         names = self.selected_names()

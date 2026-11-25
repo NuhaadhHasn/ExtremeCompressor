@@ -127,7 +127,7 @@ def window(qtbot):
 def test_there_is_a_settings_tab(window):
     labels = [window.tabs.tabText(i).split(" (")[0]
               for i in range(window.tabs.count())]
-    assert labels == ["Compress", "Extract", "Activity", "Settings"]
+    assert labels == ["Compress", "Restore", "Activity", "Settings"]
 
 
 def test_settings_lists_the_tools_the_status_strip_has_to_elide(window):

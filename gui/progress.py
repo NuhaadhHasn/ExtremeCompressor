@@ -41,8 +41,17 @@ STAGE_WEIGHTS: dict[str, float] = {
     # the old 50 the bar crossed half way while zpaqfranz had barely started.
     "zpaqfranz": 400.0,
     "zstd": 100.0,   # the whole fast profile is this one stage
+    # B31: one read of the stream and, when it finds repeats, one write.
+    # Measured at tens of MB/s against Precomp's and 7-Zip's one or two.
+    "dedup": 3.0,
 }
 DEFAULT_WEIGHT = 25.0
+
+#: B31: stages the engine offers in front of the final codec without their
+#: being in the plan (`engine._with_dedup`). One that reports is placed there,
+#: not at the end: appended after 7-Zip it would make every 7-Zip report look
+#: like "a late report from a stage we already left", and the bar would stop.
+BEFORE_FINAL = frozenset({"dedup"})
 
 # Mirrors engine._TREE_CAPABLE. Duplicated rather than imported so the GUI
 # doesn't drag the engine in just to draw a bar; test_gui_progress.py asserts
@@ -177,8 +186,10 @@ class ChainProgress:
         if stage_id not in self.chain:
             # The plan and reality disagreed (a stage was added, or a profile
             # degraded differently). Take reality's word for it.
-            self.chain.append(stage_id)
-            self._weights.append(STAGE_WEIGHTS.get(stage_id, DEFAULT_WEIGHT))
+            at = (len(self.chain) - 1 if stage_id in BEFORE_FINAL
+                  and len(self.chain) - 1 >= self._index else len(self.chain))
+            self.chain.insert(at, stage_id)
+            self._weights.insert(at, STAGE_WEIGHTS.get(stage_id, DEFAULT_WEIGHT))
 
         index = self.chain.index(stage_id)
         if index < self._index:

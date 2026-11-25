@@ -39,7 +39,8 @@ from .planner import (_NO_ROOM, Plan, Profile, _probe_pipes, plan as make_plan,
 from .tempclean import rmtree_force
 from .safepath import UnsafePathError, resolve_within, safe_relpath
 from .slt import classify_failure
-from .stages.base import Stage, StageContext, StageError, StageSkip
+from .stages.base import QuietSkip, Stage, StageContext, StageError, StageSkip
+from .stages.dedup import DedupStage
 from .stages.sevenzip import SevenZipStage
 from .stages.tarstage import TarStage
 from .stages.zstdstage import FAST_ZSTD_LEVEL, ZstdStage
@@ -52,7 +53,27 @@ from .verify import (SourceCheck, hash_file, tree_hash, verify_restore,
 _TREE_CAPABLE = {"sevenzip", "zstd"}
 
 _PAYLOAD_EXT = {"sevenzip": ".7z", "zstd": ".tar.zst", "tar": ".tar",
-                "precomp": ".pcf", "srep": ".srep", "zpaqfranz": ".zpaq"}
+                "precomp": ".pcf", "srep": ".srep", "zpaqfranz": ".zpaq",
+                "dedup": ".dd"}
+
+#: B31: the long-range dedup stage is not planned, it is *offered*. The
+#: planner's chain stays ``precomp -> sevenzip`` (the estimator, calibration
+#: and the GUI all key on that), and the engine puts ``dedup`` in front of
+#: 7-Zip on a Precomp chain. The stage then skips itself unless the stream is
+#: larger than 7-Zip's dictionary and holds repeats beyond its reach, so an
+#: archive records a dedup stage only when one really ran.
+#:
+#: Not before zpaqfranz: Insane's codec dedups at any distance itself.
+_DEDUP_BEFORE = "sevenzip"
+
+
+def _with_dedup(chain: list[str]) -> list[str]:
+    """``chain`` with the dedup stage offered before a final 7-Zip, on a
+    chain that has Precomp (Extreme, as resolved on this machine)."""
+    if ("precomp" in chain and chain[-1] == _DEDUP_BEFORE
+            and "dedup" not in chain):
+        return [*chain[:-1], "dedup", chain[-1]]
+    return list(chain)
 
 
 # A restored stage output beyond this multiple of the declared total is a
@@ -464,6 +485,10 @@ def _stage_factory(options: StageOptions | None = None,
         "tar": TarStage(),
         "zstd": zstd,
         "sevenzip": seven,
+        # B31. Pure Python, so always here: an archive that recorded a dedup
+        # stage extracts on any machine. Its window is the dictionary 7-Zip
+        # will really run with, because that is the reach it makes up for.
+        "dedup": DedupStage(window=seven.dict_bytes()),
     }
     try:  # optional stages, present once task 9 lands / tools installed
         from .stages.precomp import PrecompStage
@@ -992,6 +1017,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
             chain = list(pipe_route.stages)
             if len(chain) > 1 or chain[0] not in _TREE_CAPABLE:
                 chain = ["tar", *[s for s in chain if s != "tar"]]
+            chain = _with_dedup(chain)
             for sid in chain:
                 if sid not in registry:
                     raise StageError(f"stage '{sid}' is not implemented")
@@ -1038,8 +1064,15 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 stage = registry[sid]
                 nxt = job_dir / f"s{i}{_PAYLOAD_EXT.get(sid, '.bin')}"
                 consumed = _tree_size(current)
+                before = current
                 try:
                     current = stage.compress(current, nxt, ctx)
+                except QuietSkip as skip:
+                    # B31: an opportunistic stage that stepped aside. Logged,
+                    # not a warning, and no progress report from here: the
+                    # stage sent its own if it had done any work.
+                    ctx.log_cb(sid, str(skip))
+                    continue
                 except StageSkip as skip:
                     skip_notes.append(str(skip))
                     # B23: a skipped stage is over, so say so: without it the
@@ -1047,6 +1080,10 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # prints nothing) came next, the bar sat still all of it.
                     ctx.progress_cb(sid, 100.0)
                     continue  # pass data through; stage stays out of manifest
+                if sid == "dedup" and before.is_file() and before.parent == job_dir:
+                    # Its input (Precomp's output, the largest file of the
+                    # job) is now held twice over. Nothing reads it again.
+                    before.unlink(missing_ok=True)
                 tool_name = getattr(stage, "tool_name", sid)
                 tool = tools.get(tool_name) if tools else None
                 stage_records.append(StageRecord(
@@ -1059,7 +1096,8 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # as deliberate settings.
                     input_bytes=consumed,
                     params=(options.as_params() if options
-                            and sid in ("sevenzip", "zstd") else {}),
+                            and sid in ("sevenzip", "zstd")
+                            else getattr(stage, "record_params", dict)()),
                 ))
             the_plan.warnings.extend(skip_notes)
             payload_path = current
@@ -1907,7 +1945,13 @@ def _extract(archive: Path, out_dir: Path, ctx: StageContext,
                 declared_in = getattr(record, "input_bytes", 0) or 0
                 budget = (int(declared_in * 1.25) + _STAGE_FLOOR_BYTES
                           if declared_in else stage_budget)
+                ctx.output_limit = budget
+                consumed_path = current
                 current = stage.extract(current, dst, ctx)
+                if (sid == "dedup" and consumed_path.is_file()
+                        and job_dir in consumed_path.parents):
+                    # B31: the rebuilt stream replaces it; do not hold both.
+                    consumed_path.unlink(missing_ok=True)
                 produced = _tree_size(current)
                 if produced > budget:
                     raise ContainerError(

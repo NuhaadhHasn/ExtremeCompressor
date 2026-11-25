@@ -159,6 +159,20 @@ class SevenZipStage(Stage):
                       else lzma2_default_dict(self.level))
         return lzma2_auto_threads(dict_bytes, self.level)
 
+    def dict_bytes(self) -> int:
+        """The LZMA2 dictionary this stage will compress with: how far back
+        it can find a repeat on its own. ``-md=`` in the Parameters line wins,
+        as it does on 7-Zip's command line (it comes last)."""
+        from ..ram import lzma2_default_dict
+        for arg in reversed(self.extra_args):
+            if arg.lower().startswith("-md="):
+                try:
+                    return _dict_bytes(arg[4:]) or lzma2_default_dict(self.level)
+                except ValueError:
+                    break
+        return (_dict_bytes(self.dict_size) if self.dict_size
+                else lzma2_default_dict(self.level))
+
     def build_extract_cmd(self, src: Path, dst: Path, exe: str,
                           include: list[str] | None = None,
                           password: str | None = None,

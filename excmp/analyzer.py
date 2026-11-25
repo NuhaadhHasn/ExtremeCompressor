@@ -23,6 +23,7 @@ predicting from the worst sample needed only 0.95x.
 from __future__ import annotations
 
 import math
+import os
 import struct
 from collections import Counter
 from dataclasses import dataclass
@@ -407,10 +408,17 @@ def _detect_category(path: Path, head: bytes) -> Category:
     ext_cat = _EXT.get(path.suffix.lower())
     if ext_cat:
         return ext_cat
-    # Heuristic: mostly printable head -> text
-    if head and sum(32 <= b < 127 or b in (9, 10, 13) for b in head) / len(head) > 0.95:
+    # Heuristic: mostly printable head -> text. Counted by deleting the
+    # printable bytes in C: the same count as testing each byte in a Python
+    # loop, which cost about 1 ms per 64 KiB head on every file with no magic
+    # and no known extension.
+    if head and (len(head) - len(head.translate(None, _PRINTABLE))) / len(head) > 0.95:
         return Category.TEXT
     return Category.BINARY
+
+
+#: What the text heuristic counts as printable: ASCII 32-126, tab, LF, CR.
+_PRINTABLE = bytes([9, 10, 13, *range(32, 127)])
 
 
 def sample_stats(path: Path, sample: int = _SAMPLE) -> SampleStats:
@@ -423,28 +431,52 @@ def sample_stats(path: Path, sample: int = _SAMPLE) -> SampleStats:
     size = path.stat().st_size
     if size == 0:
         return SampleStats(entropy_bps=0.0, ratio=1.0, ratio_max=1.0, sampled_bytes=0)
+    with path.open("rb") as fh:
+        return _sample_stats_of(fh, size, sample)[0]
 
+
+def _sample_stats_of(fh, size: int, sample: int = _SAMPLE,
+                     head_bytes: int = 0) -> tuple[SampleStats, bytes]:
+    """:func:`sample_stats` over an already-open file of ``size`` bytes.
+
+    Also returns the first ``head_bytes`` of the file, which are the start of
+    the first sample: `analyze_file` wants both, and reading them through one
+    handle is one open per file instead of two. On a tree of small files the
+    opens are the cost (about 1.7 ms each with real-time scanning on, measured
+    2026-11-25 over 1,801 files), not the bytes.
+    """
+    head = b""
+    if size == 0:
+        return (SampleStats(entropy_bps=0.0, ratio=1.0, ratio_max=1.0,
+                            sampled_bytes=0), head)
     counts: Counter[int] = Counter()
     total = packed_total = 0
     ratios: list[float] = []
     cctx = zstandard.ZstdCompressor(level=_PROBE_LEVEL)
-    with path.open("rb") as fh:
-        offsets = {0}
-        if size > sample * 3:
-            offsets.update({size // 2, size - sample})
-        for off in sorted(offsets):
-            fh.seek(off)
-            chunk = fh.read(sample)
-            if not chunk:
-                continue
-            counts.update(chunk)
-            total += len(chunk)
-            # zstd frames incompressible blocks raw plus a small header, so a
-            # ratio can land a hair above 1.0. Clamp: we never predict inflation.
-            packed = len(cctx.compress(chunk))
-            packed_total += packed
-            ratios.append(min(1.0, packed / len(chunk)))
+    offsets = {0}
+    if size > sample * 3:
+        offsets.update({size // 2, size - sample})
+    for off in sorted(offsets):
+        fh.seek(off)
+        chunk = fh.read(max(sample, head_bytes) if off == 0 else sample)
+        if off == 0:
+            head = chunk[:head_bytes]
+            chunk = chunk[:sample]
+        if not chunk:
+            continue
+        counts.update(chunk)
+        total += len(chunk)
+        # zstd frames incompressible blocks raw plus a small header, so a
+        # ratio can land a hair above 1.0. Clamp: we never predict inflation.
+        packed = len(cctx.compress(chunk))
+        packed_total += packed
+        ratios.append(min(1.0, packed / len(chunk)))
 
+    return _stats_from(counts, total, packed_total, ratios), head
+
+
+def _stats_from(counts: "Counter[int]", total: int, packed_total: int,
+                ratios: list[float]) -> SampleStats:
     if total == 0:
         return SampleStats(entropy_bps=0.0, ratio=1.0, ratio_max=1.0, sampled_bytes=0)
     entropy = -sum((c / total) * math.log2(c / total) for c in counts.values())
@@ -475,14 +507,15 @@ def analyze_file(path: Path, root: Path | None = None) -> FileInfo:
     """``root`` is the input this file was found under, when there is one;
     with it the analysis also records the file's archive-name length."""
     path = Path(path)
-    st = path.stat()
-    size = st.st_size
     with path.open("rb") as fh:
+        # One open, and the stat is of the handle that is then read, so the
+        # size and mtime recorded are those of the bytes that were sampled.
+        st = os.fstat(fh.fileno())
+        size = st.st_size
         # 64 KiB rather than 4096: B5's PDF probe has to reach a `/FlateDecode`
         # declaration, and a PDF never puts one at offset 0. Category sniffing
         # and the zlib check still only look at the first few bytes.
-        head = fh.read(_PDF_SCAN_BYTES)
-    stats = sample_stats(path)
+        stats, head = _sample_stats_of(fh, size, head_bytes=_PDF_SCAN_BYTES)
     container = probe_container(path, head)
     return FileInfo(
         path=path,

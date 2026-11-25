@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat as _stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
 
-from .safepath import resolve_within
+from .safepath import Within
 
 
 class VerifyError(RuntimeError):
@@ -64,13 +67,14 @@ def verify_source(source_root: Path, ledger: dict[str, dict]) -> SourceCheck:
     extra: list[str] = []
     checked = 0
 
+    within = Within(source_root)
     for rel, meta in ledger.items():
-        p = resolve_within(source_root, rel)
-        if not p.is_file():
+        p = within(rel)
+        size = _regular_size(p)
+        if size is None:
             missing.append(rel)
             continue
         checked += 1
-        size = p.stat().st_size
         if size != meta["size"]:
             changed.append(f"{rel}: {size:,} bytes now, {meta['size']:,} "
                            f"when archived")
@@ -81,7 +85,7 @@ def verify_source(source_root: Path, ledger: dict[str, dict]) -> SourceCheck:
     known = set(ledger)
     tops = {rel.replace("\\", "/").split("/", 1)[0] for rel in ledger}
     for top in sorted(tops):
-        base = resolve_within(source_root, top)
+        base = within(top)
         if not base.is_dir():
             # A single-file input: its own ledger entry is the whole scope,
             # and it has already been checked above.
@@ -97,12 +101,62 @@ def verify_source(source_root: Path, ledger: dict[str, dict]) -> SourceCheck:
                        missing=missing, extra=sorted(extra))
 
 
+def _regular_size(path: Path) -> int | None:
+    """The size of a regular file, or None when ``path`` is not one.
+
+    ``is_file()`` followed by ``stat()`` asked the filesystem the same
+    question twice for every restored file; one ``os.stat`` answers both, and
+    follows links exactly as those two calls did.
+    """
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return st.st_size if _stat.S_ISREG(st.st_mode) else None
+
+
 def hash_file(path: Path) -> str:
     h = hashlib.sha256()
     with Path(path).open("rb") as fh:
         while chunk := fh.read(1 << 20):
             h.update(chunk)
     return h.hexdigest()
+
+
+#: Files up to this size are hashed a few at a time by `hash_files`; larger
+#: ones one after another, where the bytes are the cost and two readers on a
+#: spinning disk would only fight over the head.
+_SMALL_FILE_BYTES = 1 << 20
+#: How many small files are hashed at once. The wait being shared out is not
+#: ours: measured 2026-11-25 on the i5-7200U, the *first* open of a file that
+#: has just been written takes 15-19 ms while real-time protection scans it
+#: (0.3 ms for the second open, 0.9 ms to create it), and a restore is
+#: nothing but files that have just been written. 500 such files took 9.3-9.7 s
+#: to read one at a time, 5.0-5.6 s two at a time and 3.9-7.2 s four at a time.
+_HASH_WORKERS = max(1, min(4, os.cpu_count() or 1))
+#: Below this many small files a pool costs more than it saves.
+_POOL_FROM = 16
+
+
+def hash_files(paths: list[Path], sizes: list[int]) -> list[str]:
+    """:func:`hash_file` of every path, in the order given.
+
+    The same function over the same files, so the digests are the ones a
+    plain loop gives; only the waiting overlaps. An error reading any file
+    propagates, as it does from the loop.
+    """
+    digests: list[str | None] = [None] * len(paths)
+    small = [i for i, size in enumerate(sizes) if size <= _SMALL_FILE_BYTES]
+    if len(small) >= _POOL_FROM and _HASH_WORKERS > 1:
+        with ThreadPoolExecutor(_HASH_WORKERS,
+                                thread_name_prefix="excmp-hash") as pool:
+            for i, digest in zip(small, pool.map(hash_file,
+                                                 [paths[i] for i in small])):
+                digests[i] = digest
+    for i, path in enumerate(paths):
+        if digests[i] is None:
+            digests[i] = hash_file(path)
+    return digests          # type: ignore[return-value]
 
 
 def tree_hash(digests: dict[str, str]) -> str:
@@ -195,20 +249,33 @@ def verify_restore(out_dir: Path, ledger: dict[str, dict],
     # so it refuses one it cannot read rather than trusting its caller.
     validate_ledger_entries(ledger)
     problems: list[str] = []
+    # One `Within` for the pass: every name is still validated and its
+    # canonical target still compared against the canonical `out_dir`; only
+    # the canonicalization of `out_dir` itself is not repeated per file.
+    within = Within(out_dir)
+    found: dict[str, str] = {}
+    present: list[tuple[str, Path, int]] = []
     for rel, meta in ledger.items():
-        p = resolve_within(out_dir, rel)
-        if not p.is_file():
-            problems.append(f"missing: {rel}")
-            continue
-        if p.stat().st_size != meta["size"]:
-            problems.append(f"size mismatch: {rel}")
-            continue
-        digest = hash_file(p)
-        if digest != meta["sha256"]:
+        p = within(rel)
+        size = _regular_size(p)
+        if size is None:
+            found[rel] = f"missing: {rel}"
+        elif size != meta["size"]:
+            found[rel] = f"size mismatch: {rel}"
+        else:
+            present.append((rel, p, size))
+    # Every file that is there at the right size is read back and hashed, as
+    # before; `hash_files` only lets the small ones wait on the disk together.
+    digests = dict(zip((rel for rel, _, _ in present),
+                       hash_files([p for _, p, _ in present],
+                                  [size for _, _, size in present])))
+    for rel, meta in ledger.items():        # ledger order, as it always was
+        if rel in found:
+            problems.append(found[rel])
+        elif digests[rel] != meta["sha256"]:
             problems.append(f"hash mismatch: {rel}")
-            continue
-        if digests_out is not None:
-            digests_out[rel] = digest
+        elif digests_out is not None:
+            digests_out[rel] = digests[rel]
     if problems:
         raise VerifyError(
             "restore verification FAILED:\n  " + "\n  ".join(problems[:20])

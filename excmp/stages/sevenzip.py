@@ -144,6 +144,104 @@ class SevenZipStage(Stage):
             raise StageError(f"{self.id}: archive was not created")
         return dst
 
+    @staticmethod
+    def source_base(entries) -> Path | None:
+        """The one directory every entry's archive name hangs off, or None.
+
+        7-Zip stores a file under the relative path it was given, so it can
+        read the sources in place exactly when one working directory makes
+        every archive name a real relative path: ``<base>/<arcname>`` is the
+        file. That is one input, or several from the same folder. Anything
+        else (inputs from different folders), and any name a list file might
+        not carry literally, is left to the staging copy.
+        """
+        base: Path | None = None
+        for path, arcname in entries:
+            parts = tuple(arcname.split("/"))
+            whole = Path(path).parts
+            if len(whole) <= len(parts) or whole[-len(parts):] != parts:
+                return None
+            if any(p != p.strip() or p[:1] in "@-" or '"' in p
+                   or "*" in p or "?" in p for p in parts):
+                return None
+            here = Path(*whole[:-len(parts)])
+            if base is None:
+                base = here
+            elif here != base:
+                return None
+        return base
+
+    def compress_files(self, entries, dst: Path, ctx: StageContext,
+                       on_added, on_unreadable, total_bytes: int = 0) -> Path:
+        """`compress` without the staging copy: 7-Zip reads the sources
+        where they are, from a list of exactly the files to take.
+
+        Measured 2026-11-25 on 1,801 small files: staging wrote every file
+        again, and the first open of a file that has just been written waits
+        15-19 ms on real-time protection - paid by 7-Zip, once per file.
+
+        **Each file is hashed here first, by a read of our own, and 7-Zip
+        reads it afterwards.** Those are two reads, so this digest is a claim
+        about the archive and not a measurement of it. What makes it true is
+        what always did: the publish gate restores the archive and compares
+        every restored file against these digests, and a file that changed in
+        between fails it. (Before this, the digest was taken in one pass over
+        every file and the staging copy made in a later one; the gap was the
+        same.)
+
+        Raises :class:`NeedsStaging` when the sources cannot be read in place
+        or 7-Zip did not finish cleanly - a file locked after it was hashed
+        makes it exit 1 - and the engine then stages the files, which is
+        where a file that cannot be read is skipped one at a time (K3).
+        """
+        import hashlib
+        import os
+
+        from .base import NeedsStaging
+        dst = Path(dst)
+        entries = list(entries)
+        base = self.source_base(entries)
+        if base is None:
+            raise NeedsStaging("the sources do not share one folder")
+        listed: list[str] = []
+        for path, arcname in entries:
+            if ctx.cancel.is_set():
+                raise StageError(f"{self.id}: cancelled")
+            digest, size = hashlib.sha256(), 0
+            try:
+                with open(path, "rb") as fh:
+                    while chunk := fh.read(1 << 20):
+                        digest.update(chunk)
+                        size += len(chunk)
+            except OSError as exc:
+                on_unreadable(Path(path), exc)
+                continue
+            on_added(Path(path), digest.hexdigest(), size)
+            listed.append(arcname.replace("/", os.sep))
+        if not listed:
+            raise NeedsStaging("no source file could be read")
+        if dst.exists():
+            dst.unlink()
+        listfile = dst.with_name(dst.name + ".files")
+        listfile.write_text("\n".join(listed) + "\n", encoding="utf-8")
+        threads = self._auto_threads(ctx.threads)
+        # `build_compress_cmd` ends with the thing to archive; here that is
+        # the list, read as UTF-8, with `base` as the working directory.
+        cmd = self.build_compress_cmd(base, dst, threads, self._exe())[:-1]
+        cmd += ["-scsUTF-8", f"@{listfile}"]
+        try:
+            run_tool(cmd, ctx, self.id, _parse_percent, cwd=base)
+        except StageError as exc:
+            dst.unlink(missing_ok=True)
+            if ctx.cancel.is_set():
+                raise
+            raise NeedsStaging(str(exc)) from exc
+        finally:
+            listfile.unlink(missing_ok=True)
+        if not dst.exists():
+            raise NeedsStaging(f"{self.id}: archive was not created")
+        return dst
+
     def _auto_threads(self, requested: int) -> int:
         """The -mmt to pass: the user's count, else one per physical core
         capped at the RAM budget, else nothing at all when the Parameters line

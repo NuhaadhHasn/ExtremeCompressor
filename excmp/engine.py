@@ -12,15 +12,18 @@ Guarantees:
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import shutil
+import stat as _stat
+import sys
 import tempfile
 import threading
 import time
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from . import jpeg
 # Imported as a module as well as by name: `write_container` reads the cap from
@@ -37,11 +40,12 @@ from .manifest import (MANIFEST_NAME, ContainerError, Manifest, StageRecord,
 from .planner import (_NO_ROOM, Plan, Profile, _probe_pipes, plan as make_plan,
                       precomp_inflation, store_reason)
 from .tempclean import rmtree_force
-from .safepath import UnsafePathError, resolve_within, safe_relpath
+from .safepath import UnsafePathError, Within, resolve_within, safe_relpath
 from .slt import classify_failure
-from .stages.base import Stage, StageContext, StageError, StageSkip
+from .stages.base import (NeedsStaging, Stage, StageContext, StageError,
+                          StageSkip)
 from .stages.sevenzip import SevenZipStage
-from .stages.tarstage import TarStage
+from .stages.tarstage import SourceReadError, TarStage
 from .stages.zstdstage import FAST_ZSTD_LEVEL, ZstdStage
 from .tools import ToolInfo, find_tools
 from .verify import (SourceCheck, hash_file, tree_hash, verify_restore,
@@ -68,10 +72,94 @@ _PRECOMP_INFLATION = 5
 
 
 def _tree_size(path: Path) -> int:
-    p = Path(path)
-    if p.is_file():
-        return p.stat().st_size
-    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+    """Bytes in ``path``: a file's size, or the sum over every regular file
+    under a directory.
+
+    Walked with ``os.scandir``, which already knows what each entry is, so a
+    file costs one ``stat`` (for a size read from the file itself, not from
+    the directory's possibly stale copy of it) where ``rglob`` plus
+    ``is_file()`` plus ``stat()`` cost two and a `Path` each. Links to
+    directories are not walked into, as `rglob` does not; links to files are
+    followed, as ``is_file()`` did.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return 0
+    if _stat.S_ISREG(st.st_mode):
+        return st.st_size
+    total = 0
+    pending = [os.fspath(path)]
+    while pending:
+        try:
+            scan = os.scandir(pending.pop())
+        except OSError:
+            continue
+        with scan:
+            for entry in scan:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    elif entry.is_file():
+                        total += os.stat(entry.path).st_size
+                except OSError:
+                    continue
+    return total
+
+
+#: Read size of the staging copy. Nothing about the result depends on it.
+_COPY_CHUNK = 1 << 20
+
+#: The Windows attributes a staged copy carries over, as `CopyFile2` did:
+#: read-only, hidden, system and archive. 7-Zip records them.
+_KEPT_ATTRIBUTES = 0x01 | 0x02 | 0x04 | 0x20
+
+
+def _copy_hashing(src: Path, dst: Path) -> str:
+    """Copy ``src`` to ``dst`` and return the SHA-256 of the bytes copied.
+
+    The staging copy and the ledger digest used to be two separate reads of
+    every file - `hash_file`, then `shutil.copy2` - which is two opens, and on
+    a tree of small files the opens are the cost. Here the digest is taken
+    from the buffers that are written, so it is the digest of exactly what was
+    staged, and a file cannot change between being hashed and being copied
+    because it is only read once.
+
+    What is *written* is still checked the only way that counts: the publish
+    gate restores the archive and hashes what comes out against this digest.
+
+    Timestamps and the Windows attributes travel as they did with `copy2`,
+    from an ``fstat`` of the handle that was read.
+    """
+    digest = hashlib.sha256()
+    with open(src, "rb") as fin:
+        st = os.fstat(fin.fileno())
+        with open(dst, "wb") as fout:
+            while chunk := fin.read(_COPY_CHUNK):
+                digest.update(chunk)
+                fout.write(chunk)
+    try:
+        os.utime(dst, ns=(st.st_atime_ns, st.st_mtime_ns))
+        if sys.platform == "win32":
+            attrs = getattr(st, "st_file_attributes", 0) & _KEPT_ATTRIBUTES
+            if attrs and attrs != 0x20:       # 0x20 is what a new file has
+                import ctypes
+                ctypes.windll.kernel32.SetFileAttributesW(str(dst), attrs)
+        else:
+            os.chmod(dst, _stat.S_IMODE(st.st_mode))
+    except OSError:
+        # Metadata only, as in `shutil.copystat`'s own tolerance: the bytes
+        # are staged and hashed, and `_apply_mtimes` stamps the restore from
+        # the ledger, not from this copy.
+        pass
+    return digest.hexdigest()
+
+
+#: Stages that can read the source files themselves, so the pipeline needs
+#: no staging copy when one of them comes first. `tar` and `zstd` hash the
+#: bytes as they archive them; `sevenzip` hashes, then lets 7-Zip read, and
+#: asks for the staging copy back (`NeedsStaging`) when it cannot.
+_READS_SOURCES = ("tar", "zstd", "sevenzip")
 
 
 def _check_free_space(out_dir: Path, ledger: dict[str, dict]) -> None:
@@ -340,11 +428,12 @@ def _restore_empty_dirs(out_dir: Path, dirs: object) -> int:
     if not isinstance(dirs, (list, tuple)):
         return 0
     made = 0
+    within = Within(out_dir)
     for rel in dirs:
         if not isinstance(rel, str):
             continue
         try:
-            target = resolve_within(out_dir, rel)
+            target = within(rel)
             if not target.exists():
                 target.mkdir(parents=True, exist_ok=True)
                 made += 1
@@ -374,6 +463,7 @@ def _apply_mtimes(out_dir: Path, ledger: dict[str, dict]) -> int:
     successful restore, and a timestamp we could not set does not undo that.
     """
     stamped = 0
+    within = Within(out_dir)
     for rel, meta in ledger.items():
         ns = meta.get("mtime_ns")
         # `type(ns) is int` rather than isinstance: `True` is an int in
@@ -388,7 +478,7 @@ def _apply_mtimes(out_dir: Path, ledger: dict[str, dict]) -> int:
         if type(ns) is not int or not 0 < ns < 2 ** 63:
             continue
         try:
-            target = resolve_within(out_dir, rel)
+            target = within(rel)
             os.utime(target, ns=(ns, ns))
             stamped += 1
         except (OSError, OverflowError, ValueError, UnsafePathError):
@@ -659,22 +749,29 @@ def _collect(inputs: list[Path]) -> tuple[list[FileInfo], dict[Path, str],
     relmap: dict[Path, str] = {}
     empty_dirs: list[str] = []
     skipped: list[str] = []
+    taken: set[str] = set()
     for inp in inputs:
         inp = Path(inp).resolve()
         analyses, unreadable = analyze_tree_safe(inp)
+        # Asked once per input, not once per file: it is the same answer, and
+        # it was a `stat` for every file in the tree.
+        single = inp.is_file()
         for bad, reason in unreadable:
             # Relabel with the archive-relative path, computed the same way
             # `rel` is below - `analyze_tree_safe` cannot know it.
             try:
-                rel = (bad.name if inp.is_file()
+                rel = (bad.name if single
                        else f"{inp.name}/{bad.relative_to(inp).as_posix()}")
             except ValueError:
                 rel = bad.name
             skipped.append(_relabel(reason, bad, rel))
         for info in analyses:
-            rel = info.path.name if inp.is_file() else f"{inp.name}/{info.path.relative_to(inp).as_posix()}"
-            if rel in relmap.values():
+            rel = info.path.name if single else f"{inp.name}/{info.path.relative_to(inp).as_posix()}"
+            # A set beside `relmap`: `rel in relmap.values()` scanned every
+            # earlier file for each new one.
+            if rel in taken:
                 raise ValueError(f"duplicate archive path '{rel}' - rename one of the inputs")
+            taken.add(rel)
             infos.append(info)
             relmap[info.path] = rel
         # Reuse the walk `analyze_tree_safe` already did, and derive the empty
@@ -901,6 +998,84 @@ def compress_standard(inputs: list[Path], out_path: Path, fmt: str,
     )
 
 
+#: A piped file's ledger digest before the read that archives it has run.
+#: Compared by identity, and never a valid digest.
+_UNHASHED = "unhashed"
+
+
+def _stage_record(sid: str, stage: Stage, tools: dict[str, ToolInfo | None] | None,
+                  consumed: int, options: "StageOptions | None") -> StageRecord:
+    tool_name = getattr(stage, "tool_name", sid)
+    tool = tools.get(tool_name) if tools else None
+    return StageRecord(
+        stage=sid,
+        tool_name=tool.name if tool else "python",
+        tool_version=tool.version if tool else "",
+        # What actually ran, so the archive can be reproduced and
+        # "copy as command" is not guessing. Empty when the user
+        # chose nothing, rather than claiming the tool's defaults
+        # as deliberate settings.
+        input_bytes=consumed,
+        params=(options.as_params() if options
+                and sid in ("sevenzip", "zstd") else {}),
+    )
+
+
+def _compress_sources(stage: Stage, files: list[Path], relmap: dict[Path, str],
+                      ledger: dict[str, dict], dst: Path, ctx: StageContext,
+                      unreadable) -> tuple[Path, int] | None:
+    """Run a source-reading first stage over ``files`` and fill in their
+    ledger digests from the bytes it archived. Returns the stage's output and
+    how many bytes it consumed - or None when the stage wants the files
+    staged after all (`NeedsStaging`), which the caller then does.
+
+    The files go in in the order a staged copy of them would have been walked
+    (``sorted(staging.rglob("*"))``, which compares paths part by part and
+    without case on Windows), so the stream is the one the staged tree gave.
+
+    A file that cannot be opened is left out before anything of it is
+    written. One that fails part-way through has already put bytes in the
+    stream, so the stage is started again without it: the same skip, at the
+    price of redoing the stage, for a failure that needs a file to break
+    while this process holds it open.
+    """
+    remaining = sorted(files, key=lambda f: PurePath(relmap[f]))
+    while True:
+        consumed = 0
+
+        def added(f: Path, digest: str, size: int) -> None:
+            nonlocal consumed
+            ledger[relmap[f]]["sha256"] = digest
+            consumed += size
+
+        total = sum(ledger[relmap[f]]["size"] for f in remaining
+                    if relmap[f] in ledger)
+        try:
+            out = stage.compress_files(
+                [(f, relmap[f]) for f in remaining if relmap[f] in ledger],
+                dst, ctx, added, unreadable, total_bytes=total)
+        except NeedsStaging as why:
+            ctx.log_cb(getattr(stage, "id", "stage"),
+                       f"reading the sources in place did not work ({why}); "
+                       f"copying them to the work folder instead")
+            Path(dst).unlink(missing_ok=True)
+            for f in remaining:
+                if relmap[f] in ledger:
+                    ledger[relmap[f]]["sha256"] = _UNHASHED
+            return None
+        except SourceReadError as broken:
+            Path(dst).unlink(missing_ok=True)
+            unreadable(broken.path, broken.exc)
+            # Digests taken by the abandoned attempt describe a stream that
+            # no longer exists; the next attempt takes them again.
+            for f in remaining:
+                if relmap[f] in ledger:
+                    ledger[relmap[f]]["sha256"] = _UNHASHED
+            remaining = [f for f in remaining if f != broken.path]
+            continue
+        return out, consumed
+
+
 def compress(inputs: list[Path], out_path: Path, profile: Profile,
              ctx: StageContext, tools: dict[str, ToolInfo | None] | None = None,
              sidecar: bool = False,
@@ -952,13 +1127,20 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         dropped: set[Path] = set()
         for info in infos:
             route = "pipeline" if info.path in piped_paths else "store"
-            try:
-                digest = hash_file(info.path)
-            except OSError as exc:
-                skipped.append(describe_unreadable(info.path, exc,
-                                                   label=relmap[info.path]))
-                dropped.add(info.path)
-                continue
+            # A piped file is hashed further down, by the one read that also
+            # puts its bytes into the staging copy or the tar: `_copy_hashing`
+            # and `tarstage.add_hashed`. Its place in the ledger is taken here
+            # so the manifest keeps its order, and `_UNHASHED` can never reach
+            # a manifest - see the check before `Manifest.new`.
+            digest = _UNHASHED
+            if route == "store":
+                try:
+                    digest = hash_file(info.path)
+                except OSError as exc:
+                    skipped.append(describe_unreadable(info.path, exc,
+                                                       label=relmap[info.path]))
+                    dropped.add(info.path)
+                    continue
             entry = {
                 "size": info.size,
                 "sha256": digest,
@@ -996,11 +1178,42 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 if sid not in registry:
                     raise StageError(f"stage '{sid}' is not implemented")
             staging = job_dir / "tree"
-            for f in pipe_route.files:
+            # The first stage reads the sources itself when it can, hashing
+            # them on the way; only a chain led by an external tool needs the
+            # tree copied where that tool can find it.
+            made: set[Path] = set()
+
+            def unreadable(f: Path, exc: OSError) -> None:
+                # K3, at the read that archives the file. It leaves the ledger
+                # as well, or D9 would refuse an archive whose ledger promises
+                # a file the payload does not contain.
+                skipped.append(describe_unreadable(f, exc, label=relmap[f]))
+                ledger.pop(relmap[f], None)
+                dropped.add(f)
+
+            first_out: tuple[Path, int] | None = None
+            if chain[0] in _READS_SOURCES:
+                _wait_if_paused(ctx)
+                first_out = _compress_sources(
+                    registry[chain[0]], list(pipe_route.files), relmap, ledger,
+                    job_dir / f"s0{_PAYLOAD_EXT.get(chain[0], '.bin')}", ctx,
+                    unreadable)
+            direct = first_out is not None
+            if not direct:
+                # The tree exists even when no file reaches it (every one
+                # found unreadable by a direct attempt): the stage is handed
+                # an empty folder, as it was when every copy failed, and what
+                # to do with an empty ledger is decided further down.
+                staging.mkdir(parents=True, exist_ok=True)
+            for f in ([] if direct else pipe_route.files):
+                if f in dropped:        # found unreadable by a direct attempt
+                    continue
                 target = staging / relmap[f]
-                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.parent not in made:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    made.add(target.parent)
                 try:
-                    shutil.copy2(f, target)
+                    ledger[relmap[f]]["sha256"] = _copy_hashing(f, target)
                 except OSError as exc:
                     # D4: a full destination volume raises OSError from this
                     # very call, and K3's skip-and-carry-on is exactly wrong
@@ -1026,9 +1239,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # would refuse to publish an archive whose ledger promises
                     # a file the payload does not contain - turning a graceful
                     # skip into a total failure one stage later.
-                    skipped.append(describe_unreadable(f, exc,
-                                                       label=relmap[f]))
-                    ledger.pop(relmap[f], None)
+                    unreadable(f, exc)
                     target.unlink(missing_ok=True)
                     continue
             current: Path = staging
@@ -1037,6 +1248,11 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                 _wait_if_paused(ctx)
                 stage = registry[sid]
                 nxt = job_dir / f"s{i}{_PAYLOAD_EXT.get(sid, '.bin')}"
+                if direct and i == 0:
+                    current, consumed = first_out
+                    stage_records.append(_stage_record(sid, stage, tools,
+                                                       consumed, options))
+                    continue
                 consumed = _tree_size(current)
                 try:
                     current = stage.compress(current, nxt, ctx)
@@ -1047,23 +1263,24 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # prints nothing) came next, the bar sat still all of it.
                     ctx.progress_cb(sid, 100.0)
                     continue  # pass data through; stage stays out of manifest
-                tool_name = getattr(stage, "tool_name", sid)
-                tool = tools.get(tool_name) if tools else None
-                stage_records.append(StageRecord(
-                    stage=sid,
-                    tool_name=tool.name if tool else "python",
-                    tool_version=tool.version if tool else "",
-                    # What actually ran, so the archive can be reproduced and
-                    # "copy as command" is not guessing. Empty when the user
-                    # chose nothing, rather than claiming the tool's defaults
-                    # as deliberate settings.
-                    input_bytes=consumed,
-                    params=(options.as_params() if options
-                            and sid in ("sevenzip", "zstd") else {}),
-                ))
+                stage_records.append(_stage_record(sid, stage, tools,
+                                                   consumed, options))
             the_plan.warnings.extend(skip_notes)
             payload_path = current
-            rmtree_force(staging)
+            if staging.exists():
+                rmtree_force(staging)
+
+        # The last word on the ledger before it becomes a manifest: a digest
+        # is the whole of what the gate compares against, so an entry without
+        # a real one is refused here rather than published.
+        unhashed = [rel for rel, meta in ledger.items()
+                    if meta.get("sha256") is _UNHASHED
+                    or not isinstance(meta.get("sha256"), str)
+                    or len(meta["sha256"]) != 64]
+        if unhashed:
+            raise StageError(
+                f"{len(unhashed)} file(s) reached the manifest without a "
+                f"SHA-256 ({unhashed[:3]}) - refusing to write the archive")
 
         # --- package -------------------------------------------------------
         if skipped:
@@ -1717,9 +1934,13 @@ def verify_archive(archive: Path, ctx: StageContext,
     try:
         with opened_for_reading(Path(archive), ctx, password, keyfile) as opened:
             restore_root = work / "restore"
+            # `stamp_mtimes=False`: this restore exists to be hashed and is
+            # deleted a moment later, so nobody will ever read a timestamp
+            # off it. Everything that is *checked* - every byte restored,
+            # every size and SHA-256 against the ledger - is unchanged.
             result = extract(opened, restore_root, ctx, password=password,
                              digests_out=digests if deep else None,
-                             keyfile=keyfile)
+                             keyfile=keyfile, stamp_mtimes=False)
             if deep or source is not None:
                 # A zip-directory read and one JSON parse - free even on a
                 # 700 GB archive, and it has to happen inside this block: for
@@ -1823,8 +2044,12 @@ def _verify_before_publish(archive: Path, ctx: StageContext) -> int:
 def extract(archive: Path, out_dir: Path, ctx: StageContext,
             password: str | None = None,
             digests_out: dict[str, str] | None = None,
-            keyfile: Path | None = None) -> ExtractResult:
+            keyfile: Path | None = None, *,
+            stamp_mtimes: bool = True) -> ExtractResult:
     """Restore an ``.excmp`` and hash-verify every file against its ledger (see `_extract`).
+
+    ``stamp_mtimes=False`` leaves out the last, cosmetic pass that sets each file's recorded
+    modification time. Only `verify_archive` asks for that: its restore is deleted unread.
 
     A destination folder THIS call created is taken away again if the restore fails: a
     password-protected or unreadable archive used to leave an empty ``junk/`` beside it (found by
@@ -1834,7 +2059,8 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
     out_dir = Path(out_dir)
     created = not out_dir.exists()
     try:
-        return _extract(archive, out_dir, ctx, password, digests_out, keyfile)
+        return _extract(archive, out_dir, ctx, password, digests_out, keyfile,
+                        stamp_mtimes=stamp_mtimes)
     except BaseException:
         if created:
             try:
@@ -1847,7 +2073,8 @@ def extract(archive: Path, out_dir: Path, ctx: StageContext,
 def _extract(archive: Path, out_dir: Path, ctx: StageContext,
              password: str | None = None,
              digests_out: dict[str, str] | None = None,
-             keyfile: Path | None = None) -> ExtractResult:
+             keyfile: Path | None = None, *,
+             stamp_mtimes: bool = True) -> ExtractResult:
     """Restore an ``.excmp`` and hash-verify every file against its ledger.
 
     ``digests_out`` (D5) is handed straight to
@@ -1943,7 +2170,8 @@ def _extract(archive: Path, out_dir: Path, ctx: StageContext,
         # K2, and deliberately the last thing that touches these files: the
         # zone marker above is an alternate data stream, and writing one
         # updates the host file's last-write time.
-        _apply_mtimes(out_dir, manifest.inputs)
+        if stamp_mtimes:
+            _apply_mtimes(out_dir, manifest.inputs)
         # Deliberately NOT added to `restored`. That field has always meant
         # "ledger entries written back" and equalled `verified` for every
         # ledger-backed archive; folding a directory count into it made the

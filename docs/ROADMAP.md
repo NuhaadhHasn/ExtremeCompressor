@@ -662,9 +662,11 @@ OSI rule comes back before anything ships.
   found the gates sound and eight hardening items, all fixed (overall deadlines via `read1`, cancel on close, bounded server text,
   pruned old installers). Accepted: an old signed release can be republished as latest by someone holding the account.
   Procedure: `packaging/RELEASING.md`. Needs a public repo to read releases without a token.
-- [x] E6. ✅ **2026-11-25** - **an application icon.** `assets/app-icon.svg` is the source (a blue tile, four arrows pressing a
-  document in), `packaging/make_icon.py` renders `assets/app.ico` (16-256 px, PNG entries) with PySide6 alone. The window,
-  both executables, the installer and the Explorer menu show it; a real build and the installer smoke test passed.
+- [x] E6. ✅ **2026-11-25** - **an application icon.** `assets/app-icon-512.png` is the master (a file squeezed from both sides by two
+  cyan wedges, an orange lightning bolt at the pinch: "a file made extremely small"; designed with Gemini on 2026-11-25 after the owner
+  rejected a hand-drawn first version, cut out of its white background), `packaging/make_icon.py` renders `assets/app.ico`
+  (16-256 px, PNG entries) with PySide6 alone. The window, both executables, the installer and the Explorer menu show it;
+  a real build and the installer smoke test passed.
 - [x] B28. ✅ **MERGED 2026-11-21** (`cfa2a83`) - **archives inside archives.** A `.war` of `.jar`
       files ran past the container model's high: Precomp expands the inner streams too. The probe
       counts nested members (`zip_nested_bytes`) and the estimator charges each

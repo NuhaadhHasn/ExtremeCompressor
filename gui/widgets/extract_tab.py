@@ -45,6 +45,8 @@ class ExtractTab(QWidget):
         self._listing = None
         self._reading = False
         self._password: str | None = None
+        self._locked = False            # our own password-protected .excmp (not a zip until decrypted)
+        self._pending: str | None = None        # what the user asked for while the password was missing
         self._temp_dir = Path(tempfile.gettempdir()) / "excmp"
 
         # One at a time: listing is cheap, and two 7-Zip launches racing to
@@ -213,7 +215,28 @@ class ExtractTab(QWidget):
     def _emit_verify(self) -> None:
         archive = Path(self.archive_edit.text().strip('" '))
         if archive.is_file():
+            if self._needs_password():
+                self._ask_password("verify", archive)
+                return
             self.verifyRequested.emit(archive)
+
+    def _needs_password(self) -> bool:
+        return self._locked and not self._password
+
+    def _ask_password(self, action: str, archive: Path) -> None:
+        """Ask inline (the Banner owns the field) and remember what was asked for: the job starts as soon as
+        the password arrives, so the user does not press the same button twice."""
+        self._pending = action
+        self.passwordRequired.emit(archive)
+
+    def is_locked(self) -> bool:
+        return self._locked
+
+    def take_password(self) -> str | None:
+        """Hand the password to the job that is starting, and forget it here: a protected archive's
+        password lives only as long as the one job it was typed for."""
+        pw, self._password = self._password, None
+        return pw
 
     # I5: the same doors the buttons use, for the Explorer verbs - including the question each
     # button asks before it is enabled (Verify is off for an archive with no SHA-256 ledger).
@@ -236,8 +259,19 @@ class ExtractTab(QWidget):
         exists = archive.is_file()
         self.start_button.setEnabled(bool(dest) and exists)
 
+        from excmp.crypto import is_encrypted
         from excmp.engine import is_excmp
-        ours = exists and is_excmp(archive)
+        # A password-protected .excmp is one of ours but is not a zip until it is decrypted, so is_excmp
+        # cannot see it: it used to be treated as a foreign archive (Verify off, "not created by us", and a
+        # restore that never asked for the password).
+        locked = exists and is_encrypted(archive)
+        self._locked = locked
+        # A split archive's first part (name.excmp.001, with our .volumes.sha256 beside it) is a slice of the
+        # container, not a zip: is_excmp cannot see it either. Somebody else's .001 has no such sidecar.
+        from excmp.volumes import is_first_part, missing_parts, part_paths, sidecar_for
+        split = exists and is_first_part(archive) and sidecar_for(archive).is_file()
+        self._split_parts = part_paths(archive) if split else []
+        ours = exists and (locked or split or is_excmp(archive))
         self._ours = ours
 
         # Verify means "compare against the ledger". A foreign archive has
@@ -256,9 +290,11 @@ class ExtractTab(QWidget):
         # the toggle was disabled for foreign archives and said so, because
         # an empty list reads as "this archive is empty" - the refusal was
         # honest, and this is what makes it unnecessary.
-        self.contents_toggle.setEnabled(exists)
-        self.contents_toggle.setToolTip("" if exists else self.tr(
-            "Choose an archive first."))
+        self.contents_toggle.setEnabled(exists and not locked)
+        self.contents_toggle.setToolTip(
+            self.tr("Choose an archive first.") if not exists else
+            self.tr("A password-protected archive cannot be listed here: restore or verify it, and you will be "
+                    "asked for the password.") if locked else "")
         if not exists:
             self.contents_toggle.setChecked(False)
         self._set_contents_open(self.contents_toggle.isChecked())
@@ -267,6 +303,21 @@ class ExtractTab(QWidget):
 
         if self.archive_edit.text() and not exists:
             self.status.setText(self.tr("That archive does not exist."))
+        elif split:
+            gap = missing_parts(archive)
+            size = sum(p.stat().st_size for p in self._split_parts)
+            if gap:
+                self.status.setText(self.tr(
+                    "Archive is split into parts, but %s is missing: put every part in this folder first.")
+                    % ", ".join(gap))
+            else:
+                self.status.setText(self.tr(
+                    "Archive is %s in %d parts. Every file will be checked against its SHA-256 ledger as it "
+                    "is restored.") % (fmt_size(size), len(self._split_parts)))
+        elif locked:
+            self.status.setText(self.tr(
+                "Archive is %s and password-protected: you will be asked for the password. Every file is then "
+                "checked against its SHA-256 ledger as it is restored.") % fmt_size(archive.stat().st_size))
         elif ours:
             self.status.setText(self.tr(
                 "Archive is %s. Every file will be checked against its SHA-256 "
@@ -351,9 +402,17 @@ class ExtractTab(QWidget):
         self.status.setText(self.tr("Could not read the contents: %s") % message)
 
     def unlock_with(self, password: str) -> None:
-        """Retry the listing with the password the Banner collected."""
+        """Use the password the Banner collected: carry on with what was asked for (a protected .excmp), or
+        retry the listing (a foreign archive whose names are encrypted)."""
         self._password = password or None
         archive = Path(self.archive_edit.text().strip('" '))
+        if self._locked:
+            pending, self._pending = self._pending, None
+            if self._password and pending == "extract":
+                self._emit_request()
+            elif self._password and pending == "verify":
+                self._emit_verify()
+            return
         if archive.is_file():
             self._start_foreign_listing(archive)
 
@@ -496,6 +555,7 @@ class ExtractTab(QWidget):
         # silently tries a user's secret against a file they never offered
         # it for.
         self._password = None
+        self._pending = None
         self.archive_edit.setText(str(path))
         if not self.dest_edit.text():
             self.dest_edit.setText(str(self._suggest_destination(Path(path))))
@@ -597,6 +657,9 @@ class ExtractTab(QWidget):
         archive = Path(self.archive_edit.text().strip('" '))
         dest = Path(self.dest_edit.text().strip('" '))
         if archive.is_file() and str(dest):
+            if self._needs_password():
+                self._ask_password("extract", archive)
+                return
             self.progress.setVisible(True)
             self.progress.setValue(0)
             self.extractRequested.emit(archive, dest)

@@ -1,9 +1,13 @@
-r"""Render assets/app-icon.svg to assets/app.ico (16-256 px, PNG-compressed entries).
+r"""Build assets/app.ico (16-256 px, PNG-compressed entries) from the 512 px master assets/app-icon-512.png.
 
     .venv\Scripts\python.exe packaging\make_icon.py
 
-Needs only PySide6 (QtSvg), so there is nothing new to install. The .ico is committed; rerun this
-after editing icon.svg. ``--preview`` also writes packaging\icon-preview.png (a 512 px render).
+Needs only PySide6, so there is nothing new to install. The .ico is committed; rerun this after replacing the
+master. ``--preview`` also writes packaging\icon-sizes.png (the small sizes enlarged, to look at).
+
+The master is a design made with Gemini on 2026-11-25 (a document squeezed from both sides, with a lightning bolt
+for "extreme"), cut out of its white background and saved as a transparent 512 px PNG. Windows only ever scales an
+icon down from the 256 px entry, which is why the master is bigger than anything shipped.
 """
 
 from __future__ import annotations
@@ -14,22 +18,20 @@ from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
 from PySide6.QtGui import QGuiApplication, QImage, QPainter
-from PySide6.QtSvg import QSvgRenderer
 
 HERE = Path(__file__).resolve().parent
 ASSETS = HERE.parent / "assets"
+MASTER = ASSETS / "app-icon-512.png"
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 
-def render(renderer: QSvgRenderer, px: int) -> QImage:
-    img = QImage(px, px, QImage.Format.Format_ARGB32)
-    img.fill(Qt.GlobalColor.transparent)
-    p = QPainter(img)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-    renderer.render(p)
-    p.end()
-    return img
+def scaled(master: QImage, px: int) -> QImage:
+    """Smooth downscale in halving steps (one big jump from 512 to 16 loses the edges)."""
+    img = master
+    while img.width() > px * 2:
+        img = img.scaled(img.width() // 2, img.height() // 2, Qt.AspectRatioMode.IgnoreAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+    return img.scaled(px, px, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
 
 def png_bytes(img: QImage) -> bytes:
@@ -55,25 +57,26 @@ def build_ico(pngs: list[tuple[int, bytes]]) -> bytes:
 
 def main() -> None:
     _app = QGuiApplication.instance() or QGuiApplication(["make_icon", "-platform", "offscreen"])
-    renderer = QSvgRenderer(str(ASSETS / "app-icon.svg"))
-    if not renderer.isValid():
-        sys.exit("icon.svg did not parse")
-    pngs = [(px, png_bytes(render(renderer, px))) for px in SIZES]
+    master = QImage(str(MASTER))
+    if master.isNull() or master.width() != master.height():
+        sys.exit(f"{MASTER} is missing or not square")
+    master = master.convertToFormat(QImage.Format.Format_ARGB32)
+    pngs = [(px, png_bytes(scaled(master, px))) for px in SIZES]
     out = ASSETS / "app.ico"
     out.write_bytes(build_ico(pngs))
     print(f"wrote {out} ({out.stat().st_size:,} B, sizes {SIZES})")
     if "--preview" in sys.argv:
-        render(renderer, 512).save(str(HERE / "icon-preview.png"))
-        sheet = QImage(16 + 24 + 32 + 48 + 64 + 6 * 12 + 12, 80, QImage.Format.Format_ARGB32)
+        sheet = QImage(900, 260, QImage.Format.Format_ARGB32)
         sheet.fill(Qt.GlobalColor.white)
         p = QPainter(sheet)
-        x = 12
-        for px in (16, 24, 32, 48, 64):
-            p.drawImage(x, 8, render(renderer, px))
-            x += px + 12
+        x = 10
+        for px in (16, 24, 32, 48, 64, 128):
+            small = scaled(master, px)
+            p.drawImage(x, 10, small.scaled(px * 3, px * 3, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                            Qt.TransformationMode.FastTransformation))
+            x += px * 3 + 14
         p.end()
-        sheet.scaled(sheet.width() * 4, sheet.height() * 4, Qt.AspectRatioMode.KeepAspectRatio).save(
-            str(HERE / "icon-sizes.png"))
+        sheet.save(str(HERE / "icon-sizes.png"))
 
 
 if __name__ == "__main__":

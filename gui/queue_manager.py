@@ -619,6 +619,7 @@ class VerifyWorker(_EngineWorker):
                  threads: int = 0) -> None:
         super().__init__(job, signals, temp_dir, threads)
         self.archive = job.inputs[0]
+        self.password = job.password
 
     def run(self) -> None:
         from excmp import engine
@@ -628,7 +629,7 @@ class VerifyWorker(_EngineWorker):
         self._note(f"verifying {self.archive.name}: restoring every file to "
                    f"temp and checking it against the manifest’s SHA-256 ledger")
         try:
-            result = engine.verify_archive(self.archive, self.ctx)
+            result = engine.verify_archive(self.archive, self.ctx, self.password)
         except BaseException as exc:  # noqa: BLE001
             self._fail(exc)
             return
@@ -713,10 +714,11 @@ class QueueManager(QObject):
             job.orig_bytes = summary.total_bytes
         return self.add_job(job)
 
-    def add_extract(self, archive: Path, out_dir: Path) -> Job:
+    def add_extract(self, archive: Path, out_dir: Path, password: str | None = None) -> Job:
         archive = Path(archive)
         job = Job(inputs=[archive], out_path=Path(out_dir), kind=JobKind.EXTRACT)
         job.orig_bytes = archive.stat().st_size if archive.exists() else 0
+        job.password = password
         return self.add_job(job)
 
     def add_extract_selected(self, archive: Path, out_dir: Path,
@@ -731,13 +733,14 @@ class QueueManager(QObject):
         job.password = password
         return self.add_job(job)
 
-    def add_verify(self, archive: Path) -> Job:
+    def add_verify(self, archive: Path, password: str | None = None) -> Job:
         """A verify has no destination. ``out_path`` is the archive itself so
         the row's context menu can still reveal it in Explorer - it is never
         written to."""
         archive = Path(archive)
         job = Job(inputs=[archive], out_path=archive, kind=JobKind.VERIFY)
         job.orig_bytes = archive.stat().st_size if archive.exists() else 0
+        job.password = password
         return self.add_job(job)
 
     # -- control -----------------------------------------------------------

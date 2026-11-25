@@ -85,7 +85,10 @@ class AdvancedPanel(QFrame):
             "Auto gives 7-Zip and zpaqfranz one thread per physical core. "
             "Lower it to keep the machine usable during a long job."))
 
-        self.temp_dir = QLineEdit(str(default_temp), self)
+        # Empty on purpose: a folder typed here is a one-off override for the next job, and a pre-filled box
+        # always won over Settings > Temporary folder (found by the user guide). The hint shows what applies.
+        self.temp_dir = QLineEdit("", self)
+        self.temp_dir.setPlaceholderText(str(default_temp))
         self.temp_dir.setAccessibleName(self.tr("Temporary directory"))
         self.temp_dir.setToolTip(self.tr(
             "Precomp can inflate data 2–5× mid-pipeline. Point this at a "

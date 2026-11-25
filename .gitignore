@@ -26,3 +26,6 @@ tools/bin/
 
 # Private working notes for the author's AI assistant; kept out of the public repository (and its history).
 CLAUDE.md
+
+# Private keys and other secrets that must travel with the project folder but never reach git.
+.secrets/

@@ -293,7 +293,8 @@ def dict_choices(threads: int = 2) -> list[int]:
 # (0xC0000094) inside libzstd - not an exception, a crash. So the model is
 # fitted to measurement, which is this module's convention anyway.
 #
-# Measured on this machine, ZstdStage's real parameters (level 19, LDM on,
+# Measured on this machine, ZstdStage's real parameters (level 19, LDM on; Fast now runs level 12, which needs no more
+# memory than this bound, so the figure stays a safe ceiling,
 # threads=-1), 96 MiB of compressible input, each window in a fresh process
 # because peak working set is a high-water mark for the life of a process:
 #

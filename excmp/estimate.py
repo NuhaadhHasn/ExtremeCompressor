@@ -144,7 +144,10 @@ def codec_factor(slope: float, probe_ratio: float) -> float:
 # (No key for chains containing srep: they are never planned any more. Old
 # srep archives still extract, but extraction needs no estimate.)
 _CODEC_RATE: Mapping[str, float] = MappingProxyType({
-    "zstd": 3.50e6,      # 3.2 / 3.627 / 3.677 MB/s measured
+    # Fast is zstd level 12 since 2026-11-25 (it was 19, which measured 3.2 / 3.627 / 3.677 MB/s). Level 12 on the
+    # codec alone, contended machine: 63.6 MB/s (Office zips), 104.7 (installers), 20.2 (Python source, the
+    # slowest of three). The slowest is the rate: a job's time also holds per-file work, which this does not model.
+    "zstd": 20.0e6,
     "sevenzip": 3.38e6,  # 2.616 (external HDD) / 4.031 / 3.985 / 3.104 MB/s
     # Post-B11 chain, both regimes measured on 2026-08-01: 2.218 MB/s when
     # Precomp found nothing (721 MB corpus), 0.891 MB/s when it opened streams

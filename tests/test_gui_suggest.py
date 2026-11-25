@@ -220,7 +220,10 @@ def test_the_bad_trade_is_spelled_out_on_the_row():
                                                      _real_summary(infos), cores=2)}
     extreme = rows[Profile.EXTREME]
     assert "Normal" in extreme.note and "quicker" in extreme.note
-    assert not rows[Profile.NORMAL].note
+    # Normal's row carries no *bad-trade* caveat. Since Fast became zstd level 12 (2026-11-25) it may carry the true,
+    # helpful hint that Fast is much quicker for almost the same size on an input like this one (installers).
+    normal_note = rows[Profile.NORMAL].note
+    assert not normal_note or ("Fast is" in normal_note and "quicker" in normal_note)
     # Extreme is recommended here *and* flagged - both are true, and the
     # recommendation must not be allowed to bury the caveat that qualifies it.
     assert extreme.recommended and extreme.reason and extreme.note

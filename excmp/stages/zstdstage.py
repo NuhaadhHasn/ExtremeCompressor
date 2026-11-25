@@ -106,6 +106,12 @@ def _all_logical() -> int:
     return zstandard.ZstdCompressionParameters.from_level(1, threads=-1).threads
 
 
+#: What the Fast profile runs. Level 19 (the stage's own default, kept for old callers) is the slowest useful
+#: zstd setting and made Fast no faster than Normal; measured end to end 2026-11-25 (tests/test_fast_level.py):
+#: level 12 is 1.5-1.8x faster for 0.2-2.8 points, and saves more than level 9 at the same speed.
+FAST_ZSTD_LEVEL = 12
+
+
 class ZstdStage(Stage):
     id = "zstd"
 

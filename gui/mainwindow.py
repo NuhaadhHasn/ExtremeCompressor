@@ -1166,7 +1166,10 @@ class MainWindow(QMainWindow):
     def _start_extract(self, archive: object, dest: object) -> None:
         self.queue.temp_dir = self.effective_temp()
         tab = self.extract_tab
-        self.queue.add_extract(Path(archive), Path(dest), tab.take_password() if tab.is_locked() else None)
+        if tab.is_locked():                       # a password-protected .excmp: the job carries the password
+            self.queue.add_extract(Path(archive), Path(dest), tab.take_password())
+        else:                                     # everything else keeps the original call
+            self.queue.add_extract(Path(archive), Path(dest))
 
     # -- G2 --------------------------------------------------------------
     def _ask_archive_password(self, archive: object) -> None:
@@ -1237,7 +1240,10 @@ class MainWindow(QMainWindow):
         whole promise of this verb is that nothing is produced."""
         self.queue.temp_dir = self.effective_temp()
         tab = self.extract_tab
-        self.queue.add_verify(Path(archive), tab.take_password() if tab.is_locked() else None)
+        if tab.is_locked():
+            self.queue.add_verify(Path(archive), tab.take_password())
+        else:
+            self.queue.add_verify(Path(archive))
 
     def _toggle_pause(self) -> None:
         self.queue.toggle_pause()

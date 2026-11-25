@@ -4,18 +4,17 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning
 intent is [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-**Nothing has been released yet.** `excmp.__version__` is `0.1.0` and there is
-no git tag, so everything below sits under *Unreleased* — inventing version
-numbers for work that never shipped as a version would be inventing history.
-The first tag should be cut when the archive format is one the project is
-willing to keep reading, because that is the compatibility promise that
-matters for an archiver.
+**0.1.0 is the first release (2026-11-25).** Until 1.0 the archive format may still change between versions: an
+app always reads the archives it wrote, but an older app may not read a newer archive. Everything built before the
+first release is listed under 0.1.0, in the order it was done.
 
 Each entry names its roadmap item (`docs/ROADMAP.md`) and the date the work
 was measured, so a line here can always be traced to the benchmark that backs
 it.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-25
 
 ### Added
 

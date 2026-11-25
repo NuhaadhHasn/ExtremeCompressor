@@ -1085,7 +1085,7 @@ the name it will use before you press Compress.
 
 1. **Repair is command line only.** The window has no repair button (`excmp repair`, see section 11).
 2. **Shrink mode** (lossy re-encoding) does not exist: the app is lossless only.
-3. **The first release.** An update can only be found once a release has been published on GitHub.
+3. **Updates need a newer release.** Version 0.1.0 is the first release, so the update check will say you have the latest version until a newer one is published on GitHub.
 
 Five problems found while preparing this guide were fixed on 2026-11-25 and are no longer limits: password-protected
 `.excmp` archives and split archives now restore and check from the Restore tab, Settings > Temporary folder is

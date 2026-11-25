@@ -72,7 +72,7 @@ def frozen_cli(work: Path) -> None:
 
 def frozen_gui(work: Path) -> None:
     print("2. the window and a second launch")
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", EXCMP_NO_UPDATE_CHECK="1")   # never reach GitHub from a test
     quiet = dict(env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     exe = str(APP / "ExtremeCompressor.exe")
     first = subprocess.Popen([exe, "compress", str(work / "in" / "text.txt")], **quiet)
@@ -109,6 +109,9 @@ def installer_round_trip(work: Path) -> None:
         check("silent per-user install", r.returncode == 0)
         names = {p.name for p in target.iterdir()} if target.exists() else set()
         check("the programs are there", {"ExtremeCompressor.exe", "excmp.exe", "unins000.exe"} <= names)
+        check("the licence texts are there (LGPL asks for them)",
+              {"LICENSE", "THIRD-PARTY-NOTICES.md"} <= names
+              and (target / "licenses" / "LGPL-3.0.txt").is_file() and (target / "licenses" / "GPL-3.0.txt").is_file())
         cmd = value(VERB + r"\command") or ""
         check("the verb runs the window, in the install folder",
               str(target / "ExtremeCompressor.exe") in cmd and "excmp.exe" not in cmd, cmd)
@@ -119,7 +122,7 @@ def installer_round_trip(work: Path) -> None:
         # Always remove what was installed, even when a check above raised or timed out.
         uninstaller = target / "unins000.exe"
         if uninstaller.exists():
-            env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", EXCMP_NO_UPDATE_CHECK="1")
             running = subprocess.Popen([str(target / "ExtremeCompressor.exe")], env=env,
                                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL)

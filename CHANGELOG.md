@@ -159,6 +159,10 @@ it.
 
 ### Fixed
 
+- **An update checker (E5, 2026-11-25).** Looks at this project's latest GitHub release (a Settings row, a daily check you can
+  turn off, a banner) and installs a newer version only if its checksum file carries the owner's Ed25519 signature. The release
+  procedure and the signing tool are in `packaging/RELEASING.md` and `tools/release_sign.py`.
+- **The installer ships the licence texts (2026-11-25):** LICENSE, THIRD-PARTY-NOTICES.md and the LGPL-3.0 and GPL-3.0 texts.
 - **An application icon (E6, 2026-11-25).** `assets/app-icon.svg` and the `assets/app.ico` built from it
   (`packaging/make_icon.py`), on the window, both programs, the installer and the Explorer menu.
 - **A JPEG inside a container is priced 1.45x slower than a JPEG file (B30, 2026-11-24).** A second album ran 1.77x

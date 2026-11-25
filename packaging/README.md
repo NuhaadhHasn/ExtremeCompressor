@@ -68,3 +68,8 @@ linked use. The Qt notices belong in the installer's licence page before anythin
 `assets/app-icon.svg` is the source; `python packaging\make_icon.py` renders `assets/app.ico` from it (add `--preview` for
 PNGs to look at). Both executables and the installer carry the `.ico`; the window loads the SVG. Edit the SVG, rerun the
 script, commit both.
+
+## Updates
+
+The app updates itself from signed GitHub releases (`excmp/updater.py`); publishing one is `packaging/RELEASING.md`.
+The installer upgrades the old copy in place (same `AppId`), after the app has closed.

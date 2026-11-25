@@ -655,6 +655,13 @@ OSI rule comes back before anything ships.
   pure-JPEG corpora). `.pptx` not lifted (a second corpus ran 0.52x of the chain model, the first 1.64x the other way).
   PNG rate unchanged (0.67x on 61 MB). A slept row (png2 round 1) was discarded: an unbiased clock is not enough.
   Record: the last section of `docs/benchmarks/2026-11-21-b27-b5-types.md`.
+- [x] E5. ✅ **2026-11-25** - **an update checker.** `excmp/updater.py` reads this project's latest GitHub release, downloads the
+  installer only over https from GitHub's hosts, and accepts it only if its SHA-256 is in `SHA256SUMS` and that file carries a valid
+  Ed25519 signature from the key built into the app (the private key never leaves the owner's laptop: `tools/release_sign.py`).
+  A Settings row (check now, look once a day), a banner, and a silent upgrade install that closes the window. A security review
+  found the gates sound and eight hardening items, all fixed (overall deadlines via `read1`, cancel on close, bounded server text,
+  pruned old installers). Accepted: an old signed release can be republished as latest by someone holding the account.
+  Procedure: `packaging/RELEASING.md`. Needs a public repo to read releases without a token.
 - [x] E6. ✅ **2026-11-25** - **an application icon.** `assets/app-icon.svg` is the source (a blue tile, four arrows pressing a
   document in), `packaging/make_icon.py` renders `assets/app.ico` (16-256 px, PNG entries) with PySide6 alone. The window,
   both executables, the installer and the Explorer menu show it; a real build and the installer smoke test passed.

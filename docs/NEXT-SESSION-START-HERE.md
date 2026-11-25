@@ -1,4 +1,18 @@
-# 🚦 START HERE — handoff (written 2026-11-21, after B27/B28, I5, I5b and E3)
+# 🚦 START HERE — handoff (rewritten 2026-11-25: B29, B30, E5 updater, E6 icon, licences; older text below is 2026-11-21)
+
+> **2026-11-23 to 25 (merge commits on `main`: B29 `3cf08e9`, B30 `3b64127`, E6 `1e0761e`, E5 `c3cd35a`, licences `e93d785`):**
+> a `.docx` is priced by its contents at Insane (B29), a JPEG inside a container x1.45 (B30), the app has an **icon** (E6),
+> an **update checker** (E5: signed GitHub releases only, a Settings row, a banner; `packaging/RELEASING.md` is the
+> procedure), and the installer ships the LICENSE, the notices and the LGPL/GPL texts. Suite **2,362 passed, 1 skipped,
+> 1 xfailed**, corpus guard clean, CI green, frozen build and installer smoke test PASS (92 MB folder, 28.4 MB installer).
+> **Owner decisions waiting:** (1) make the repo public? (audit done: no secrets, no binaries in history; the open choices are
+> `CLAUDE.md` and `docs/research/` game-repack studies, and the OSI rule in `CLAUDE.md` must come back first); the updater
+> reads releases without a token, so it only works once the repo (or a release-only repo) is public; (2) code signing: the
+> free route is **SignPath Foundation**, which needs a public repo, an OSI licence (MIT, done), MFA and an automated build;
+> Microsoft's Artifact Signing is US/Canada only for individuals; a paid OV certificate is about $150-300 a year;
+> (3) **back up `C:\Users\nuhaa\.excmp\update-signing.key`** (no copy exists; lost = one manual reinstall).
+> The first release has never been published: nothing has been uploaded to GitHub.
+> Corpora for the next measurements: `C:\excmp-bench\b29\corpora` (nested3, jpeg2, png2, pptx2, docx2).
 
 > **Five branches merged on 2026-11-21** (merge commits `6f36989` B27, `cfa2a83` B28, `f50f45d`
 > I5, `b7cd5da` I5b, `87d756e` E3 and `d859aea`, a fix to I5's tests). Tests: **2,213 passed, 1 skipped, 1 xfailed** locally in three parts, corpus guard
@@ -255,8 +269,9 @@ Recommended order, each one branch and one merge:
    be replaced by pricing every docx by its counts. `.xlsx` is PNG-light and the container is 3.4x over it.
 2. ~~A third nested corpus~~ **done in B30** (1.10x). A `.whl`/`.vsix`/real `.ear` would still be a better test of the
    class-file-archive gap (the 1%-nested jar corpus ran 2.2x over the container model).
-3. **Windows 11's top-level menu** needs a signed sparse MSIX, so it waits for E4 (code signing).
-   Not done and not possible without a certificate: **E4 signing, E5 auto-update, an `.ico`**.
+3. **Windows 11's top-level menu** needs a signed sparse MSIX, so it waits for E4 (code signing). **E4 signing** is still open
+   (SignPath needs the public repo); **E5 auto-update and the icon are done** (2026-11-25). A first real release is the
+   next test of E5 end to end: `packaging/RELEASING.md`. A `winget` manifest becomes possible once releases are public.
 4. ~~A second JPEG-in-zip corpus and a second PNG-heavy container~~ **done in B30**: the JPEG rate moved (x1.45), the
    PNG rate did not (0.67x). What is left: a JPEG-heavy `.docx`, and why two `.pptx` corpora disagree 2.5-3x.
 5. **The estimator's per-file limits** (§4).

@@ -42,7 +42,7 @@ from .slt import classify_failure
 from .stages.base import Stage, StageContext, StageError, StageSkip
 from .stages.sevenzip import SevenZipStage
 from .stages.tarstage import TarStage
-from .stages.zstdstage import ZstdStage
+from .stages.zstdstage import FAST_ZSTD_LEVEL, ZstdStage
 from .tools import ToolInfo, find_tools
 from .verify import (SourceCheck, hash_file, tree_hash, verify_restore,
                      verify_source)
@@ -459,8 +459,7 @@ def _stage_factory(options: StageOptions | None = None,
              if (opts.level is not None or opts.dict_size or opts.extra_args
                  or bcj2)
              else SevenZipStage())
-    zstd = (ZstdStage(level=opts.level) if opts.level is not None
-            else ZstdStage())
+    zstd = ZstdStage(level=opts.level if opts.level is not None else FAST_ZSTD_LEVEL)
     registry: dict[str, Stage] = {
         "tar": TarStage(),
         "zstd": zstd,

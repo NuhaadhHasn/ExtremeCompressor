@@ -165,6 +165,9 @@ it.
 - **The installer ships the licence texts (2026-11-25):** LICENSE, THIRD-PARTY-NOTICES.md and the LGPL-3.0 and GPL-3.0 texts.
 - **An application icon (E6, 2026-11-25).** a 512 px master (`assets/app-icon-512.png`: a file squeezed from both sides, with a lightning
   bolt) and the `assets/app.ico` built from it (`packaging/make_icon.py`), on the window, both programs, the installer and the Explorer menu.
+- **The Fast profile is faster (2026-11-25).** It ran zstd level 19, the slowest useful setting, so it was no faster than Normal. It now runs level 12:
+  measured end to end (compress plus the restore check) 1.5-1.8x faster on Office files, installers and source code, for 0.2-2.8 points of
+  saving. The codec alone is 15-60x faster at level 12 than 19, but most of a job's time is per-file work, which is the next thing to fix.
 - **A JPEG inside a container is priced 1.45x slower than a JPEG file (B30, 2026-11-24).** A second album ran 1.77x
   and six JPEG EPUBs 1.53x over the old rate; one factor fitted on the three pure-JPEG corpora. Plain `.jpg` files are
   unchanged. Three more corpora were measured and changed nothing (nested archives 1.10x, a second `.pptx`, a second PNG-heavy

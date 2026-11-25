@@ -42,7 +42,7 @@ before ever claiming success.
   **71% saved** on game-style data. (SREP was dropped in B11 after an
   intermittent restore-corruption bug inside `srep64.exe`; correctness beats
   the ~3.5 points it was worth.)
-- **4 profiles** — `fast` (zstd-19 long mode) · `normal` (7z max) · `extreme`
+- **4 profiles** — `fast` (zstd level 12, long mode) · `normal` (7z max) · `extreme`
   (full chain) · `insane` (Precomp → zpaqfranz `-m58`: unlimited-distance
   dedup plus context mixing in 256 MiB blocks, the smallest archives this
   app makes, and an overnight job on a two-core laptop). Profiles degrade gracefully when a

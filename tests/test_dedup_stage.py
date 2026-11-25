@@ -468,6 +468,7 @@ def test_extreme_dedups_what_the_dictionary_cannot_reach(tmp_path, monkeypatch):
     assert record.params == {"format": 1, "window": 1 << 20}
     assert record.tool_name == "python" and record.input_bytes > 9 << 20
     assert "dedup" in events and not any("dedup" in w for w in with_stage.warnings)
+    assert with_stage.deduped_bytes > 2 << 20
 
     # The same job with the stage switched off: what every release before
     # B31 would have written.
@@ -475,6 +476,7 @@ def test_extreme_dedups_what_the_dictionary_cannot_reach(tmp_path, monkeypatch):
     without = engine.compress([src], tmp_path / "without.excmp", Profile.EXTREME,
                               ctx, options=SMALL_DICT)
     assert with_stage.final_bytes < without.final_bytes - (2 << 20)
+    assert without.deduped_bytes == 0
 
     # The ledger gate ran on both (compress would have raised); and the
     # public restore gives the same bytes back.
@@ -584,6 +586,61 @@ def test_the_bar_places_the_stage_before_the_final_codec():
     chain.update("dedup", 100.0)
     assert chain.update("sevenzip", 50.0) > before
     assert chain.update("sevenzip", 100.0) > chain.update("sevenzip", 50.0) - 1e-9
+
+
+# --- calibration --------------------------------------------------------------
+
+def _calibrated(tmp_path, monkeypatch, piped: int, elapsed: float, deduped: int):
+    pytest.importorskip("PySide6")
+    from types import SimpleNamespace
+
+    from excmp.analyzer import Category, FileInfo
+    from excmp.planner import plan
+    from excmp.tools import ToolInfo
+    from gui.models import Job
+    from gui.queue_manager import CompressWorker
+    from gui.suggest import strongest_profile, summarize
+
+    tools = {n: ToolInfo(name=n, path=f"C:/{n}.exe", version="t")
+             for n in ("7z", "precomp")}
+    infos = [FileInfo(path=Path("a.dat"), size=piped, category=Category.TEXT,
+                      entropy_bps=4.5, sample_ratio=0.3, sample_ratio_max=0.35)]
+    summary = summarize(infos, plan(infos, Profile.EXTREME, tools), tools,
+                        reference_plan=plan(infos, strongest_profile(tools), tools))
+
+    class _Rec:
+        def emit(self, *a):
+            pass
+
+    signals = SimpleNamespace(progress=_Rec(), log=_Rec(), started=_Rec(), done=_Rec(),
+                              failed=_Rec(), cancelled=_Rec())
+    job = Job(inputs=[tmp_path], out_path=tmp_path / "o.excmp",
+              profile=Profile.EXTREME, summary=summary)
+    recorded: list = []
+    monkeypatch.setattr("excmp.calibrate.record", lambda *a, **kw: recorded.append(kw))
+    result = SimpleNamespace(
+        piped_bytes=piped, final_bytes=1, orig_bytes=2, elapsed_s=elapsed,
+        deduped_bytes=deduped,
+        routes=[{"action": "pipeline", "stages": ["precomp", "sevenzip"]}])
+    CompressWorker(job, signals, tmp_path, tools={})._calibrate(result)
+    return recorded
+
+
+def test_a_job_the_stage_shortened_teaches_the_estimator_nothing(tmp_path, monkeypatch):
+    """7-Zip was handed half the piped bytes: learned as the chain's rate,
+    the next job with no repeats would be promised half its real time."""
+    assert _calibrated(tmp_path, monkeypatch, 600 << 20, 300.0, 300 << 20) == []
+
+
+def test_a_job_it_only_scanned_teaches_the_rate_without_the_scan(tmp_path, monkeypatch):
+    from excmp.estimate import dedup_seconds, job_fixed_seconds
+    piped = 600 << 20
+    stages = ["precomp", "sevenzip"]
+    recorded = _calibrated(tmp_path, monkeypatch, piped, 500.0, 0)
+    assert len(recorded) == 1
+    assert recorded[0]["elapsed_s"] == pytest.approx(
+        500.0 - job_fixed_seconds(stages) - dedup_seconds(piped, stages))
+    assert dedup_seconds(piped, stages) > 0
 
 
 # --- the estimate -------------------------------------------------------------

@@ -529,6 +529,12 @@ class CompressWorker(_EngineWorker):
         # count together (they are disjoint: the probe set has no recoded type).
         if (self._recode_bytes + self._probe_piped_bytes) * 4 >= piped:
             return
+        # B31: nor a job the dedup stage shortened. 7-Zip was handed less than
+        # the piped bytes say (half, on two versions of one file), so the job
+        # reads as a chain twice as fast as it is, and the next job with no
+        # repeats would be promised half its real time.
+        if getattr(result, "deduped_bytes", 0):
+            return
         # I11: the self-test is estimated separately (`_VERIFY_RATE`), so it
         # must not also be learned as part of the codec's rate. Counting it in
         # both put the whole restore into an Insane estimate twice.
@@ -541,9 +547,11 @@ class CompressWorker(_EngineWorker):
         # B22: nor the job's setup second, which the estimate bills on its own
         # (`estimate.job_fixed_seconds`); folded into the rate it was counted
         # twice, and it is a large share of a small job.
-        from excmp.estimate import job_fixed_seconds
+        # B31: nor the dedup stage's scan, billed on its own in the same way
+        # (`estimate.dedup_seconds`).
+        from excmp.estimate import dedup_seconds, job_fixed_seconds
         codec_s = (result.elapsed_s - self._verify_elapsed - pack_s - self._recode_s
-                   - job_fixed_seconds(stages))
+                   - job_fixed_seconds(stages) - dedup_seconds(piped, stages))
         # No `achieved_factor` (B19): a whole-job ratio is not the slope the
         # estimator's factor became in B8 (see `calibrate.record`).
         record(stages, piped_bytes=piped, elapsed_s=codec_s)

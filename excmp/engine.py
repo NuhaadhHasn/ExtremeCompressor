@@ -537,6 +537,11 @@ class CompressResult:
     #: publish has to read the bytes back anyway it costs nothing to report.
     #: Empty only for results built by something other than `compress()`.
     sha256: str = ""
+    #: B31: bytes the long-range dedup stage took out of the stream before the
+    #: final codec, or 0 when it did not run. Reported because such a job is
+    #: not a measure of the chain's speed (7-Zip was handed less than the
+    #: piped bytes say), so calibration must be able to leave it out.
+    deduped_bytes: int = 0
 
     @property
     def ratio(self) -> float:
@@ -1013,6 +1018,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         payload_path: Path | None = None
         stage_records: list[StageRecord] = []
         chain: list[str] = []
+        deduped_bytes = 0
         if pipe_route:
             chain = list(pipe_route.stages)
             if len(chain) > 1 or chain[0] not in _TREE_CAPABLE:
@@ -1084,6 +1090,8 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # Its input (Precomp's output, the largest file of the
                     # job) is now held twice over. Nothing reads it again.
                     before.unlink(missing_ok=True)
+                if sid == "dedup":
+                    deduped_bytes = max(0, consumed - _tree_size(current))
                 tool_name = getattr(stage, "tool_name", sid)
                 tool = tools.get(tool_name) if tools else None
                 stage_records.append(StageRecord(
@@ -1265,6 +1273,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
         piped_bytes=sum(m["size"] for m in ledger.values()
                         if m.get("route") == "pipeline"),
         skipped=skipped,
+        deduped_bytes=deduped_bytes,
     )
 
 

@@ -218,3 +218,7 @@ install root and read every `LICENSE` / `COPYING` / `readme` found there; and
 for Python packages read `License-Expression` (or the licence classifier) from
 each `dist-info/METADATA` plus the bundled licence file. Anything that cannot
 be read from a file belongs in the ⚠️ category above, not in a table.
+
+## Where a binary release carries these texts
+
+The installer puts `LICENSE`, this file and the full licence texts (`licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt`, fetched from gnu.org on 2026-11-25) next to the program, which is what PySide6's LGPL branch asks of a dynamically linked, replaceable Qt (the one-folder build keeps the Qt DLLs as separate files).

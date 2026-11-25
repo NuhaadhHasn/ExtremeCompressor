@@ -39,6 +39,10 @@ Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "
 
 [Files]
 Source: "..\dist\ExtremeCompressor\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+; The licence texts a binary release owes (PySide6 is LGPL-3.0): ours, the notices, and the LGPL/GPL texts.
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\ExtremeCompressor"; Filename: "{app}\ExtremeCompressor.exe"

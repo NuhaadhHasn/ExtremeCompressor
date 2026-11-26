@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
 from . import jpeg
+from . import sharedread
 # Imported as a module as well as by name: `write_container` reads the cap from
 # the module global, so the compress-side preflight has to read the same one or
 # the two can disagree about what is writable.
@@ -128,16 +129,35 @@ def _copy_hashing(src: Path, dst: Path) -> str:
     What is *written* is still checked the only way that counts: the publish
     gate restores the archive and hashes what comes out against this digest.
 
+    The one read is taken with writers denied (`sharedread`), so the file
+    cannot be rewritten under it. A file another program already has open for
+    writing is read twice instead - hashed whole, then copied - and a
+    difference between the two raises `StageError`, which refuses the job
+    (it is not an `OSError`, so it is never mistaken for an unreadable file).
+
     Timestamps and the Windows attributes travel as they did with `copy2`,
     from an ``fstat`` of the handle that was read.
     """
+    fin, how = sharedread.open_for_archive(src)
+    first_read: str | None = None
+    if how == sharedread.BUSY:
+        whole = hashlib.sha256()
+        with fin:
+            while chunk := fin.read(_COPY_CHUNK):
+                whole.update(chunk)
+        first_read = whole.hexdigest()
+        fin = open(src, "rb")
     digest = hashlib.sha256()
-    with open(src, "rb") as fin:
+    with fin:
         st = os.fstat(fin.fileno())
         with open(dst, "wb") as fout:
             while chunk := fin.read(_COPY_CHUNK):
                 digest.update(chunk)
                 fout.write(chunk)
+    if first_read is not None and digest.hexdigest() != first_read:
+        raise StageError(
+            f"{Path(src).name} changed while it was being archived (another "
+            f"program has it open for writing) - nothing was published")
     try:
         os.utime(dst, ns=(st.st_atime_ns, st.st_mtime_ns))
         if sys.platform == "win32":

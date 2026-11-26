@@ -63,6 +63,13 @@ def _dict_bytes(text: str) -> int:
     number = text[:-1] if text[-1:] in "kmg" else text
     return int(number or 0) * unit
 
+#: U+FEFF. At the head of a list file it is a byte order mark to whoever
+#: reads the list, not part of a name: "<U+FEFF>bom.txt" on the first line
+#: selected its sibling "bom.txt" (review, 2026-11-26). Refused anywhere in a
+#: name, and the list carries a signature of its own besides.
+_BOM = "\ufeff"
+
+
 def _breaks_a_list(name: str) -> bool:
     """True when ``name`` cannot be one line of a 7-Zip list file.
 
@@ -176,7 +183,8 @@ class SevenZipStage(Stage):
             if len(whole) <= len(parts) or whole[-len(parts):] != parts:
                 return None
             if any(p != p.strip() or p[:1] in "@-" or '"' in p
-                   or "*" in p or "?" in p or _breaks_a_list(p) for p in parts):
+                   or "*" in p or "?" in p or _breaks_a_list(p)
+                   or _BOM in p for p in parts):
                 return None
             here = Path(*whole[:-len(parts)])
             if base is None:
@@ -194,7 +202,9 @@ class SevenZipStage(Stage):
         again, and the first open of a file that has just been written waits
         15-19 ms on real-time protection - paid by 7-Zip, once per file.
 
-        **Each file is hashed here first, by a read of our own, and 7-Zip
+        **Each file is hashed here first, by a read of our own (writers
+        denied while it runs; a file somebody has open for writing sends the
+        whole job to the staging copy before 7-Zip starts), and 7-Zip
         reads it afterwards.** Those are two reads, so this digest is a claim
         about the archive and not a measurement of it. What makes it true is
         what always did: the publish gate restores the archive and compares
@@ -211,6 +221,7 @@ class SevenZipStage(Stage):
         import hashlib
         import os
 
+        from .. import sharedread
         from .base import NeedsStaging
         dst = Path(dst)
         entries = list(entries)
@@ -224,13 +235,32 @@ class SevenZipStage(Stage):
         if any(_breaks_a_list(arcname) for _, arcname in entries):
             raise NeedsStaging("a file name holds a line break or control "
                                "character, which a list file cannot carry")
+        if any(_BOM in arcname for _, arcname in entries):
+            raise NeedsStaging("a file name holds a byte order mark, which "
+                               "a list file cannot carry")
+        try:
+            for _, arcname in entries:
+                arcname.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            # A lone surrogate: a legal Windows name, not legal UTF-8.
+            raise NeedsStaging(f"a file name cannot be written to a list "
+                               f"file ({exc.reason})") from exc
         listed: list[str] = []
         for path, arcname in entries:
             if ctx.cancel.is_set():
                 raise StageError(f"{self.id}: cancelled")
             digest, size = hashlib.sha256(), 0
             try:
-                with open(path, "rb") as fh:
+                fh, how = sharedread.open_for_archive(path)
+                with fh:
+                    if how == sharedread.BUSY:
+                        # Another program has it open for writing. 7-Zip may
+                        # not be able to open it at all, and the staging copy
+                        # is where such a file is read twice and compared -
+                        # so go there now, before 7-Zip has run.
+                        raise NeedsStaging(
+                            f"{Path(path).name} is open for writing in "
+                            f"another program")
                     while chunk := fh.read(1 << 20):
                         digest.update(chunk)
                         size += len(chunk)
@@ -244,7 +274,10 @@ class SevenZipStage(Stage):
         if dst.exists():
             dst.unlink()
         listfile = dst.with_name(dst.name + ".files")
-        listfile.write_text("\n".join(listed) + "\n", encoding="utf-8")
+        # UTF-8 with its signature: the reader takes that as the mark and
+        # reads the first name as it was written.
+        listfile.write_bytes(b"\xef\xbb\xbf"
+                             + ("\n".join(listed) + "\n").encode("utf-8"))
         threads = self._auto_threads(ctx.threads)
         # `build_compress_cmd` ends with the thing to archive; here that is
         # the list, read as UTF-8, with `base` as the working directory.

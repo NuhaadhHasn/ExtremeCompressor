@@ -100,6 +100,18 @@ class _OpenCounter:
         monkeypatch.setattr(io, "open", counting)
         monkeypatch.setattr(builtins, "open", counting)
         monkeypatch.setattr(tarfile, "bltn_open", counting)
+        # The read that archives a file opens it through `sharedread` (a
+        # Win32 call, writers denied), which the three above never see.
+        from excmp import sharedread
+        real_archive_open = sharedread.open_for_archive
+
+        def counting_archive_open(path):
+            name = os.path.normcase(os.fspath(path))
+            if name.startswith(self.under):
+                self.counts[name] = self.counts.get(name, 0) + 1
+            return real_archive_open(path)
+
+        monkeypatch.setattr(sharedread, "open_for_archive", counting_archive_open)
 
 
 # --------------------------------------------------------------------------
@@ -831,13 +843,13 @@ def test_the_list_file_is_never_written_with_a_split_name(tmp_path, monkeypatch)
                         staticmethod(lambda entries: tmp_path))
     monkeypatch.setattr(sevenzip.SevenZipStage, "_exe", lambda self: "7z.exe")
     monkeypatch.setattr(sevenzip, "run_tool", lambda *a, **k: ran.append(a))
-    real_write = Path.write_text
+    real_write = Path.write_bytes
 
     def spy(self, *a, **k):
         written.append(self.name)
         return real_write(self, *a, **k)
 
-    monkeypatch.setattr(Path, "write_text", spy)
+    monkeypatch.setattr(Path, "write_bytes", spy)
     stage = sevenzip.SevenZipStage()
     for bad in ("d/real.txt\nd/other.txt", "d/real.txt\rother", "d/re\u2028al.txt"):
         with pytest.raises(NeedsStaging, match="line"):

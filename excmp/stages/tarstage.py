@@ -9,6 +9,7 @@ import tarfile
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .. import sharedread
 from .base import Stage, StageContext, StageError
 
 #: One source file for :func:`add_hashed`: where it is, and its archive name.
@@ -82,6 +83,13 @@ def add_hashed(tar: tarfile.TarFile, path: Path, arcname: str) -> tuple[str, int
     file, not a hashing read followed by a copying read that might see a
     different file.
 
+    **That one read is taken with writers denied** (`sharedread`), which is
+    what makes it a state the file really had: nothing can rewrite the file
+    in place while it is being read. When writers cannot be denied because
+    another program already has the file open for writing, the file is read
+    twice instead, as it was before there was a single read - hashed whole,
+    then archived - and the job is refused if the two reads differ.
+
     The header is built from an ``fstat`` of the open handle, so the size in
     it is the size of the file being read. A file that turns out shorter than
     that raises (`tarfile` refuses a short member); a longer one contributes
@@ -95,9 +103,18 @@ def add_hashed(tar: tarfile.TarFile, path: Path, arcname: str) -> tuple[str, int
     * writing the tar fails (a full disk): the ``OSError`` itself, untouched.
     """
     try:
-        fh = open(path, "rb")
+        fh, how = sharedread.open_for_archive(path)
     except OSError as exc:
         raise SourceUnreadable(Path(path), exc) from exc
+    first_read: str | None = None
+    if how == sharedread.BUSY:
+        # Nothing has been written yet, so a failure here is still a skip.
+        try:
+            with fh:
+                first_read = _digest_of(fh)
+            fh = open(path, "rb")
+        except OSError as exc:
+            raise SourceUnreadable(Path(path), exc) from exc
     with fh:
         try:
             info = tar.gettarinfo(arcname=arcname, fileobj=fh)
@@ -123,7 +140,18 @@ def add_hashed(tar: tarfile.TarFile, path: Path, arcname: str) -> tuple[str, int
             raise
         if reader.count != info.size:      # tarfile enforces it; so do we
             raise StageError(f"tar: {arcname} was not archived completely")
+        if first_read is not None and reader.hexdigest() != first_read:
+            raise StageError(
+                f"tar: {arcname} changed while it was being archived (another "
+                f"program has it open for writing) - nothing was published")
         return reader.hexdigest(), info.size
+
+
+def _digest_of(fh) -> str:
+    digest = hashlib.sha256()
+    while chunk := fh.read(_COPY_BUFFER):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def add_all_hashed(tar: tarfile.TarFile, entries: Iterable[Entry],

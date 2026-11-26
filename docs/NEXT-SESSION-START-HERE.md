@@ -12,13 +12,16 @@
 > **user guide** (`docs/USER-GUIDE.md`, 15 screenshots) is merged; the **winget manifest generator** (`tools/make_winget_manifest.py`)
 > works and `winget validate` accepts the 0.1.0 manifest.
 >
-> **In flight at the time of writing:** branch `dedup-stage` (B31, a long-range block-dedup stage before the final 7-Zip at Extreme: measured
-> -49.6% / -30.2% / -48.2% archive bytes on three corpora with duplicates, nothing on two controls). It passed an adversarial review (no wrong
-> restore; denial-of-service findings F1-F3 were fixed) and has merged main; **it still needs a full suite and CI before merging**.
-> An archive that uses the stage records `dedup` in its manifest (schema 3 only then), so the published 0.1.0 refuses it with a clear error:
-> that is what a 0.1.1 release is for (and the first real test of the updater).
+> **B31 MERGED 2026-11-26 (`62d0cab`)**: a long-range block-dedup stage before the final 7-Zip at Extreme (`excmp/stages/dedup.py`). Measured
+> on three corpora with duplicates -49.6% / -30.2% / -48.2% archive bytes, nothing on two controls; I reproduced the menu-card pair myself
+> (309.4 MB in: 222,140,075 B on `main` before, 112,034,504 B with the stage, both restores byte-identical by an independent SHA-256, compress
+> 468 s vs 490 s). An independent adversarial review found no wrong restore; its denial-of-service findings (an unbounded run list, a 4 GB
+> chunk read in one piece, a slow chunker on zero-padded data) were fixed with tests. Full suite 2,693 passed, CI green. An archive that
+> uses the stage records `dedup` in its manifest (schema 3 only then), so the published 0.1.0 refuses it with a clear error: that is
+> what a **0.1.1 release is for**, and the first real test of the updater. Not done: Insane and Normal have the same gap past their
+> dictionary; a period-32 pattern scans at 3.2 MB/s (bounded); the estimator's pre-job figure uses a 256 MiB window.
 >
-> **Still to do, in order:** merge B31; update `docs/USER-GUIDE.md` for it; release 0.1.1 (`packaging/RELEASING.md`) and watch the installed
+> **Still to do, in order:** update `docs/USER-GUIDE.md` for B31 and the small-files work; release 0.1.1 (`packaging/RELEASING.md`) and watch the installed
 > 0.1.0 update itself; submit the winget manifest (a fork of microsoft/winget-pkgs and a pull request: public, ask first); the audit's
 > layout items (a visible reason for the suggestion, a quieter 'what runs' column, grouping Advanced); settings search and drag-out from the
 > archive list; `same-handle read-back` in the restore gate (the biggest remaining small-file lever, needs a decision: the hash would be

@@ -211,7 +211,7 @@ selected. Pick by clicking a row, or press **Tab** to reach a row and then **Ent
 |---|---|---|
 | **Fast** | Zstandard (level 12), single pass | The quickest by far: measured about 13 MB a second from start to finish on big files, with the final check included (thousands of tiny files are slower, because every file costs time). Modest ratio. Use it when data is already compressed (video, photos, installers) or when you are in a hurry. |
 | **Normal** | 7-Zip, LZMA2 at maximum | The sensible everyday choice. |
-| **Extreme** | tar, then Precomp, then 7-Zip | Best ratio for game and program data that hides compressed parts inside. Slow. Needs a lot of temporary disk space. |
+| **Extreme** | tar, then Precomp, then 7-Zip | Best ratio for game and program data that hides compressed parts inside. Slow. Needs a lot of temporary disk space. From version 0.1.1 it also keeps only one copy of content that repeats far apart (copies and versions of the same big file), which can nearly halve a folder that holds versions or backups. |
 | **Insane** | Extreme, but with a stronger last step (zpaqfranz) | The smallest archives this app makes. An overnight job on a laptop. Without zpaqfranz it runs as Extreme. |
 
 **The app suggests one.** The suggested row is green and says "(suggested)". Hover over it to read the reason.
@@ -1078,6 +1078,26 @@ archive. Delete it. Your originals were never changed.
 
 A file with that name already existed. The app never overwrites last week's archive. The bottom bar shows
 the name it will use before you press Compress.
+
+### 13.13 Why is a folder of many small files faster now?
+
+Version 0.1.1 reads each small file once instead of copying it to a work folder first, and it checks the restored files in
+parallel. A folder of thousands of small files compresses about 1.7 to 2.7 times faster. The final check is exactly as strict
+as before: every restored file is compared with the fingerprint of the original, and nothing is saved if one differs. The time
+estimate now counts the time each file costs, so it no longer promises too little for these folders.
+
+### 13.14 Another program cannot save a file while ExtremeCompressor is archiving it
+
+While a file is being read for the archive, other programs may be unable to open it for writing for a moment. This is what
+keeps the archive consistent: a file that changes while it is read could otherwise be saved half old and half new. If a file is
+already open for writing in another program, it is read twice and compared, and the job fails with "changed while it was being
+archived" instead of saving a mixed copy. Close the program, or copy the file first.
+
+### 13.15 An older version says "written by a newer version"
+
+An archive that used the repeated-content feature of version 0.1.1 or later records it, and version 0.1.0 refuses it with a
+clear message instead of restoring it wrongly. Update the app (**Settings > Updates > Check for updates**) and open it again.
+Archives made without that feature open in every version.
 
 ---
 

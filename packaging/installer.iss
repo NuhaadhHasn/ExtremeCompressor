@@ -1,8 +1,8 @@
 ; Inno Setup script for ExtremeCompressor (E3). UNBUILT: see packaging\README.md.
-; Build:  iscc /DAppVersion=0.1.0 packaging\installer.iss   (after PyInstaller made dist\ExtremeCompressor)
+; Build:  iscc /DAppVersion=0.1.1 packaging\installer.iss   (after PyInstaller made dist\ExtremeCompressor)
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.1.1"
 #endif
 
 [Setup]

@@ -4,7 +4,7 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning
 intent is [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-**0.1.0 is the first release (2026-11-25).** Until 1.0 the archive format may still change between versions: an
+**0.1.0 was the first release (2026-11-25); 0.1.1 followed on 2026-11-26.** Until 1.0 the archive format may still change between versions: an
 app always reads the archives it wrote, but an older app may not read a newer archive. Everything built before the
 first release is listed under 0.1.0, in the order it was done.
 
@@ -13,6 +13,8 @@ was measured, so a line here can always be traced to the benchmark that backs
 it.
 
 ## [Unreleased]
+
+## [0.1.1] - 2026-11-26
 
 ### Added
 

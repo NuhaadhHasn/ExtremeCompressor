@@ -33,6 +33,7 @@ from excmp.tools import find_tools
 from .compare_run import ComparisonRun
 from .format import fmt_eta, fmt_size
 from .progress import FINISHING, PACKING, VERIFYING, VERIFYING_LATE
+from .singleinstance import mark_running, release_running
 from .models import Job, JobKind, JobState
 from .queue_manager import AnalysisSignals, AnalysisWorker, QueueManager
 from .suggest import (AnalysisSummary, profile_comparison, recommend_profile,
@@ -1668,9 +1669,11 @@ class MainWindow(QMainWindow):
                 self.tr("The update is downloaded and verified. Finish or cancel the running job, then "
                         "press “Install now” in Settings."), tone="warn")
             return
+        release_running()                      # the installer's AppMutex check must not see this window
         try:
             updater.launch_installer(installer)
         except Exception as exc:                                  # noqa: BLE001
+            mark_running()                     # still open: take the marker back
             self.banner.show_message(self.tr("Could not start the installer: %s") % exc, tone="warn")
             return
         self._force_close = True

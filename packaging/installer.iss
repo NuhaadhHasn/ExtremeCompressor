@@ -18,9 +18,10 @@ PrivilegesRequired=lowest
 ; No "install for all users" override: an elevating account would run `shell install` into ITS OWN HKCU, and
 ; Program Files is not writable by the tool downloader (toolfetch keeps its tools beside the app).
 ; Close a running window (Restart Manager) before replacing or removing its files.
-; While a window is open (it holds this mutex, gui/singleinstance.py) neither Setup nor the uninstaller
-; touches the files: an uninstall used to remove the uninstall entry and leave every file behind.
-AppMutex=ExtremeCompressor-running
+; While a window is open (it holds the mutex checked in [Code] below, gui/singleinstance.py) neither Setup
+; nor the uninstaller touches the files: an uninstall used to remove the uninstall entry and leave every
+; file behind. It is checked there and not with the `AppMutex` directive because that checks once, at
+; once: the in-app update starts a silent Setup and closes its window a moment later, and Setup exited 1.
 CloseApplications=yes
 RestartApplications=no
 OutputDir=..\dist
@@ -54,3 +55,35 @@ Filename: "{app}\ExtremeCompressor.exe"; Description: "Launch ExtremeCompressor"
 
 [UninstallRun]
 Filename: "{app}\excmp.exe"; Parameters: "shell uninstall"; Flags: runhidden; RunOnceId: "RemoveShellMenu"
+
+[Code]
+const
+  RunningMutex = 'ExtremeCompressor-running';   // gui/singleinstance.py RUNNING_MUTEX
+
+// A silent run (the in-app update) gives the window up to 20 s to finish closing; an interactive run
+// refuses at once, as AppMutex did, and says why.
+function WindowGone(const Action: String): Boolean;
+var
+  Waited: Integer;
+begin
+  Waited := 0;
+  if WizardSilent() or UninstallSilent() then
+    while CheckForMutexes(RunningMutex) and (Waited < 20000) do
+    begin
+      Sleep(250);
+      Waited := Waited + 250;
+    end;
+  Result := not CheckForMutexes(RunningMutex);
+  if not Result then
+    MsgBox('ExtremeCompressor is running. Close it, then ' + Action + ' again.', mbError, MB_OK);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := WindowGone('run Setup');
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := WindowGone('uninstall');
+end;

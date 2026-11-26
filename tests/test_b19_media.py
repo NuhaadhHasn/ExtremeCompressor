@@ -335,7 +335,10 @@ def test_a_photo_folder_is_not_timed_as_a_copy():
     assert 10 < cost.seconds < 60 and 3 < cost.verify_seconds < 30
     t = estimate_time(infos, the_plan, _rates(True))
     assert t.low < 27.0 + 14.7 < t.high
-    assert estimate_time(infos, the_plan, _rates(False)).expected < 3
+    # Without lepton they are stored: 2 s of copying, plus the per-file cost
+    # (measured 2026-11-25 on these 150 photos, lepton off: 5.2-6.5 s).
+    unpacked = estimate_time(infos, the_plan, _rates(False))
+    assert unpacked.expected < 4 and unpacked.high > 6.5
 
 
 def test_the_summary_counts_photos_as_shrinking():

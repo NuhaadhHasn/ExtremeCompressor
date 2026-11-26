@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import flacaudio, jpeg, oggpack
 
-from .safepath import UnsafePathError, resolve_within, safe_relpath
+from .safepath import UnsafePathError, Within, resolve_within, safe_relpath
 from .stages.base import StageError
 from .tempclean import rmtree_force
 
@@ -783,6 +783,11 @@ def extract_stored(archive_path: Path, out_dir: Path,
     seen: set[str] = set()
     total = 0
     budget = declared_total(ledger)
+    # One `Within` for the whole extraction: every name is validated and its
+    # canonical target compared against the canonical `out_dir` as before;
+    # `out_dir` itself is canonicalized once instead of once per entry.
+    within = Within(out_dir)
+    made: set[Path] = set()
     with zipfile.ZipFile(archive_path) as zf:
         for info in zf.infolist():
             if not info.filename.startswith(STORED_PREFIX) or info.is_dir():
@@ -827,8 +832,10 @@ def extract_stored(archive_path: Path, out_dir: Path,
                 # Validated, counted against the bomb budget, and then not
                 # written. The checks above are the point of walking past it.
                 continue
-            target = resolve_within(out_dir, key)
-            target.parent.mkdir(parents=True, exist_ok=True)
+            target = within(key)
+            if target.parent not in made:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                made.add(target.parent)
             try:
                 if meta.get("codec"):
                     _hold_if_paused_or_cancelled(ctx)
@@ -889,7 +896,7 @@ def extract_stored(archive_path: Path, out_dir: Path,
                     f"stored entry {key!r} duplicates {source_key!r}, whose "
                     f"bytes are not in the archive") from None
             declared = int(meta.get("size", 0))
-            target = resolve_within(out_dir, key)
+            target = within(key)
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if source_meta.get("codec"):

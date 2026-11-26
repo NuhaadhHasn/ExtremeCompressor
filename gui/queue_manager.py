@@ -209,7 +209,7 @@ def _time_split(summary: AnalysisSummary | None) -> tuple[float | None, float | 
                             own_bytes=summary.recode_own_bytes)
         return time_split(summary.store_bytes, summary.pipeline_bytes,
                           summary.chain, blended_rates(), pack=pack,
-                          recode=recode)
+                          recode=recode, files=summary.per_file_count)
     except Exception:                                   # noqa: BLE001
         # An estimate is a nicety for the bar; a job never fails for want
         # of one.
@@ -248,6 +248,7 @@ class _EngineWorker(QRunnable):
         # B19: what Precomp's recoders were expected to add, which calibration
         # must not learn as the chain's own speed either.
         self._recode_s = job.summary.recode_seconds if job.summary else 0.0
+        self._per_file_count = job.summary.per_file_count if job.summary else 0
         self._recode_bytes = job.summary.recode_bytes if job.summary else 0
         # B23: and media piped only because the probe flagged it, which Precomp
         # passes straight through.
@@ -541,9 +542,21 @@ class CompressWorker(_EngineWorker):
         # B22: nor the job's setup second, which the estimate bills on its own
         # (`estimate.job_fixed_seconds`); folded into the rate it was counted
         # twice, and it is a large share of a small job.
-        from excmp.estimate import job_fixed_seconds
+        # Nor the per-file cost (`estimate.per_file_seconds`), for the same
+        # reason: a tree of small files would otherwise teach the chain a
+        # byte rate several times too slow for the next large file.
+        from excmp.estimate import job_fixed_seconds, per_file_seconds
+        per_file_s = per_file_seconds(self._per_file_count)[0]
         codec_s = (result.elapsed_s - self._verify_elapsed - pack_s - self._recode_s
-                   - job_fixed_seconds(stages))
+                   - job_fixed_seconds(stages) - per_file_s)
+        # A job paced by how many files it holds says little about the chain's
+        # byte rate, and what is left after taking a modelled per-file cost
+        # off it is mostly that model's error: on a machine that opens files
+        # faster than the prior, the remainder is a few tenths of a second and
+        # would be learned as hundreds of MB/s. Not modelled well enough to
+        # subtract, so not learned (as with the recoded media above).
+        if per_file_s > 0 and per_file_s >= codec_s:      # only when a per-file cost was really taken off
+            return
         # No `achieved_factor` (B19): a whole-job ratio is not the slope the
         # estimator's factor became in B8 (see `calibrate.record`).
         record(stages, piped_bytes=piped, elapsed_s=codec_s)

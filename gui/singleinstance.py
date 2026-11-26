@@ -93,7 +93,29 @@ def mark_running() -> bool:
         return False
     if not handle:
         return False
-    _running_handle = handle                             # never closed: process exit releases it
+    _running_handle = handle                             # process exit releases it, unless release_running() did
+    return True
+
+
+def release_running() -> bool:
+    """Let go of ``RUNNING_MUTEX`` now. True if it was held.
+
+    The update hand-off needs this: a silent Setup checks ``AppMutex`` once, about half a second
+    after it starts, and exits with code 1 if a window still holds it. The window used to start the
+    installer and only then close, so the check usually lost the race (found on the 0.1.0 -> 0.1.1
+    test: exit 1, version unchanged). Setup's own Restart Manager closes a window that is still
+    open by the time it replaces the files, so releasing the marker first is safe.
+    """
+    global _running_handle
+    handle, _running_handle = _running_handle, None
+    if handle is None:
+        return False
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle(handle)
+    except Exception:                                    # noqa: BLE001
+        return False
     return True
 
 

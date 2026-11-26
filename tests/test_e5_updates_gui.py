@@ -259,6 +259,31 @@ def test_a_failing_launcher_says_so_and_keeps_the_window(qtbot, win, monkeypatch
     assert not w._force_close and "antivirus" in w.banner._text.text()
 
 
+def test_the_window_lets_go_of_the_running_marker_before_it_starts_the_installer(qtbot, win, monkeypatch, tmp_path):
+    """A silent Setup that still sees the window's AppMutex exits 1 (seen on the 0.1.0 -> 0.1.1 test)."""
+    import gui.mainwindow as mw
+    w, ctrl = win
+    order = []
+    monkeypatch.setattr(mw, "release_running", lambda: order.append("release") or True)
+    monkeypatch.setattr(updater, "launch_installer", lambda p: order.append("launch"))
+    w._launch_update(tmp_path / "setup.exe")
+    assert order == ["release", "launch"]
+
+
+def test_a_failed_launch_takes_the_running_marker_back(qtbot, win, monkeypatch, tmp_path):
+    import gui.mainwindow as mw
+    w, ctrl = win
+    marks = []
+    monkeypatch.setattr(mw, "release_running", lambda: True)
+    monkeypatch.setattr(mw, "mark_running", lambda: marks.append("again") or True)
+
+    def boom(p):
+        raise OSError("blocked")
+    monkeypatch.setattr(updater, "launch_installer", boom)
+    w._launch_update(tmp_path / "setup.exe")
+    assert marks == ["again"] and not w._force_close
+
+
 @pytest.mark.parametrize("toggle,env,due,expect", [(True, None, True, True), (False, None, True, False),
                                                    (True, "1", True, False), (True, None, False, False)])
 def test_the_daily_check_runs_only_when_wanted(qtbot, win, monkeypatch, toggle, env, due, expect):

@@ -555,7 +555,7 @@ class CompressWorker(_EngineWorker):
         # faster than the prior, the remainder is a few tenths of a second and
         # would be learned as hundreds of MB/s. Not modelled well enough to
         # subtract, so not learned (as with the recoded media above).
-        if per_file_s >= codec_s:
+        if per_file_s > 0 and per_file_s >= codec_s:      # only when a per-file cost was really taken off
             return
         # No `achieved_factor` (B19): a whole-job ratio is not the slope the
         # estimator's factor became in B8 (see `calibrate.record`).

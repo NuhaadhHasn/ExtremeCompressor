@@ -151,3 +151,44 @@ def test_a_job_paced_by_its_file_count_teaches_no_rate(tmp_path, monkeypatch):
     worker._calibrate(SimpleNamespace(piped_bytes=50_000_000, elapsed_s=14.0,
                                       routes=[{"action": "pipeline", "stages": ["sevenzip"]}]))
     assert recorded == []
+
+
+# -- calibration must still learn from a job that has no per-file term (CI caught this on a faster machine) --------
+
+def _worker_and_result(tmp_path, monkeypatch, per_file_count, elapsed_s):
+    import dataclasses
+
+    from excmp import engine
+    from excmp.planner import Profile
+    from excmp.stages.base import StageContext
+    from excmp.tools import find_tools
+    from gui.models import Job
+    from gui.queue_manager import CompressWorker, WorkerSignals
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello " * 3000)
+    (src / "b.txt").write_text("world " * 3000)
+    result = engine.compress([src], tmp_path / "c.excmp", Profile.NORMAL, StageContext(temp_dir=tmp_path / "t"))
+    result = dataclasses.replace(result, elapsed_s=elapsed_s)
+    recorded = []
+    monkeypatch.setattr("excmp.calibrate.record", lambda *a, **kw: recorded.append((a, kw)))
+    worker = CompressWorker(Job(inputs=[src], out_path=tmp_path / "c.excmp", profile=Profile.NORMAL),
+                            WorkerSignals(), tmp_path / "t", find_tools())
+    worker._per_file_count = per_file_count
+    return worker, result, recorded
+
+
+def test_a_job_with_no_per_file_term_is_still_recorded_however_short_it_was(tmp_path, monkeypatch):
+    """Without a summary the per-file term is 0. A very fast job leaves a zero or negative remainder after the fixed
+    second is taken off; `0 >= that` used to read as 'dominated by the per-file cost' and the job fed nothing to the
+    estimator (calibrate.record drops a non-positive time itself). The guard is for a term that was really subtracted."""
+    worker, result, recorded = _worker_and_result(tmp_path, monkeypatch, per_file_count=0, elapsed_s=0.01)
+    worker._calibrate(result)
+    assert recorded, "a job with no per-file term must reach calibrate.record as before"
+
+
+def test_a_job_paced_by_its_file_count_is_not_learned(tmp_path, monkeypatch):
+    worker, result, recorded = _worker_and_result(tmp_path, monkeypatch, per_file_count=50_000, elapsed_s=2.0)
+    worker._calibrate(result)
+    assert recorded == []

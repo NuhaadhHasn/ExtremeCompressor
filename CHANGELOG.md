@@ -14,6 +14,24 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **The installer carries the external tools (2026-11-26).** 7-Zip (the "Extra" `7za.exe` 26.06, no RAR code), Precomp 0.4.7,
+  zpaqfranz 64.8, FLAC 1.5.0 and balrogg 1.4 now ship inside the installer, each checked against its SHA-256 pin, with its
+  licence text under `licenses\tools`. An installed app has what a source checkout has and never downloads a tool: before
+  this the installed app had no zpaqfranz, so Insane could not run, and no Precomp, so Extreme could not either. A full
+  7-Zip on the machine is still preferred when it is new enough, because it also opens RAR and ISO. Settings marks the
+  copies that came with the app. `packaging/stage_tools.py` builds the folder; `THIRD-PARTY-NOTICES.md` was rewritten from
+  the files (Precomp is Apache-2.0, not "non-commercial"; zpaqfranz is MIT).
+
+### Fixed
+
+- **The in-app update could fail (found on the first real 0.1.0 to 0.1.1 test).** The window started the silent installer
+  and only then closed, so the installer's one-shot "is the app running?" check saw it and exited 1 with the old version
+  left in place. The window now lets go of its running marker before it launches the installer, and the installer waits up
+  to 20 seconds for a closing window instead of checking once. An interactive Setup or uninstall still refuses at once with
+  a message.
+
 ## [0.1.1] - 2026-11-26
 
 ### Added

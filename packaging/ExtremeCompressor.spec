@@ -36,6 +36,15 @@ def _par2_binaries():
     return found
 
 
+def _bundled_tools():
+    """The external tools, staged and pin-checked by packaging/stage_tools.py (build.cmd runs it first).
+    They land in <bundle>/tools/bin/<name>/<version>/..., where excmp.toolfetch looks for them."""
+    staged = ROOT / "build" / "bundled-tools"
+    if not staged.is_dir():
+        raise SystemExit("build/bundled-tools missing: run python packaging/stage_tools.py first")
+    return [(str(staged), "tools/bin")]
+
+
 #: Big or useless files PyInstaller's Qt hook collects anyway (measured 122 MB -> 71 MB on disk).
 DROP_FILES = [
     "opengl32sw.dll", "qdirect2d.dll",
@@ -55,7 +64,7 @@ def _analysis(script):
     a = Analysis(  # noqa: F821
         [str(script)], pathex=[str(ROOT)],
         binaries=_par2_binaries(),
-        datas=[(str(ROOT / "assets"), "assets")],
+        datas=[(str(ROOT / "assets"), "assets"), *_bundled_tools()],
         hiddenimports=[], excludes=EXCLUDES, noarchive=False)
     a.binaries = [b for b in a.binaries if _keep(b)]
     a.datas = [d for d in a.datas if _keep(d)]

@@ -80,6 +80,11 @@ IN_PROCESS: frozenset[str] = frozenset({"zstd"})
 #: What provides each in-process codec, for the one place that has to say so.
 IN_PROCESS_WHEEL: dict[str, str] = {"zstd": "zstandard"}
 
+#: Tools where a copy already on the machine is preferred over the bundled one, while it is new enough.
+#: The bundled 7-Zip is the "Extra" 7za.exe, which has no RAR (or ISO, WIM...) support; a full 7-Zip the
+#: user installed has, and the Restore tab opens foreign archives with whichever one is found.
+PREFER_SYSTEM: frozenset[str] = frozenset({"7z"})
+
 #: Minimum version we are willing to see, per tool. Below this the app says so.
 #:
 #: 7-Zip below **26.02** carries **CVE-2026-14266** (CVSS 7.0): a heap buffer
@@ -179,6 +184,50 @@ def _pinned_tool(name: str) -> str | None:
     return str(found) if found is not None else None
 
 
+def is_bundled(path: str) -> bool:
+    """Does ``path`` lie inside the tools folder the installer filled (``toolfetch``'s install root)?"""
+    from . import toolfetch
+    try:
+        return Path(path).resolve().is_relative_to(toolfetch._install_root().resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _usable_system_copy(name: str, paths) -> str | None:
+    """A copy of ``name`` already on the machine that meets the security floor, else None.
+
+    Only for :data:`PREFER_SYSTEM` tools. One whose banner we cannot read counts as usable ("could not
+    tell" is not "old", as in :func:`below_floor`); one that reads older than the floor does not, so
+    the bundled copy takes over instead of the user being told to upgrade before anything works.
+    """
+    for p in paths:
+        if not Path(p).is_file():
+            continue
+        floor = SECURITY_FLOOR.get(name)
+        if floor is not None:
+            found = _system_version(name, p)
+            if found is not None and found < floor:
+                continue
+        return p
+    return None
+
+
+#: (path, mtime, size) -> parsed version. ``find_tools`` runs on every analysis and every stage check, and a
+#: banner probe is a process spawn; the key changes when 7-Zip is upgraded in place.
+_SYSTEM_VERSION: dict[tuple[str, int, int], tuple[int, int] | None] = {}
+
+
+def _system_version(name: str, path: str) -> tuple[int, int] | None:
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return None
+    key = (path, st.st_mtime_ns, st.st_size)
+    if key not in _SYSTEM_VERSION:
+        _SYSTEM_VERSION[key] = parse_tool_version(_probe_version(name, path), _PRODUCT_NAME.get(name, name))
+    return _SYSTEM_VERSION[key]
+
+
 def find_tools(with_versions: bool = False) -> dict[str, ToolInfo | None]:
     """Locate every known tool. Returns a dict with an entry per tool name."""
     found: dict[str, ToolInfo | None] = {}
@@ -204,8 +253,13 @@ def find_tools(with_versions: bool = False) -> dict[str, ToolInfo | None]:
         # otherwise always resolve to the unverified well-known path and the
         # pin would never run; the well-known path stays as the fallback for a
         # machine that has not fetched the pinned copy yet.
-        located: str | None = _pinned_tool(name)
-        pinned_found = located is not None
+        located: str | None = None
+        if name in PREFER_SYSTEM:
+            located = _usable_system_copy(name, paths)
+        pinned_found = False
+        if located is None:
+            located = _pinned_tool(name)
+            pinned_found = located is not None
         if located is None:
             for p in paths:
                 if Path(p).is_file():
@@ -220,7 +274,7 @@ def find_tools(with_versions: bool = False) -> dict[str, ToolInfo | None]:
         if located is None:
             found[name] = None
         else:
-            if name in toolfetch.TOOL_MANIFEST and not pinned_found:
+            if name in toolfetch.TOOL_MANIFEST and not pinned_found and name not in PREFER_SYSTEM:
                 _warn_unpinned(name, located)
             version = _probe_version(name, located) if with_versions else ""
             found[name] = ToolInfo(name=name, path=located, version=version)

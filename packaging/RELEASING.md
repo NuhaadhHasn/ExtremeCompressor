@@ -5,7 +5,9 @@ owner's signature (`excmp/updater.py`). To publish one, from the laptop that hol
 (`%USERPROFILE%\.excmp\update-signing.key`, **back it up**):
 
 1. Bump `__version__` in `excmp/__init__.py` (plain numbers: `0.2.0`), commit, merge to `main`, CI green.
-2. `packaging\build.cmd` builds `dist\ExtremeCompressor-<version>-setup.exe`.
+2. `packaging\build.cmd` builds `dist\ExtremeCompressor-<version>-setup.exe`. It first runs `packaging\stage_tools.py`, which
+   checks the bundled tools against their pins (offline when `tools\bin` is complete; it downloads only what is missing and
+   needs a 7-Zip on the machine to unpack the 7-Zip Extra package once).
 3. `python packaging\smoke_test.py` (real install and uninstall, per user).
 4. `python tools\release_sign.py release dist\ExtremeCompressor-<version>-setup.exe` writes `dist\SHA256SUMS`
    and `dist\SHA256SUMS.sig`.

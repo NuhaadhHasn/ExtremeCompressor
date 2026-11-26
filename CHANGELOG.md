@@ -14,6 +14,20 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **Extreme finds repeats further back than 7-Zip's dictionary (B31, 2026-11-25).** A dedup stage
+  in front of 7-Zip (`excmp/stages/dedup.py`) keeps one copy of each repeated chunk of the stream
+  Precomp produces. Two versions of one 155 MB design file: 222.1 MB -> 112.0 MB. The owner's design
+  folder (666 MB): 370.5 MB -> 258.4 MB. Two versions of a folder of jars and zips: 104.5 MB ->
+  54.2 MB. The stage is skipped, leaving no record, when the stream fits the dictionary (256 MiB
+  by default) or holds under 2% of such repeats; then the archive is byte-identical to before, at a
+  cost of about a second per 30 MB of stream for the scan. Every chunk is checked against its hash
+  on restore, and the SHA-256 ledger gate is unchanged.
+  **Compatibility:** archives without the stage read as before. An archive that records a `dedup`
+  stage needs this version or later: 0.1.0 refuses it with "archive needs stage 'dedup'".
+  ([record](docs/benchmarks/2026-11-25-dedup-stage.md))
+
 ## [0.1.0] - 2026-11-25
 
 ### Added

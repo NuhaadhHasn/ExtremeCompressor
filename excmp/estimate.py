@@ -960,7 +960,11 @@ _JOB_FIXED_RANGE = (0.3, 3.0)           # of the figure: low and high margins
 # Precomp chain (`engine._with_dedup`, `stages/dedup.py`).
 #
 # **Time.** It reads the stream once whenever the stream is larger than
-# 7-Zip's dictionary, repeats or not, and that read is the term: SCAN_RATE_NOTE
+# 7-Zip's dictionary, repeats or not, and that read is the term. Measured 2026-11-25/26 on the
+# i5-7200U, shared: 30.8 MB/s for a scan that then skipped (335 MB of unique
+# text, 10.9 s), and 27.7, 22.0 and 19.0 MB/s for the whole stage when it
+# went on to write and self-check (666, 861 and 1,616 MB streams). One rate
+# between the two (docs/benchmarks/2026-11-25-dedup-stage.md).
 # The estimator knows the piped bytes, not the stream Precomp makes of them,
 # so a job that only passes 256 MiB after Precomp expands it is not billed
 # (the pair of design files that motivated the stage is 309 MB piped and

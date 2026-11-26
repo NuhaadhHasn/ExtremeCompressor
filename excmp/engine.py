@@ -1077,7 +1077,7 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # B31: an opportunistic stage that stepped aside. Logged,
                     # not a warning, and no progress report from here: the
                     # stage sent its own if it had done any work.
-                    ctx.log_cb(sid, str(skip))
+                    ctx.log_cb(sid, str(skip).removeprefix(f"{sid}: "))
                     continue
                 except StageSkip as skip:
                     skip_notes.append(str(skip))

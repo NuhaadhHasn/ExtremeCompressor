@@ -1001,6 +1001,54 @@ def job_fixed_seconds(stages: Sequence[str]) -> float:
     return _JOB_FIXED_SECONDS_INSANE if "zpaqfranz" in stages else _JOB_FIXED_SECONDS
 
 
+# What a job costs per FILE, whatever the file holds: (compress side, D9
+# self-test), in seconds. The rates above are bytes per second and were fitted
+# on big files, so a tree of small ones was promised the codec's time and
+# nothing else: 1,801 Python files (43 MB) at Fast were quoted 14.1 s and took
+# 44.1 s, 4.6x over and on the unsafe side (2026-11-25).
+#
+# Where it goes, measured on the i5-7200U with real-time protection on
+# (docs/benchmarks/2026-11-25-small-files.md has the runs):
+#
+# * compress side: every file is opened to be analysed and again to be
+#   archived (about 1-2 ms an open, before any byte is read), and sampled;
+# * self-test: every file is created again by the restore, and then opened
+#   to be hashed - and the FIRST open of a file that has just been written
+#   waits on the scanner: 15-19 ms a file one at a time, against 0.3 ms for a
+#   second open. That one wait is most of the term, which is why it is its own
+#   term and not a slower byte rate: it does not grow with the file.
+#
+# One pair for every chain: 8.7 ms a file, the median residual (measured
+# median minus the byte terms, over the files past _PER_FILE_FREE) of eight
+# cells, Fast and Normal on four trees of 307 to 3,912 files: 8.9, 6.4, 8.8,
+# 10.8, 7.9, 6.4, 9.1 and 8.7 ms. Split 3.0 / 5.7 by where the time was seen.
+# Extreme was checked against it, not fitted (three trees, 0.6-0.9x of the
+# figure when quiet). Insane was not: 307 files took 259 and 343 s, which is
+# zpaqfranz and not this term. Trees of mid-sized stored files run over it
+# (238 PNG/GIF: 5.2 s against 3.9; 150 photos with lepton off: 5.9 against
+# 3.1), because analysis samples up to 1 MiB of each; the range holds them.
+#
+# The range is wide on purpose. The low end is a machine with scanning off
+# (the opens alone); the high end holds every run in the record, taken beside
+# another job on the same two cores. Files a store-route specialist packs
+# (lepton, balrogg) are left out: their own per-file constants were fitted on
+# whole jobs and already hold this.
+_PER_FILE_SECONDS = (0.003, 0.0057)
+_PER_FILE_RANGE = (0.3, 2.5)             # of the figure: low and high margins
+# The job's fixed second (B22, above) was fitted on jobs of 1, 20 and 24
+# files - Fast took 0.5 s for one file and 1.0 s for twenty - so it already
+# holds the per-file cost of a job that size. Charging those files again
+# would move every figure B22 measured; only the files past them are charged.
+_PER_FILE_FREE = 24
+
+
+def per_file_seconds(files: int) -> tuple[float, float]:
+    """(compress, self-test) seconds that ``files`` files cost by being
+    files. See `_PER_FILE_SECONDS`."""
+    files = max(0, int(files) - _PER_FILE_FREE)
+    return files * _PER_FILE_SECONDS[0], files * _PER_FILE_SECONDS[1]
+
+
 @dataclass(frozen=True)
 class RecodeCost:
     """Seconds a Precomp chain spends recoding media, beyond its own rate.
@@ -1174,6 +1222,9 @@ class PackCost:
     vorbis_bytes: int = 0
     opus_bytes: int = 0
     jpeg_bytes: int = 0
+    #: How many files this prices. Their per-file time is in ``seconds``
+    #: already, so `per_file_seconds` is not charged for them again.
+    files: int = 0
 
 
 def _ogg_kind(info: FileInfo) -> str:
@@ -1253,7 +1304,7 @@ def pack_cost(infos: list[FileInfo], the_plan: Plan,
                     seconds=encode + decode + jpeg_pack,
                     verify_seconds=decode + jpeg_decode,
                     vorbis_bytes=by_kind["vorbis"], opus_bytes=by_kind["opus"],
-                    jpeg_bytes=jpeg_bytes)
+                    jpeg_bytes=jpeg_bytes, files=len(files) + len(photos))
 
 
 def estimate_size(infos: list[FileInfo], the_plan: Plan,
@@ -1366,17 +1417,22 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     io_seconds = stored_bytes / rates.io_rate if rates.io_rate else 0.0
     cost = pack_cost(infos, the_plan, rates)
     recode = recode_cost(infos, the_plan, rates)
+    files = len(infos) - cost.files
     compress_seconds, verify_seconds = time_split(stored_bytes, piped_bytes,
                                                   stages, rates, pack=cost,
-                                                  recode=recode)
+                                                  recode=recode, files=files)
     # B22: the setup cost is not throughput, so it stays out of the codec
-    # term the spread multiplies and gets its own, smaller margins.
+    # term the spread multiplies and gets its own, smaller margins. The
+    # per-file cost is not throughput either, and has its own margins too.
     in_split = job_fixed_seconds(stages)
-    codec_seconds = compress_seconds - io_seconds - cost.seconds - in_split
+    per_file_compress, per_file_verify = per_file_seconds(files)
+    per_file = per_file_compress + per_file_verify
+    codec_seconds = (compress_seconds - io_seconds - cost.seconds - in_split
+                     - per_file_compress)
     fixed = in_split if infos else 0.0          # no files, no job: nothing to wait for
     spread = max(1.0, rates.spread_for(stages))
 
-    base = io_seconds + verify_seconds
+    base = io_seconds + verify_seconds - per_file_verify
     # The time the recoders pace, compress and self-test, swings by
     # _RECODE_SPREAD on the slow side (2026-10-17). Only that side: the
     # priors are quiet medians, and contention only slows a job down, so the
@@ -1389,19 +1445,26 @@ def estimate_time(infos: list[FileInfo], the_plan: Plan,
     png_cut = recode.zip_png_verify_seconds * (1 - 1 / _ZIP_PNG_VERIFY_LOW)
     return TimeEstimate(
         low=(base + codec_seconds / spread + cost.seconds / _PACK_SPREAD
-             + fixed * _JOB_FIXED_RANGE[0] - png_cut),
-        expected=base + codec_seconds + cost.seconds + fixed,
+             + fixed * _JOB_FIXED_RANGE[0] + per_file * _PER_FILE_RANGE[0]
+             - png_cut),
+        expected=base + codec_seconds + cost.seconds + fixed + per_file,
         high=(base - paced_verify + (codec_seconds - paced_compress) * spread
               + (paced_compress + paced_verify) * _RECODE_SPREAD
-              + cost.seconds * _PACK_SPREAD + fixed * _JOB_FIXED_RANGE[1]),
+              + cost.seconds * _PACK_SPREAD + fixed * _JOB_FIXED_RANGE[1]
+              + per_file * _PER_FILE_RANGE[1]),
     )
 
 
 def time_split(stored_bytes: int, piped_bytes: int, stages: Sequence[str],
                rates: Rates = DEFAULT_RATES,
                pack: PackCost | None = None,
-               recode: RecodeCost | None = None) -> tuple[float, float]:
+               recode: RecodeCost | None = None,
+               files: int = 0) -> tuple[float, float]:
     """(compress, verify) expected seconds for one job.
+
+    ``files`` is how many files the job holds that no specialist packs; each
+    costs `per_file_seconds` on both sides, whatever its size. Left at 0 the
+    answer is the byte terms alone, as it was before that term existed.
 
     ``pack`` (B13) adds the store-route specialists' encode-and-prove time to
     the compress side and their decode time to the restore side. ``recode``
@@ -1433,6 +1496,9 @@ def time_split(stored_bytes: int, piped_bytes: int, stages: Sequence[str],
         verify_seconds += recode.verify_seconds + own / _INSANE_BASE_VERIFY_RATE
     codec_seconds += job_fixed_seconds(stages)
     codec_seconds += dedup_seconds(piped_bytes, stages)       # B31
+    per_file_compress, per_file_verify = per_file_seconds(files)
+    codec_seconds += per_file_compress
+    verify_seconds += per_file_verify
     if pack is not None:
         return (io_seconds + codec_seconds + pack.seconds,
                 verify_seconds + pack.verify_seconds)

@@ -145,16 +145,48 @@ def resolve_within(base: Path, name: str) -> Path:
     Returns the *unresolved* join, so the caller writes exactly where it asked
     to rather than through a canonicalized path.
     """
-    rel = safe_relpath(name)
-    base = Path(base)
-    target = base.joinpath(*rel.parts)
-    try:
-        resolved = target.resolve()
-        base_resolved = base.resolve()
-    except OSError as exc:  # pragma: no cover - platform dependent
-        _reject(name, f"cannot be resolved ({exc})")
-    if resolved == base_resolved:
-        _reject(name, "resolves to the destination directory itself")
-    if not resolved.is_relative_to(base_resolved):
-        _reject(name, f"escapes the destination directory {str(base)!r}")
-    return target
+    return Within(base)(name)
+
+
+class Within:
+    """:func:`resolve_within` for one pass over many names under one ``base``.
+
+    Every guard of :func:`resolve_within` runs for every name: the name is
+    validated, the join is canonicalized, and the canonical target is compared
+    against the canonical destination. The one thing that is not repeated is
+    canonicalizing ``base`` itself, which is the same directory for the whole
+    pass: measured on 1,801 restored files, `resolve_within` made two
+    ``realpath`` calls a file (0.4 ms each on Windows, where each one opens a
+    handle), and half of them returned the same answer 1,801 times.
+
+    **Holding that answer can only refuse more, never less.** If ``base`` were
+    re-pointed (a junction swapped in mid-pass), a fresh ``base.resolve()``
+    would follow it and agree with the equally re-pointed target, so the
+    per-call version would write to the new place; this one compares against
+    where the destination was when the pass began, and refuses.
+
+    One instance per pass, never kept: a destination looked at once and
+    remembered across jobs is a different thing, and is not offered here.
+    """
+
+    __slots__ = ("base", "_base_resolved")
+
+    def __init__(self, base: Path):
+        self.base = Path(base)
+        self._base_resolved: Path | None = None
+
+    def __call__(self, name: str) -> Path:
+        rel = safe_relpath(name)
+        target = self.base.joinpath(*rel.parts)
+        try:
+            resolved = target.resolve()
+            if self._base_resolved is None:
+                self._base_resolved = self.base.resolve()
+        except OSError as exc:  # pragma: no cover - platform dependent
+            _reject(name, f"cannot be resolved ({exc})")
+        base_resolved = self._base_resolved
+        if resolved == base_resolved:
+            _reject(name, "resolves to the destination directory itself")
+        if not resolved.is_relative_to(base_resolved):
+            _reject(name, f"escapes the destination directory {str(self.base)!r}")
+        return target

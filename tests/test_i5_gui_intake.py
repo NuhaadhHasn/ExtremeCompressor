@@ -104,7 +104,10 @@ if mode == "raw":
         sock.waitForDisconnected(2000)
     sys.exit(0)
 if mode == "forward":
-    sys.exit(0 if forward(name, intake) else 1)
+    # A generous timeout: this child tests the TRANSPORT. The default 400 ms is for a window that answers at once; on a
+    # loaded 2-core machine (a full suite beside other work) a freshly started Qt process can need longer, and that made
+    # this test fail under load while passing alone. The product retries (acquire), so only the test was fragile.
+    sys.exit(0 if forward(name, intake, timeout_ms=8000) else 1)
 if mode == "window":
     # A whole instance: become the window or hand over; the window stays up and reports.
     srv = IntakeServer(name)

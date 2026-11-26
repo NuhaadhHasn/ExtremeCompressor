@@ -77,6 +77,28 @@ def _reach_bytes(text: str) -> int:
         return 1 << int(text)
     return _dict_bytes(text)
 
+
+#: U+FEFF. At the head of a list file it is a byte order mark to whoever
+#: reads the list, not part of a name: "<U+FEFF>bom.txt" on the first line
+#: selected its sibling "bom.txt" (review, 2026-11-26). Refused anywhere in a
+#: name, and the list carries a signature of its own besides.
+_BOM = "\ufeff"
+
+
+def _breaks_a_list(name: str) -> bool:
+    """True when ``name`` cannot be one line of a 7-Zip list file.
+
+    A list file is one name per line, so a name holding a line separator
+    would be read as two names - 7-Zip would be asked for files nobody
+    listed. Any control character is refused with it (NUL ends a string for
+    the tool that reads it), and so is everything `str.splitlines` breaks on,
+    which includes the Unicode separators U+0085, U+2028 and U+2029. NTFS
+    allows most of these in a name even though Explorer does not.
+    """
+    return (len(name.splitlines()) != 1
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in name))
+
+
 class SevenZipStage(Stage):
     id = "sevenzip"
 
@@ -156,6 +178,137 @@ class SevenZipStage(Stage):
         run_tool(cmd, ctx, self.id, _parse_percent)
         if not dst.exists():
             raise StageError(f"{self.id}: archive was not created")
+        return dst
+
+    @staticmethod
+    def source_base(entries) -> Path | None:
+        """The one directory every entry's archive name hangs off, or None.
+
+        7-Zip stores a file under the relative path it was given, so it can
+        read the sources in place exactly when one working directory makes
+        every archive name a real relative path: ``<base>/<arcname>`` is the
+        file. That is one input, or several from the same folder. Anything
+        else (inputs from different folders), and any name a list file might
+        not carry literally, is left to the staging copy.
+        """
+        base: Path | None = None
+        for path, arcname in entries:
+            parts = tuple(arcname.split("/"))
+            whole = Path(path).parts
+            if len(whole) <= len(parts) or whole[-len(parts):] != parts:
+                return None
+            if any(p != p.strip() or p[:1] in "@-" or '"' in p
+                   or "*" in p or "?" in p or _breaks_a_list(p)
+                   or _BOM in p for p in parts):
+                return None
+            here = Path(*whole[:-len(parts)])
+            if base is None:
+                base = here
+            elif here != base:
+                return None
+        return base
+
+    def compress_files(self, entries, dst: Path, ctx: StageContext,
+                       on_added, on_unreadable, total_bytes: int = 0) -> Path:
+        """`compress` without the staging copy: 7-Zip reads the sources
+        where they are, from a list of exactly the files to take.
+
+        Measured 2026-11-25 on 1,801 small files: staging wrote every file
+        again, and the first open of a file that has just been written waits
+        15-19 ms on real-time protection - paid by 7-Zip, once per file.
+
+        **Each file is hashed here first, by a read of our own (writers
+        denied while it runs; a file somebody has open for writing sends the
+        whole job to the staging copy before 7-Zip starts), and 7-Zip
+        reads it afterwards.** Those are two reads, so this digest is a claim
+        about the archive and not a measurement of it. What makes it true is
+        what always did: the publish gate restores the archive and compares
+        every restored file against these digests, and a file that changed in
+        between fails it. (Before this, the digest was taken in one pass over
+        every file and the staging copy made in a later one; the gap was the
+        same.)
+
+        Raises :class:`NeedsStaging` when the sources cannot be read in place
+        or 7-Zip did not finish cleanly - a file locked after it was hashed
+        makes it exit 1 - and the engine then stages the files, which is
+        where a file that cannot be read is skipped one at a time (K3).
+        """
+        import hashlib
+        import os
+
+        from .. import sharedread
+        from .base import NeedsStaging
+        dst = Path(dst)
+        entries = list(entries)
+        base = self.source_base(entries)
+        if base is None:
+            raise NeedsStaging("the sources do not share one folder")
+        # Checked again here, on the names that will actually be written, and
+        # before anything is hashed, written or run: `source_base` already
+        # refuses these, and a list file is the one place where a name that
+        # holds a line break stops being one name.
+        if any(_breaks_a_list(arcname) for _, arcname in entries):
+            raise NeedsStaging("a file name holds a line break or control "
+                               "character, which a list file cannot carry")
+        if any(_BOM in arcname for _, arcname in entries):
+            raise NeedsStaging("a file name holds a byte order mark, which "
+                               "a list file cannot carry")
+        try:
+            for _, arcname in entries:
+                arcname.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            # A lone surrogate: a legal Windows name, not legal UTF-8.
+            raise NeedsStaging(f"a file name cannot be written to a list "
+                               f"file ({exc.reason})") from exc
+        listed: list[str] = []
+        for path, arcname in entries:
+            if ctx.cancel.is_set():
+                raise StageError(f"{self.id}: cancelled")
+            digest, size = hashlib.sha256(), 0
+            try:
+                fh, how = sharedread.open_for_archive(path)
+                with fh:
+                    if how == sharedread.BUSY:
+                        # Another program has it open for writing. 7-Zip may
+                        # not be able to open it at all, and the staging copy
+                        # is where such a file is read twice and compared -
+                        # so go there now, before 7-Zip has run.
+                        raise NeedsStaging(
+                            f"{Path(path).name} is open for writing in "
+                            f"another program")
+                    while chunk := fh.read(1 << 20):
+                        digest.update(chunk)
+                        size += len(chunk)
+            except OSError as exc:
+                on_unreadable(Path(path), exc)
+                continue
+            on_added(Path(path), digest.hexdigest(), size)
+            listed.append(arcname.replace("/", os.sep))
+        if not listed:
+            raise NeedsStaging("no source file could be read")
+        if dst.exists():
+            dst.unlink()
+        listfile = dst.with_name(dst.name + ".files")
+        # UTF-8 with its signature: the reader takes that as the mark and
+        # reads the first name as it was written.
+        listfile.write_bytes(b"\xef\xbb\xbf"
+                             + ("\n".join(listed) + "\n").encode("utf-8"))
+        threads = self._auto_threads(ctx.threads)
+        # `build_compress_cmd` ends with the thing to archive; here that is
+        # the list, read as UTF-8, with `base` as the working directory.
+        cmd = self.build_compress_cmd(base, dst, threads, self._exe())[:-1]
+        cmd += ["-scsUTF-8", f"@{listfile}"]
+        try:
+            run_tool(cmd, ctx, self.id, _parse_percent, cwd=base)
+        except StageError as exc:
+            dst.unlink(missing_ok=True)
+            if ctx.cancel.is_set():
+                raise
+            raise NeedsStaging(str(exc)) from exc
+        finally:
+            listfile.unlink(missing_ok=True)
+        if not dst.exists():
+            raise NeedsStaging(f"{self.id}: archive was not created")
         return dst
 
     def _auto_threads(self, requested: int) -> int:

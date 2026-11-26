@@ -273,19 +273,24 @@ def test_an_archive_that_would_contain_nothing_is_not_published(tmp_path):
         (src / f"t{i}.txt").write_text(f"line {i}\n" * 800, encoding="utf-8")
 
     archive = tmp_path / "out.excmp"
-    import shutil as _sh
-    real_copy = _sh.copy2
+    # The staging copy: `engine._copy_hashing`, which reads each file once
+    # for both the copy and the ledger digest (it was `shutil.copy2`).
+    # Normal is made to stage (7-Zip otherwise reads the sources in place),
+    # because the staging copy emptying the ledger is the case pinned here.
+    real_copy, real_direct = engine._copy_hashing, engine._READS_SOURCES
 
     def refuse(*a, **kw):
         raise PermissionError(13, "Permission denied")
 
-    _sh.copy2 = refuse
+    engine._copy_hashing = refuse
+    engine._READS_SOURCES = ("tar", "zstd")
     try:
         with pytest.raises(ValueError, match="could be read"):
             engine.compress([src], archive, Profile.NORMAL,
                             StageContext(temp_dir=tmp_path / "t"))
     finally:
-        _sh.copy2 = real_copy
+        engine._copy_hashing = real_copy
+        engine._READS_SOURCES = real_direct
     assert not archive.exists(), "an archive containing nothing was published"
 
 

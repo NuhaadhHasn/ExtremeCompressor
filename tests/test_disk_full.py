@@ -56,6 +56,14 @@ needs_7z = pytest.mark.skipif(find_tools().get("7z") is None,
 PREVIOUS = b"the archive that was already there"
 
 
+def _stage_the_files(monkeypatch) -> None:
+    """Make Normal copy the files into its staging tree, as it did before
+    7-Zip could read the sources where they are - and as it still does when
+    that fails (`NeedsStaging`) or the inputs come from different folders.
+    The staging copy is what these tests are about."""
+    monkeypatch.setattr(engine, "_READS_SOURCES", ("tar", "zstd"))
+
+
 def _enospc(*_args, **_kwargs):
     """What a full volume raises. `errno.ENOSPC` is 28 on Windows too - it is
     the C runtime's number, not a POSIX-only one, and Python maps
@@ -161,7 +169,8 @@ def test_a_full_disk_while_staging_loses_nothing(tmp_path, monkeypatch):
     temp = tmp_path / "tmp"
     ctx = StageContext(temp_dir=temp)
 
-    monkeypatch.setattr(shutil, "copy2", _enospc)
+    _stage_the_files(monkeypatch)
+    monkeypatch.setattr(engine, "_copy_hashing", _enospc)
     with pytest.raises(Exception):
         engine.compress([src], out, Profile.NORMAL, ctx)
 
@@ -262,7 +271,8 @@ def test_a_full_disk_is_not_reported_as_a_locked_file(tmp_path, monkeypatch):
     out = tmp_path / "out.excmp"
     temp = tmp_path / "tmp"
 
-    monkeypatch.setattr(shutil, "copy2", _enospc)
+    _stage_the_files(monkeypatch)
+    monkeypatch.setattr(engine, "_copy_hashing", _enospc)
     with pytest.raises(OSError) as err:
         engine.compress([src], out, Profile.NORMAL, StageContext(temp_dir=temp))
 
@@ -285,14 +295,15 @@ def test_a_genuinely_locked_file_is_still_skipped(tmp_path, monkeypatch):
     src, _ = _corpus(tmp_path)
     out = tmp_path / "out.excmp"
     victim = src / "blob.bin"
-    real_copy = shutil.copy2
+    real_copy = engine._copy_hashing
 
     def deny_one(source, target, *a, **k):
         if Path(source).name == victim.name:
             raise OSError(errno.EACCES, "The process cannot access the file")
         return real_copy(source, target, *a, **k)
 
-    monkeypatch.setattr(shutil, "copy2", deny_one)
+    _stage_the_files(monkeypatch)
+    monkeypatch.setattr(engine, "_copy_hashing", deny_one)
     result = engine.compress([src], out, Profile.NORMAL,
                              StageContext(temp_dir=tmp_path / "tmp"))
 

@@ -98,6 +98,9 @@ class AnalysisSummary:
     #: whether Precomp's recoders are why.
     strongest_seconds: float = 0.0
     strongest_recode_seconds: float = 0.0
+    #: Files the time estimate charges per file (`estimate.per_file_seconds`):
+    #: all of them but those a store-route specialist packs.
+    per_file_count: int = 0
 
     @property
     def store_fraction(self) -> float:
@@ -254,6 +257,7 @@ def summarize(infos: list[FileInfo], the_plan: Plan,
         recode_own_bytes=recode.own_bytes,
         strongest_seconds=estimate_time(infos, strongest_plan).expected,
         strongest_recode_seconds=sum(strongest),
+        per_file_count=len(infos) - cost.files,
     )
 
 

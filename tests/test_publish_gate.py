@@ -76,7 +76,18 @@ def test_a_payload_that_cannot_be_read_back_blocks_publication(tmp_path, monkeyp
         d.write_bytes(bytes(random.Random(1).getrandbits(8) for _ in range(8_000)))
         return d
 
+    # Fast reads the sources straight into the stage (`compress_files`), so
+    # that is where the garbage has to come from now. The real call runs
+    # first: the ledger gets true digests of the true bytes, and only the
+    # stage's *output* is ruined - which is the case this test is about.
+    real_files = ZstdStage.compress_files
+
+    def garbage_files(self, entries, d, c, *a, **k):
+        real_files(self, entries, d, c, *a, **k)
+        return garbage_compress(self, None, Path(d), c)
+
     monkeypatch.setattr(ZstdStage, "compress", garbage_compress)
+    monkeypatch.setattr(ZstdStage, "compress_files", garbage_files)
 
     with pytest.raises(Exception):
         engine.compress([src], out, Profile.FAST, ctx)

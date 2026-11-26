@@ -27,6 +27,12 @@ class StageError(RuntimeError):
     """A stage failed; message carries the tool's captured output tail."""
 
 
+class NeedsStaging(Exception):
+    """A stage asked to read the source files where they are cannot, or tried
+    and failed. Nothing is lost: the engine copies the files into its staging
+    tree, as it always used to, and runs the stage on that."""
+
+
 class StageSkip(Exception):
     """A stage found nothing it can improve; the engine passes the data
     through unchanged and leaves the stage out of the manifest."""

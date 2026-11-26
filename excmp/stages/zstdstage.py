@@ -192,6 +192,36 @@ class ZstdStage(Stage):
         ctx.progress_cb(self.id, 100.0)
         return dst
 
+    def compress_files(self, entries, dst: Path, ctx: StageContext,
+                       on_added, on_unreadable, total_bytes: int = 0) -> Path:
+        """`compress` for files that were never staged: the same tar stream
+        through the same compressor, read straight from the sources and
+        hashed on the way (`tarstage.add_hashed`). ``total_bytes`` is what the
+        caller expects to feed it; it sizes the window and the progress bar
+        as the staged tree's byte count does."""
+        from .tarstage import _COPY_BUFFER, add_all_hashed
+        dst = Path(dst)
+        total = total_bytes or 1
+        done = 0
+
+        def added(path: Path, digest: str, size: int) -> None:
+            nonlocal done
+            on_added(path, digest, size)
+            done += size
+            ctx.progress_cb(self.id, min(100.0, done * 100.0 / total))
+
+        cctx = zstandard.ZstdCompressor(
+            compression_params=self._params(total, getattr(ctx, "threads", 0) or 0))
+        with dst.open("wb") as raw:
+            with cctx.stream_writer(raw, closefd=False) as zw:
+                with tarfile.open(mode="w|", fileobj=zw, format=tarfile.PAX_FORMAT,
+                                  dereference=True,
+                                  copybufsize=_COPY_BUFFER) as tar:
+                    add_all_hashed(tar, entries, ctx, self.id, added,
+                                   on_unreadable)
+        ctx.progress_cb(self.id, 100.0)
+        return dst
+
     def extract(self, src: Path, dst: Path, ctx: StageContext) -> Path:
         src, dst = Path(src), Path(dst)
         dst.mkdir(parents=True, exist_ok=True)

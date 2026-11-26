@@ -956,6 +956,47 @@ _JOB_FIXED_SECONDS_INSANE = 2.0
 _JOB_FIXED_RANGE = (0.3, 3.0)           # of the figure: low and high margins
 
 
+# B31: the long-range dedup stage the engine offers in front of 7-Zip on a
+# Precomp chain (`engine._with_dedup`, `stages/dedup.py`).
+#
+# **Time.** It reads the stream once whenever the stream is larger than
+# 7-Zip's dictionary, repeats or not, and that read is the term. Measured 2026-11-25/26 on the
+# i5-7200U, shared: 30.8 MB/s for a scan that then skipped (335 MB of unique
+# text, 10.9 s), and 27.7, 22.0 and 19.0 MB/s for the whole stage when it
+# went on to write and self-check (666, 861 and 1,616 MB streams). One rate
+# between the two (docs/benchmarks/2026-11-25-dedup-stage.md).
+# The estimator knows the piped bytes, not the stream Precomp makes of them,
+# so a job that only passes 256 MiB after Precomp expands it is not billed
+# (the pair of design files that motivated the stage is 309 MB piped and
+# 666 MB expanded, and would be billed for the 309). Both errors are small
+# beside the chain's own 3.2x spread.
+#
+# **Size: deliberately no credit**, for the reason `_dedup_credit` gives for
+# G9. What the stage saves is the repeated data, and nothing short of reading
+# every byte knows how much of that there is: the same folder is 0% or 50%.
+# An archive that comes out smaller than promised is the safe direction. When
+# it does find repeats the job also gets *faster* (7-Zip is handed less), so
+# on such a job the expected time is high rather than low.
+DEDUP_WINDOW = 256 << 20
+DEDUP_SCAN_RATE = 25e6
+
+
+def dedup_seconds(piped_bytes: int, stages: Sequence[str],
+                  window: int | None = None) -> float:
+    """Seconds the dedup stage's scan adds to the compress side.
+
+    ``window`` is the dictionary the job's 7-Zip will run with
+    (`engine.dedup_window(options)`); ``None`` is the ``-mx9`` default. The
+    job that runs passes its own (calibration does). The estimates shown
+    *before* a job - `estimate_time`, the comparison table - are made without
+    the job's options, as every other term in them is, and use the default.
+    """
+    if ("precomp" not in stages or not stages or stages[-1] != "sevenzip"
+            or piped_bytes <= (window or DEDUP_WINDOW)):
+        return 0.0
+    return piped_bytes / DEDUP_SCAN_RATE
+
+
 def job_fixed_seconds(stages: Sequence[str]) -> float:
     return _JOB_FIXED_SECONDS_INSANE if "zpaqfranz" in stages else _JOB_FIXED_SECONDS
 
@@ -1454,6 +1495,7 @@ def time_split(stored_bytes: int, piped_bytes: int, stages: Sequence[str],
         codec_seconds += recode.compress_seconds + own / _INSANE_BASE_RATE
         verify_seconds += recode.verify_seconds + own / _INSANE_BASE_VERIFY_RATE
     codec_seconds += job_fixed_seconds(stages)
+    codec_seconds += dedup_seconds(piped_bytes, stages)       # B31
     per_file_compress, per_file_verify = per_file_seconds(files)
     codec_seconds += per_file_compress
     verify_seconds += per_file_verify

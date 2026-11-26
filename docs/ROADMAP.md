@@ -633,6 +633,28 @@ OSI rule comes back before anything ships.
       is Haskell (`ExtremeCompressor-refs/freearc-orig`), so we would drive
       `Arc.exe` as a subprocess like every other tool, fetched from upstream
       with its own licence, never from the bundle.
+- [x] B31. **2026-11-26, on branch `dedup-stage`, not merged** - **a long-range block dedup stage in front of
+  7-Zip at Extreme**: the job SREP had until B11. LZMA2 sees 256 MiB back; two versions of one design file reach it
+  330 MB apart in Precomp's stream and were both compressed in full. `excmp/stages/dedup.py` cuts the stream into
+  content-defined chunks (8 KiB average, pure Python at ~30 MB/s by doing the per-byte work as big-integer
+  arithmetic), keeps first copies, writes references. Menu-card pair **222.1 -> 112.0 MB**, My Graphical Projects
+  **370.5 -> 258.4 MB**, two versions of a jar+zip folder **104.5 -> 54.2 MB**; two controls byte-identical.
+  The planner's chain is unchanged (`precomp -> sevenzip`): the engine offers the stage (`engine._with_dedup`) and
+  it skips itself, with no record and no warning, unless the stream is larger than the dictionary and at least 2%
+  of it repeats beyond the dictionary's reach. Any error inside it falls back to the old chain with a note.
+  Format: its own versioned file (`EXCMPDD1`, layout in the module docstring), recorded in the manifest as a
+  `dedup` stage with `params {"format": 1, "window": bytes}`; the manifest is schema 3 only when that record is
+  present (so 0.1.0 refuses at the manifest), 2 otherwise. A review on 2026-11-26 found three denial-of-service
+  and speed defects (unbounded run list, one-piece chunk reads, a 5 MB/s scan on candidate-free data), all fixed
+  test-first: the reader now accepts only files the writer can produce. Restore checks the index
+  hash, each chunk's BLAKE2b-128 before writing it, the sizes before the first byte, and the stream's BLAKE2b-256;
+  D9 is untouched. Estimator: time only (`estimate.dedup_seconds`, piped bytes / 25 MB/s past 256 MiB), no size
+  credit, same reasoning as G9's. A job the stage shortened is left out of calibration.
+  **Found on the way:** 7-Zip does *not* lose repeats at 256 MiB block boundaries (160 MiB written twice came out
+  at 160.0 MiB), so distance is the only rule. **Insane** is unchanged: zpaqfranz dedups itself (not re-measured).
+  **Open:** archives with the stage need a build newer than 0.1.0; timings are single runs on a shared machine
+  (one row slept); nothing above 2 GB of stream was run; Normal has the same gap past its dictionary and was
+  not touched. ([record](benchmarks/2026-11-25-dedup-stage.md); `tests/test_dedup_stage.py`)
 - [x] B27. ✅ **MERGED 2026-11-21** (`6f36989`) - **B5's types at Insane, measured: no change.**
       12 rows on 10 corpora (docx, xlsx, pptx, zip, jar, apk plus war, nupkg, album, a synthetic
       nested zip), 0 mismatches. Measured over expected: the chain model is inside its range on

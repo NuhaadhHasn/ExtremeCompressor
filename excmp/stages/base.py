@@ -38,6 +38,12 @@ class StageSkip(Exception):
     through unchanged and leaves the stage out of the manifest."""
 
 
+class QuietSkip(StageSkip):
+    """A skip that is not news. An opportunistic stage (dedup) steps aside on
+    most jobs, and a note about it on every archive would be noise: the
+    engine logs this one and adds nothing to the job's warnings."""
+
+
 @dataclass
 class StageContext:
     temp_dir: Path
@@ -56,6 +62,11 @@ class StageContext:
     #: `Stage.extract(src, dst, ctx)`, so a new argument would have to be
     #: added to every stage that cannot use it.
     extract_threads: int = 0
+    #: The most bytes the stage now being **extracted** may produce, or 0 for
+    #: "not told". The engine checks every stage's output against this after
+    #: it finishes; a stage whose input declares its output size (dedup) can
+    #: refuse before writing a byte instead.
+    output_limit: int = 0
     progress_cb: Callable[[str, float], None] = lambda stage, pct: None
     log_cb: Callable[[str, str], None] = lambda stage, line: None
     cancel: threading.Event = field(default_factory=threading.Event)

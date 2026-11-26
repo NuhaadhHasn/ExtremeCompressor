@@ -530,6 +530,12 @@ class CompressWorker(_EngineWorker):
         # count together (they are disjoint: the probe set has no recoded type).
         if (self._recode_bytes + self._probe_piped_bytes) * 4 >= piped:
             return
+        # B31: nor a job the dedup stage shortened. 7-Zip was handed less than
+        # the piped bytes say (half, on two versions of one file), so the job
+        # reads as a chain twice as fast as it is, and the next job with no
+        # repeats would be promised half its real time.
+        if getattr(result, "deduped_bytes", 0):
+            return
         # I11: the self-test is estimated separately (`_VERIFY_RATE`), so it
         # must not also be learned as part of the codec's rate. Counting it in
         # both put the whole restore into an Insane estimate twice.
@@ -542,13 +548,18 @@ class CompressWorker(_EngineWorker):
         # B22: nor the job's setup second, which the estimate bills on its own
         # (`estimate.job_fixed_seconds`); folded into the rate it was counted
         # twice, and it is a large share of a small job.
+        # B31: nor the dedup stage's scan, billed on its own in the same way
+        # (`estimate.dedup_seconds`), from the window this job's stage used.
         # Nor the per-file cost (`estimate.per_file_seconds`), for the same
         # reason: a tree of small files would otherwise teach the chain a
         # byte rate several times too slow for the next large file.
-        from excmp.estimate import job_fixed_seconds, per_file_seconds
+        from excmp.engine import dedup_window
+        from excmp.estimate import (dedup_seconds, job_fixed_seconds,
+                                    per_file_seconds)
         per_file_s = per_file_seconds(self._per_file_count)[0]
         codec_s = (result.elapsed_s - self._verify_elapsed - pack_s - self._recode_s
-                   - job_fixed_seconds(stages) - per_file_s)
+                   - job_fixed_seconds(stages) - per_file_s
+                   - dedup_seconds(piped, stages, dedup_window(self.options)))
         # A job paced by how many files it holds says little about the chain's
         # byte rate, and what is left after taking a modelled per-file cost
         # off it is mostly that model's error: on a machine that opens files

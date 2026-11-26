@@ -44,6 +44,7 @@ from excmp import engine
 from excmp.manifest import (
     MAX_MANIFEST_BYTES,
     MANIFEST_NAME,
+    MAX_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ContainerError,
     Manifest,
@@ -322,7 +323,9 @@ def test_a_newer_schema_is_refused_rather_than_misread(tmp_path):
     """There was no schema check at all: an archive from a future build loaded
     and was quietly misinterpreted. Saying so is the honest failure."""
     future = json.dumps({
-        "schema": SCHEMA_VERSION + 1, "created_utc": "", "profile": "fast",
+        # B31: the newest schema this build reads is no longer the one it
+        # normally writes (3 marks an archive with a dedup stage).
+        "schema": MAX_SCHEMA_VERSION + 1, "created_utc": "", "profile": "fast",
         "stages": [], "inputs": {}, "payload_name": "", "warnings": [],
         "routes": [], "reasons": [],
     })

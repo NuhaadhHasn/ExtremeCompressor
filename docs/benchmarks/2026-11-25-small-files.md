@@ -101,3 +101,39 @@ Checked, not fitted:
   member can alias an earlier one. The gate keeps its separate pass.
 - Hard-linking instead of copying into the staging tree: deleting a link to
   a read-only file clears the attribute on the source.
+
+## Review, 2026-11-26: one read has to be a read nothing can write under
+
+A 48 MiB file rewritten in place by another thread (all A, then all B, same
+size) for the length of the job, three small files beside it:
+
+| | Fast | Normal | Extreme |
+|---|---|---|---|
+| main | refused (hash mismatch at the gate) | not run | not run |
+| this branch before the fix | **published torn**: 24,897,008 A + 25,434,640 B | **published torn**: 27,262,976 A + 23,068,672 B | not run |
+| after | refused: changed while it was being archived | refused, the same, after going to the staging copy before 7-Zip ran | refused, the same |
+
+The single hashed read now opens the file with writers denied
+(`excmp/sharedread.py`, `FILE_SHARE_READ` only). A file another program
+already has open for writing is hashed by one read and archived by a second,
+as on main, and a difference refuses the job. A file that cannot be read is
+skipped by name as before.
+
+The same review found a list-file name starting with U+FEFF selecting its
+sibling at Normal; such names are staged and the list carries its own UTF-8
+signature. A name with a lone surrogate fails the job with UnicodeEncodeError
+at every profile on main as well (it is raised in analysis, before any stage)
+and still does; only the list file's own encoding error was turned into the
+staging fallback.
+
+Timing with the deny-write open, same 1,801 files, two interleaved rounds
+beside another agent's test suite (a cold first round; analysis alone took 14
+to 22 s in three of the eight runs):
+
+| | before | after the fix |
+|---|---|---|
+| Fast | 64.1, 57.9 | 29.2, 19.9 |
+| Normal | 42.5, 98.0 | 27.1, 53.4 |
+
+The undisturbed runs (19.9 and 27.1 s) are where the 2026-11-25 medians were
+(19.6 and 27.2 s).

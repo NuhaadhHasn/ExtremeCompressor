@@ -1,4 +1,37 @@
+# 🚦 START HERE — handoff (rewritten 2026-11-26: release 0.1.0, small-files speed, Fast level 12, UI clarity, guide; older text below)
+
+> **2026-11-25/26, all on `main` (CI green, full suites clean):** **v0.1.0 is PUBLISHED and installed** (see the 2026-11-25 block below);
+> **Fast is zstd level 12** (1.5-1.8x faster end to end: measured, not the 10-20x a research agent claimed, because a job's time is
+> mostly per-file work); **many small files are 1.7-2.7x faster** (no staging copy: the tar stage hashes what it writes; analysis reads a
+> file once; one resolve of the destination per pass; four-way hashing in the restore gate) and **the time estimate has a per-file term**
+> (8.7 ms a file past the first 24; it was 4.6x too low on 1,801 small files); **the single hashed read denies writers**
+> (`excmp/sharedread.py`): an adversarial review found that without it a file rewritten in place while archived was published TORN, so a
+> file somebody has open for writing is read twice, as before; **UI clarity pass 1+2** (plain words: Restore tab, Check without restoring,
+> Test all four, saved fingerprints); **keep-the-PC-awake + sleep/hibernate/shut down after a clean queue**; five defects the user guide
+> found were fixed (encrypted and split archives in the window, the temp-folder setting, a missing output folder, Ctrl+O); the
+> **user guide** (`docs/USER-GUIDE.md`, 15 screenshots) is merged; the **winget manifest generator** (`tools/make_winget_manifest.py`)
+> works and `winget validate` accepts the 0.1.0 manifest.
+>
+> **In flight at the time of writing:** branch `dedup-stage` (B31, a long-range block-dedup stage before the final 7-Zip at Extreme: measured
+> -49.6% / -30.2% / -48.2% archive bytes on three corpora with duplicates, nothing on two controls). It passed an adversarial review (no wrong
+> restore; denial-of-service findings F1-F3 were fixed) and has merged main; **it still needs a full suite and CI before merging**.
+> An archive that uses the stage records `dedup` in its manifest (schema 3 only then), so the published 0.1.0 refuses it with a clear error:
+> that is what a 0.1.1 release is for (and the first real test of the updater).
+>
+> **Still to do, in order:** merge B31; update `docs/USER-GUIDE.md` for it; release 0.1.1 (`packaging/RELEASING.md`) and watch the installed
+> 0.1.0 update itself; submit the winget manifest (a fork of microsoft/winget-pkgs and a pull request: public, ask first); the audit's
+> layout items (a visible reason for the suggestion, a quieter 'what runs' column, grouping Advanced); settings search and drag-out from the
+> archive list; `same-handle read-back` in the restore gate (the biggest remaining small-file lever, needs a decision: the hash would be
+> taken before the restore finishes and a later member can alias an earlier one); a 'compare folder with archive' feature; two Precomp
+> processes at once (+1.3-1.6x on Office/PDF jobs, 5-7 days: the research agent's third pick); code signing (SignPath needs the public repo,
+> which now exists: apply).
+>
+> **Using Fable agents:** the owner allows them for real improvement work (ideas, hard engineering, adversarial review, UI clarity), not for
+> chores. Brief them fully, give code jobs an isolated worktree, and re-measure what they claim. Reviews of this session's two engine
+> changes each found a real flaw the author's tests missed.
+
 # 🚦 START HERE — handoff (rewritten 2026-11-25: B29, B30, E5 updater, E6 icon, licences; older text below is 2026-11-21)
+## (2026-11-25 handoff, kept)
 
 > **The repository went public on 2026-11-25 with a rewritten history** (the author's private working notes, `CLAUDE.md`,
 > were removed from every commit, which changes every commit hash). **Commit hashes quoted in the docs written before that date

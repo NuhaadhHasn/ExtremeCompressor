@@ -67,8 +67,39 @@ What the times do support:
   Precomp still has to re-deflate all of it; the stage adds one more copy. Extract read 43 -> 70 s,
   185 -> 220 s and 212 -> 170 s: no consistent direction, inside the noise.
 - **Peak RAM is 7-Zip's** (2.6-2.7 GiB at `-mx9`, two threads) with or without the stage. The
-  Python process peaked at 62-64 MiB while the stage ran, against 31-36 MiB without it. The stage
-  never runs at the same time as 7-Zip or Precomp.
+  stage never runs at the same time as 7-Zip or Precomp.
+- **The stage's own memory is about 90 MiB, plus about 90 MiB more at the chunk cap.** The rows
+  above show the Python process at 62-64 MiB against 31-36 MiB without the stage, but that sampler
+  read the working set every half second and misses short peaks. The review of 2026-11-26 measured
+  the process's own peak: about 90 MiB scanning 256 MiB of random data (the read buffer and the
+  big-integer temporaries, the same for any stream length), and about 90 MiB on top of that for
+  the index when a stream reaches the full 2^19 chunks. An earlier draft of this record and of
+  the code comments said "a few MB" for the index; that was wrong at the cap.
+
+## Review, 2026-11-26
+
+An independent adversarial review found no input that restores a wrong stream or writes outside
+the destination (500 property cases, parser fuzz), and three ways a file or a stream could cost
+far more than it should. All three are fixed, each with a test that failed first
+(`tests/test_dedup_stage.py`, the "review 2026-11-26" block):
+
+| finding | before | after |
+|---|---|---|
+| a valid file of one 1-byte chunk and 3,000,000 runs | restored: 39 s, 247 MiB, for 3 MB of output (reviewer's run) | refused from the header in 0.0 s, index not read |
+| one 300 MB chunk read in a single piece | 590 MiB peak (reviewer's run) | 320 MiB peak in the same script, 286 MiB of which is the script's own copy of the chunk; restored in 8 MiB slices |
+| chunker on data with no candidates (zeros / two-symbol text) | 5 / 2.3 MB/s against ~33 for ordinary data (reviewer's run) | 13.7 / 39.0 MB/s against 17.2 for random data in the same (busy) run; cuts identical on the pinned streams |
+
+The reader now accepts only files this writer could have produced: the header must be possible
+before the index is read (index at most 64 MiB; no more chunks or runs than the stream has
+512-byte chunks), no chunk over 2^31 bytes, none under 512 except the stream's last, none unused.
+**Not fixed:** a stream built from one 32-byte pattern whose window sum happens to equal the
+candidate target, and whose CRC never passes, makes every position a candidate and scans at
+about 3 MB/s (3.2 measured). It is bounded (`_REJECT_STEP`) and only slows the compress of data
+shaped that way; widening the step would move cuts on ordinary data.
+
+An archive that records the stage is written with manifest schema 3, so a build from before the
+stage (0.1.0) refuses it at the manifest instead of after a full 7-Zip extract; every other
+archive is still schema 2.
 
 ## What it costs where there is nothing to find
 

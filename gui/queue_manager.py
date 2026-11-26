@@ -549,9 +549,11 @@ class CompressWorker(_EngineWorker):
         # twice, and it is a large share of a small job.
         # B31: nor the dedup stage's scan, billed on its own in the same way
         # (`estimate.dedup_seconds`).
+        from excmp.engine import dedup_window
         from excmp.estimate import dedup_seconds, job_fixed_seconds
         codec_s = (result.elapsed_s - self._verify_elapsed - pack_s - self._recode_s
-                   - job_fixed_seconds(stages) - dedup_seconds(piped, stages))
+                   - job_fixed_seconds(stages)
+                   - dedup_seconds(piped, stages, dedup_window(self.options)))
         # No `achieved_factor` (B19): a whole-job ratio is not the slope the
         # estimator's factor became in B8 (see `calibrate.record`).
         record(stages, piped_bytes=piped, elapsed_s=codec_s)

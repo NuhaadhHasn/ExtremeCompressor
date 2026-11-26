@@ -63,6 +63,20 @@ def _dict_bytes(text: str) -> int:
     number = text[:-1] if text[-1:] in "kmg" else text
     return int(number or 0) * unit
 
+
+_LZMA2_D = re.compile(r"^-m\d*=lzma2?:(?:[^:]*:)*?d=([0-9]+[kmg]?)(?::|$)", re.I)
+
+
+def _reach_bytes(text: str) -> int:
+    """A dictionary size as 7-Zip reads it, or 0 for one this code cannot
+    read. A bare number up to 63 is a power of two (``-md=26`` is 64 MiB)."""
+    text = text.strip().lower()
+    if not re.fullmatch(r"[0-9]+[kmg]?", text):
+        return 0
+    if text.isdigit() and int(text) < 64:
+        return 1 << int(text)
+    return _dict_bytes(text)
+
 class SevenZipStage(Stage):
     id = "sevenzip"
 
@@ -164,14 +178,19 @@ class SevenZipStage(Stage):
         it can find a repeat on its own. ``-md=`` in the Parameters line wins,
         as it does on 7-Zip's command line (it comes last)."""
         from ..ram import lzma2_default_dict
+        # Never raises: this is asked on every compress, Fast and Insane
+        # included, and a size it cannot read ("64mb", "1.5g") is 7-Zip's to
+        # refuse, not a reason to fail a job that may not run 7-Zip at all.
+        # Read: -md=, and d= in a -m0=lzma2:... method string. Anything else
+        # that sets the dictionary is not seen, and means the default.
+        default = lzma2_default_dict(self.level)
         for arg in reversed(self.extra_args):
+            found = _LZMA2_D.match(arg)
             if arg.lower().startswith("-md="):
-                try:
-                    return _dict_bytes(arg[4:]) or lzma2_default_dict(self.level)
-                except ValueError:
-                    break
-        return (_dict_bytes(self.dict_size) if self.dict_size
-                else lzma2_default_dict(self.level))
+                return _reach_bytes(arg[4:]) or default
+            if found:
+                return _reach_bytes(found.group(1)) or default
+        return (_reach_bytes(str(self.dict_size)) or default) if self.dict_size else default
 
     def build_extract_cmd(self, src: Path, dst: Path, exe: str,
                           include: list[str] | None = None,

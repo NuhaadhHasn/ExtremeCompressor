@@ -67,6 +67,13 @@ _PAYLOAD_EXT = {"sevenzip": ".7z", "zstd": ".tar.zst", "tar": ".tar",
 _DEDUP_BEFORE = "sevenzip"
 
 
+def dedup_window(options: "StageOptions | None") -> int:
+    """The window the dedup stage will use for a job with these options: the
+    dictionary 7-Zip will run with. Public so the estimate and calibration
+    bill the scan from the same size the stage scans from."""
+    return _stage_factory(options)["dedup"].window
+
+
 def _with_dedup(chain: list[str]) -> list[str]:
     """``chain`` with the dedup stage offered before a final 7-Zip, on a
     chain that has Precomp (Extreme, as resolved on this machine)."""

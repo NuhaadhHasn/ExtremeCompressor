@@ -54,6 +54,16 @@ _CODECS: dict[str, object] = {
 }
 
 SCHEMA_VERSION = 2
+
+#: The newest schema this build reads, and what it writes for one kind of
+#: archive only: one that records a ``dedup`` stage (B31). Nothing about the
+#: manifest's own layout differs from 2. The number exists so that a build
+#: from before B31 (0.1.0 reads up to 2) refuses such an archive at the
+#: manifest, in a sentence that says "written by a newer version", instead of
+#: running a whole 7-Zip extract and then failing on a stage it has never
+#: heard of. Every archive without that stage is still written as 2 and is
+#: still readable by 0.1.0.
+MAX_SCHEMA_VERSION = 3
 MANIFEST_NAME = "manifest.json"
 
 # manifest.json is parsed before anything in it can be validated, so an
@@ -231,7 +241,10 @@ class Manifest:
             lean_routes.append(route)
 
         return cls(
-            schema=SCHEMA_VERSION,
+            # B31: 3 only when a dedup stage is recorded. See MAX_SCHEMA_VERSION.
+            schema=(MAX_SCHEMA_VERSION
+                    if any(getattr(s, "stage", "") == "dedup" for s in stages)
+                    else SCHEMA_VERSION),
             created_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             profile=profile,
             stages=stages,
@@ -286,10 +299,10 @@ class Manifest:
         schema = data.get("schema", 0)
         # There was no check here at all, so an archive from a future build
         # loaded and was quietly misread. Saying so is the honest failure.
-        if isinstance(schema, int) and schema > SCHEMA_VERSION:
+        if isinstance(schema, int) and schema > MAX_SCHEMA_VERSION:
             raise ContainerError(
                 f"this archive declares manifest schema {schema}, and this "
-                f"build understands up to {SCHEMA_VERSION} - it was written by "
+                f"build understands up to {MAX_SCHEMA_VERSION} - it was written by "
                 f"a newer version of ExtremeCompressor")
         try:
             data["stages"] = [StageRecord(**s) for s in data.get("stages", [])]

@@ -90,8 +90,23 @@ DEFAULT_WINDOW = 256 * MIB
 
 #: Average chunk, and the bound that keeps the index in memory small: the
 #: average doubles until the stream is at most this many chunks.
+#:
+#: Memory, measured (review, 2026-11-26, working set of a scan): about 90 MiB
+#: on 256 MiB of random data - the read buffer and the big-integer
+#: temporaries, whatever the stream's length - and about 90 MiB more for the
+#: index when a stream reaches the full 2^19 chunks. Beside 7-Zip's 2.7 GiB,
+#: and never at the same time as it.
 AVG_CHUNK = 8 * 1024
 MAX_CHUNKS = 1 << 19
+
+#: What a reader may be asked to believe, which is what this writer can make.
+#: A cut is never under a quarter of the smallest average (2,048 bytes) except
+#: the stream's last; never over eight times the largest (2^28); and a stream
+#: aimed at 2^19 chunks is at worst 2^21 of them, every one at the minimum,
+#: each its own run: (20 + 8) x 2^21 = 56 MiB of index.
+MIN_LEGAL_CHUNK = 512
+MAX_LEGAL_CHUNK = 1 << 31
+MAX_INDEX_BYTES = 64 * MIB
 
 _READ = 8 * MIB
 
@@ -111,9 +126,14 @@ _READ = 8 * MIB
 # rest of the bits for the average chunk size.
 #
 # `_TARGET` is odd on purpose. A run of one repeated byte sums to 32 x the
-# table value, whose low five bits are zero, so a constant run (or any period
-# that divides 32) is never a candidate and never slows the scan; it is cut
-# at the maximum chunk size instead, which dedups it just as well.
+# table value, and a pattern whose period is 2, 4, 8 or 16 to an even multiple
+# of its own sum, so neither can equal an odd target: such data has no
+# candidates at all and is cut at the maximum chunk size, which dedups it just
+# as well. (A period of exactly 32 is different: every window holds the same
+# 32 bytes, so the sum is one constant that may happen to be the target, and
+# then every position is a candidate; `_REJECT_STEP` bounds that case.)
+# No candidates is not free by itself - the search for one still has to stop
+# somewhere, and it stops at the chunk's own size limit (see `feed`).
 _WINDOW = 32
 _TABLE = b"".join(hashlib.sha256(b"excmp-dedup-%d" % i).digest() for i in range(8))
 _TARGET = 0x2A5
@@ -188,7 +208,10 @@ class Chunker:
                 pos = start + minimum - window
                 cut = 0
                 while pos <= last_window:
-                    m = search(lanes, 2 * pos)
+                    # Bounded at this chunk's own limit: unbounded, a chunk
+                    # with no candidate searched the rest of the buffer, and
+                    # zeros ran at 5 MB/s (review, 2026-11-26).
+                    m = search(lanes, 2 * pos, 2 * min(last_window, limit - window) + 2)
                     if m is None:
                         break
                     i = m.start()
@@ -399,9 +422,22 @@ def restore(src: Path, dst: Path | None, output_limit: int = 0,
     Every figure in the file is checked against the file before it is used,
     and every chunk against its digest before its bytes go out. A mismatch
     raises :class:`StageError` and leaves no output behind.
+
+    **Only files this writer could have written are accepted** (review,
+    2026-11-26). That is what bounds the work a file can ask for: the header
+    alone must already be possible - no more chunks or runs than the declared
+    stream has minimum-size chunks, an index no larger than the writer's
+    worst case - before the index is read at all; and then no chunk longer
+    than the writer cuts, none shorter than its minimum except the stream's
+    last, and none that the stream never uses.
     """
     src = Path(src)
     file_size = src.stat().st_size
+
+    def check_cancel() -> None:
+        if cancelled():
+            raise StageError("dedup: cancelled")
+
     with open(src, "rb") as fin:
         raw = fin.read(HEADER_SIZE)
         if len(raw) != HEADER_SIZE:
@@ -414,14 +450,23 @@ def restore(src: Path, dst: Path | None, output_limit: int = 0,
             raise StageError(
                 f"dedup: stream format {version} (flags {flags:#x}) is newer than "
                 f"this build understands ({FORMAT_VERSION})")
-        if HEADER_SIZE + data_size + index_size != file_size:
-            raise _bad("the sections do not add up to the file")
+        # --- the header alone, before a byte of the index is read ----------
+        if index_size > MAX_INDEX_BYTES:
+            raise _bad("the index is larger than any this program writes")
+        most = orig_size // MIN_LEGAL_CHUNK + 1
+        if chunk_count > most:
+            raise _bad("more chunks than the stream could be cut into")
+        if run_count > most:
+            raise _bad("more runs than the stream has chunks")
         if chunk_count * _CHUNK_REC.size + run_count * _RUN_REC.size != index_size:
             raise _bad("the index is not the size its counts give")
+        if HEADER_SIZE + data_size + index_size != file_size:
+            raise _bad("the sections do not add up to the file")
         if output_limit and orig_size > output_limit:
             raise StageError(
                 f"dedup: the stream declares {orig_size >> 20} MiB, beyond the "
                 f"{output_limit >> 20} MiB this archive allows for it")
+        check_cancel()
         fin.seek(HEADER_SIZE + data_size)
         index = fin.read(index_size)
         if len(index) != index_size:
@@ -429,67 +474,118 @@ def restore(src: Path, dst: Path | None, output_limit: int = 0,
         if hashlib.blake2b(index, digest_size=16).digest() != index_digest:
             raise _bad("the index does not match its checksum")
 
+        # --- the chunk table -------------------------------------------------
         table = memoryview(index)[:chunk_count * _CHUNK_REC.size]
+        run_table = memoryview(index)[len(table):]
         lengths = array("I", bytes(chunk_count * 4))
         offsets = array("Q", bytes(chunk_count * 8))
         at = 0
+        last_chunk = chunk_count - 1
         for cid, (length, _digest) in enumerate(_CHUNK_REC.iter_unpack(table)):
             if length == 0:
                 raise _bad("an empty chunk")
+            if length > MAX_LEGAL_CHUNK:
+                raise _bad("a chunk longer than any chunk this program cuts")
+            if length < MIN_LEGAL_CHUNK and cid != last_chunk:
+                raise _bad("a short chunk that is not the end of the stream")
             lengths[cid] = length
             offsets[cid] = at
             at += length
+            if not cid & 0xFFFF:
+                check_cancel()
         if at != data_size:
             raise _bad("the chunks do not add up to the data")
-        runs = list(_RUN_REC.iter_unpack(memoryview(index)[len(table):]))
+        tail_is_short = chunk_count > 0 and lengths[last_chunk] < MIN_LEGAL_CHUNK
+
+        # --- the runs, read straight from the index (never a list) ----------
         produced = 0
-        for first, count in runs:
+        used = bytearray(chunk_count)
+        final_run = run_count - 1
+        for n, (first, count) in enumerate(_RUN_REC.iter_unpack(run_table)):
             if count == 0 or first + count > chunk_count:
                 raise _bad("a run points outside the chunk table")
-            # offsets are cumulative, so a run's bytes are one subtraction
             last = first + count - 1
+            if tail_is_short and last == last_chunk and n != final_run:
+                raise _bad("a short chunk that is not the end of the stream")
+            # offsets are cumulative, so a run's bytes are one subtraction
             produced += offsets[last] + lengths[last] - offsets[first]
             if produced > orig_size:
                 raise _bad("the runs produce more than the declared size")
+            used[first:first + count] = b"\x01" * count
+            if not n & 0xFFFF:
+                check_cancel()
         if produced != orig_size:
             raise _bad("the runs do not produce the declared size")
+        if used.count(1) != chunk_count:
+            raise _bad("a chunk that is never used")
+        del used
 
         stream = hashlib.blake2b(digest_size=32)
         blake = hashlib.blake2b
         rec = _CHUNK_REC.size
+        read_size = _READ
         out = open(dst, "wb") if dst is not None else None
         ok = False
         written = 0
         try:
-            for first, count in runs:
+            for first, count in _RUN_REC.iter_unpack(run_table):
                 cid, stop = first, first + count
                 while cid < stop:
-                    if cancelled():
-                        raise StageError("dedup: cancelled")
-                    # one read for as many whole chunks as fit a buffer
-                    begin = offsets[cid]
-                    upto = cid
-                    span = 0
-                    while upto < stop and (span == 0 or span + lengths[upto] <= _READ):
-                        span += lengths[upto]
-                        upto += 1
-                    fin.seek(HEADER_SIZE + begin)
-                    piece = fin.read(span)
-                    if len(piece) != span:
-                        raise _bad("the data is cut short")
-                    view = memoryview(piece)
-                    pos = 0
-                    for c in range(cid, upto):
-                        length = lengths[c]
-                        want = table[c * rec + 4:c * rec + rec]
-                        if blake(view[pos:pos + length], digest_size=16).digest() != want:
-                            raise _bad(f"chunk {c} does not match its checksum")
-                        pos += length
-                    stream.update(piece)
-                    if out is not None:
-                        out.write(piece)
-                    written += span
-                    cid = upto
+                    check_cancel()
+                    begin = HEADER_SIZE + offsets[cid]
+                    if lengths[cid] > read_size:
+                        # One chunk larger than a buffer: hashed in slices,
+                        # and only when it matches read again and written.
+                        length = lengths[cid]
+                        want = table[cid * rec + 4:cid * rec + rec]
+                        digest = blake(digest_size=16)
+                        fin.seek(begin)
+                        left = length
+                        while left:
+                            piece = fin.read(min(left, read_size))
+                            if not piece:
+                                raise _bad("the data is cut short")
+                            digest.update(piece)
+                            left -= len(piece)
+                        if digest.digest() != want:
+                            raise _bad(f"chunk {cid} does not match its checksum")
+                        fin.seek(begin)
+                        left = length
+                        while left:
+                            check_cancel()
+                            piece = fin.read(min(left, read_size))
+                            if not piece:
+                                raise _bad("the data is cut short")
+                            stream.update(piece)
+                            if out is not None:
+                                out.write(piece)
+                            left -= len(piece)
+                        written += length
+                        cid += 1
+                    else:
+                        # one read for as many whole chunks as fit a buffer
+                        upto = cid
+                        span = 0
+                        while upto < stop and span + lengths[upto] <= read_size:
+                            span += lengths[upto]
+                            upto += 1
+                        fin.seek(begin)
+                        piece = fin.read(span)
+                        if len(piece) != span:
+                            raise _bad("the data is cut short")
+                        view = memoryview(piece)
+                        pos = 0
+                        for c in range(cid, upto):
+                            length = lengths[c]
+                            want = table[c * rec + 4:c * rec + rec]
+                            if blake(view[pos:pos + length], digest_size=16).digest() != want:
+                                raise _bad(f"chunk {c} does not match its checksum")
+                            pos += length
+                        stream.update(piece)
+                        if out is not None:
+                            out.write(piece)
+                        written += span
+                        cid = upto
                     progress(100.0 * written / orig_size if orig_size else 100.0)
             if stream.digest() != stream_digest:
                 raise _bad("the rebuilt stream does not match its checksum")

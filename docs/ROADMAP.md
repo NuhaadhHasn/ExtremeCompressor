@@ -643,7 +643,10 @@ OSI rule comes back before anything ships.
   it skips itself, with no record and no warning, unless the stream is larger than the dictionary and at least 2%
   of it repeats beyond the dictionary's reach. Any error inside it falls back to the old chain with a note.
   Format: its own versioned file (`EXCMPDD1`, layout in the module docstring), recorded in the manifest as a
-  `dedup` stage with `params {"format": 1, "window": bytes}`; manifest schema stays 2. Restore checks the index
+  `dedup` stage with `params {"format": 1, "window": bytes}`; the manifest is schema 3 only when that record is
+  present (so 0.1.0 refuses at the manifest), 2 otherwise. A review on 2026-11-26 found three denial-of-service
+  and speed defects (unbounded run list, one-piece chunk reads, a 5 MB/s scan on candidate-free data), all fixed
+  test-first: the reader now accepts only files the writer can produce. Restore checks the index
   hash, each chunk's BLAKE2b-128 before writing it, the sizes before the first byte, and the stream's BLAKE2b-256;
   D9 is untouched. Estimator: time only (`estimate.dedup_seconds`, piped bytes / 25 MB/s past 256 MiB), no size
   credit, same reasoning as G9's. A job the stage shortened is left out of calibration.

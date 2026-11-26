@@ -981,10 +981,18 @@ DEDUP_WINDOW = 256 << 20
 DEDUP_SCAN_RATE = 25e6
 
 
-def dedup_seconds(piped_bytes: int, stages: Sequence[str]) -> float:
-    """Seconds the dedup stage's scan adds to the compress side."""
+def dedup_seconds(piped_bytes: int, stages: Sequence[str],
+                  window: int | None = None) -> float:
+    """Seconds the dedup stage's scan adds to the compress side.
+
+    ``window`` is the dictionary the job's 7-Zip will run with
+    (`engine.dedup_window(options)`); ``None`` is the ``-mx9`` default. The
+    job that runs passes its own (calibration does). The estimates shown
+    *before* a job - `estimate_time`, the comparison table - are made without
+    the job's options, as every other term in them is, and use the default.
+    """
     if ("precomp" not in stages or not stages or stages[-1] != "sevenzip"
-            or piped_bytes <= DEDUP_WINDOW):
+            or piped_bytes <= (window or DEDUP_WINDOW)):
         return 0.0
     return piped_bytes / DEDUP_SCAN_RATE
 

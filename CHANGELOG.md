@@ -24,8 +24,9 @@ it.
   by default) or holds under 2% of such repeats; then the archive is byte-identical to before, at a
   cost of about a second per 30 MB of stream for the scan. Every chunk is checked against its hash
   on restore, and the SHA-256 ledger gate is unchanged.
-  **Compatibility:** archives without the stage read as before. An archive that records a `dedup`
-  stage needs this version or later: 0.1.0 refuses it with "archive needs stage 'dedup'".
+  **Compatibility:** archives without the stage are written and read exactly as before (manifest
+  schema 2). An archive that records a `dedup` stage is written as schema 3 and needs this version
+  or later: 0.1.0 refuses it at once as "written by a newer version".
   ([record](docs/benchmarks/2026-11-25-dedup-stage.md))
 
 ## [0.1.0] - 2026-11-25

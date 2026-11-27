@@ -104,8 +104,39 @@ def rmtree_force(path: str | Path) -> None:
     if target.exists():
         # One more pass. A tree deep in read-only directories can need the
         # parents cleared before the children become removable, and rmtree
-        # walks top-down.
-        for entry in sorted(target.rglob("*"), reverse=True):
-            _make_writable(str(entry))
+        # walks top-down. It never goes THROUGH a junction or symlink (and never
+        # touches the link's own attributes): `rglob` did, and a junction left in
+        # the tree made this pass strip the read-only bit off files in whatever
+        # folder it pointed at.
+        for entry in _entries_without_links(str(target)):
+            _make_writable(entry)
         _make_writable(str(target))
         shutil.rmtree(target, ignore_errors=True)
+
+
+def is_reparse_point(path: str | Path) -> bool:
+    """A symlink, or a Windows junction / mount point (``Path.is_symlink`` is False for those)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400)
+
+
+def _entries_without_links(top: str) -> list[str]:
+    """Every path under ``top``, deepest first, descending into real directories only."""
+    found: list[str] = []
+    stack = [top]
+    while stack:
+        here = stack.pop()
+        try:
+            children = list(os.scandir(here))
+        except OSError:
+            continue
+        for child in children:
+            if is_reparse_point(child.path):
+                continue                      # a link is neither followed nor modified
+            found.append(child.path)
+            if child.is_dir(follow_symlinks=False):
+                stack.append(child.path)
+    return sorted(found, reverse=True)

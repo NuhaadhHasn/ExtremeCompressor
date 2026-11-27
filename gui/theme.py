@@ -274,6 +274,16 @@ QCheckBox::indicator {
 }
 QCheckBox::indicator:checked { background: $accent; border-color: $accent; }
 QCheckBox::indicator:disabled { background: $surface; border-color: $border; }
+/* the tick boxes inside a list (Restore > What's inside): without this they fall back to the platform's drawing, a dark
+   square on a dark row */
+QTreeView::indicator {
+    width: 16px; height: 16px;
+    border: 1px solid $border_hi;
+    border-radius: 4px;
+    background: $surface2;
+}
+QTreeView::indicator:checked { background: $accent; border-color: $accent; }
+QTreeView::indicator:disabled { background: $surface; border-color: $border; }
 
 /* ---- progress -------------------------------------------------------- */
 QProgressBar {

@@ -14,6 +14,34 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **Drag files out of the Restore tab's list (2026-11-27).** Select rows and drag them into an Explorer folder: the app unpacks
+  just those files to a staging folder, checks them against the archive's fingerprints (our own archives; a zip made by somebody
+  else has only its own error check), and Explorer copies them. Copy only. It happens while the mouse button is held, so it is
+  capped by bytes (128 MB) and by estimated time (8 s, priced by the archive's own stage chain); past that, or for folders, split
+  archives, archives that are neither ours nor a zip, and ambiguous names, the line under the list says why and points to
+  Restore selected. Files come from the archive the rows were read from, not whatever the Archive field says now. Staging folders
+  are kept for a while (Explorer may still be copying), removed when the app closes, and stale ones swept at start-up, never
+  through a junction. The unpack is also watched while it runs, because an archive can lie about its sizes: if the bytes really
+  written pass the limit, or it takes over 30 s, it is cancelled and the drag refused. An independent review found 8 defects, all
+  fixed; verified with a real mouse drag onto a second window: the dropped copy was byte-identical.
+- **A search box on the Settings page.** Shows only the rows that mention what you type.
+- **A clean-machine check of a released installer** (`.github/workflows/clean-machine.yml`, run by hand): on a throwaway Windows
+  runner it removes the Visual C++ runtime from System32, shows a bare Precomp then fails to start, and shows the installed app
+  still round-trips Insane byte-identical. Run on 0.1.2: it passed.
+
+### Fixed
+
+- The tick boxes in the Restore list were nearly invisible on the dark theme; they are styled like every other check box.
+- **"Restore selected" from a zip could hand back the wrong file** when the zip held names that differ only by capital letters
+  (`A.txt` and `a.txt`) or the same name twice: 7-Zip picks members case-insensitively, and the last one won. Such a pick is now
+  refused with a plain message. (Found by the review of drag-out; the bug was in the existing selective restore.)
+- The shared temp-folder cleanup (`rmtree_force`) no longer walks into a junction or symlink: it used to clear the read-only bit
+  on files in whatever folder a junction inside the tree pointed at.
+- The user guide said the Restore tab's button was "Extract N selected" (it is "Restore N selected") and showed a stray tab
+  character in the temporary-folder path.
+
 ## [0.1.2] - 2026-11-27
 
 ### Added

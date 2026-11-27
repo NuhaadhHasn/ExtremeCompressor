@@ -494,3 +494,28 @@ def test_a_normal_unpack_is_not_touched_by_the_guard(window, qtbot, ours):
     tab = _open(window, qtbot, ours)
     (p,) = tab.stage_for_drag([_name(tab, "noise.bin")])
     assert p.read_bytes() == NOISE
+
+
+def test_working_files_of_any_name_count_toward_the_cap(window, qtbot, ours, monkeypatch):
+    """The guard used to count only folders named excmp-sel-*; an unpack can make working folders of other names. Every
+    byte under the unpack's own scratch folder counts now, whatever it is called."""
+    tab = _open(window, qtbot, ours)
+    monkeypatch.setattr(tab, "_drag_cost", lambda chosen, archive: (1, 0.0))
+    monkeypatch.setattr(et, "DRAG_LIMIT", 4000)
+
+    def sneaky(archive, names, stage, ctx, password=None):
+        other = ctx.temp_dir / "some-other-name-entirely"
+        other.mkdir()
+        (other / "bomb.bin").write_bytes(b"x" * 20_000)
+        ctx.cancel.wait(10)
+        raise RuntimeError("cancelled")
+    monkeypatch.setattr(et.engine, "extract_selected", sneaky)
+    assert tab.contents.mimeData(_items(tab, "noise.bin")) is None
+    assert "stopped" in tab.drag_note.text()
+
+
+def test_the_scratch_folder_is_removed_when_the_unpack_ends(window, qtbot, ours):
+    tab = _open(window, qtbot, ours)
+    tab.stage_for_drag([_name(tab, "readme.txt")])                      # a solid pick: it replays the chain in scratch
+    left = [p.name for p in et._DRAG_TEMP_ROOT.iterdir() if p.name.startswith("excmp-drag-work-")]
+    assert left == []

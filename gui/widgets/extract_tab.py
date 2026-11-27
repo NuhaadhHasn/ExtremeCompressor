@@ -107,6 +107,8 @@ class _DragGuard:
     stage context's ``cancel`` event, when the real bytes written or the time pass their limits. ``reason`` says which."""
 
     def __init__(self, cancel, stage: Path, scratch: Path, limit: int, deadline_s: float) -> None:
+        """``stage`` is where the files are written and ``scratch`` is the unpack's PRIVATE working folder (made for this
+        drag alone, so everything in it is this unpack's: nothing is guessed from folder names)."""
         self.cancel, self.stage, self.scratch = cancel, stage, scratch
         self.limit, self.deadline_s = limit, deadline_s
         self.reason = ""
@@ -123,15 +125,8 @@ class _DragGuard:
         self._thread.join(2.0)
 
     def _written(self) -> int:
-        """Bytes written by this unpack: the staging folder plus the solid replay's working folders made since it began."""
-        total = _tree_bytes(self.stage)
-        try:
-            for work in self.scratch.glob("excmp-sel-*"):
-                if work.stat().st_mtime >= self._started - 2:
-                    total += _tree_bytes(work)
-        except OSError:
-            pass
-        return total
+        """Bytes this unpack has written: the staging folder and its whole private working folder."""
+        return _tree_bytes(self.stage) + _tree_bytes(self.scratch)
 
     def _run(self) -> None:
         while not self._done.wait(0.2):
@@ -790,9 +785,11 @@ class ExtractTab(QWidget):
         _DRAG_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         stage = Path(tempfile.mkdtemp(prefix=_DRAG_PREFIX, dir=_DRAG_TEMP_ROOT))
         self._drag_stages.append((stage, time.time()))
-        self._temp_dir.mkdir(parents=True, exist_ok=True)
-        ctx = StageContext(temp_dir=self._temp_dir)
-        guard = _DragGuard(ctx.cancel, stage, self._temp_dir, DRAG_LIMIT, DRAG_DEADLINE_S)
+        # The unpack's working files go in a folder of its own, so the guard can count all of them (a shared temp folder
+        # also holds other jobs' files, and an unpack makes folders of several names). Removed when the unpack ends.
+        scratch = Path(tempfile.mkdtemp(prefix=_DRAG_PREFIX + "work-", dir=_DRAG_TEMP_ROOT))
+        ctx = StageContext(temp_dir=scratch)
+        guard = _DragGuard(ctx.cancel, stage, scratch, DRAG_LIMIT, DRAG_DEADLINE_S)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             with guard:
@@ -809,6 +806,7 @@ class ExtractTab(QWidget):
             raise
         finally:
             QApplication.restoreOverrideCursor()
+            rmtree_force(scratch)
         from excmp.safepath import resolve_within
         paths = [resolve_within(stage, e.name) for e in chosen]
         if not all(p.is_file() for p in paths):

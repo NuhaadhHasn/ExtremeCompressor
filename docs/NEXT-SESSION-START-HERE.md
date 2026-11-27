@@ -18,19 +18,39 @@
 > and the smoke test passes (`packaging/smoke_test.py`, including Insane with only the bundled tools and PATH cut to Windows' folders).
 >
 > **winget:** a pull request is open at https://github.com/microsoft/winget-pkgs/pull/491011 (fork `NuhaadhHasn/winget-pkgs`, branch
-> `NuhaadhHasn.ExtremeCompressor-0.1.2`; no clone: the repo is huge, files were added through the API). The Contributor License Agreement
-> still has to be signed by the owner when Microsoft's bot asks; `winget install --manifest` was not run (needs an admin setting). Watch the PR.
+> `NuhaadhHasn.ExtremeCompressor-0.1.2`; no clone: the repo is huge, files were added through the API). Microsoft's checks passed
+> (`Azure-Pipeline-Passed`, `Validation-Completed`); it waits on the **owner replying to the bot with `@microsoft-github-policy-service
+> agree`** (a legal agreement in the owner's name: never post it for them) and on a volunteer moderator. `winget install --manifest`
+> was not run (needs an admin setting).
 >
-> **Not proven:** that Precomp starts on a PC without the Visual C++ runtime (this PC has `msvcp140` in System32, so the PATH fix in
-> `excmp/frozen.py` is reasoned, not shown; Windows Sandbox or a clean VM would show it). Not done: `winget install` from the manifest.
+> **Clean-machine check: PROVEN (2026-11-27).** `.github/workflows/clean-machine.yml` (manual) installs the released 0.1.2 on a
+> throwaway Windows runner, takes 19 Visual C++ runtime DLLs out of System32, shows a bare Precomp fails (0xC0000135, so the test can
+> fail), and the installed app still round-trips Insane byte-identical. Run it again for each release:
+> `gh workflow run clean-machine.yml -f version=<v>`.
 >
-> **Still to do:** Settings search and drag-out from the Restore tab's file list (the owner asked for both), then update the guide; the
-> audit's layout items (a visible reason for the suggestion, a quieter "what runs" column, grouping Advanced); two Precomp processes at
-> once; compare a folder with an archive; same-handle read-back in the restore gate; code signing (SignPath: apply, the repo is public).
-> The owner wants the application to be **fast, accurate and the best**: measure on real data on the i5-7200U, never at the cost of the
-> lossless guarantee. Housekeeping not yet done: regenerable `dist\` and `build\` (inventory first), the old flat `tools/bin/zpaqfranz.exe`
-> (the pinned copy is `tools/bin/zpaqfranz/64.8/`; with `_pinned_tool` patched out, tests now count Precomp's warning only), worktree
-> `ExtremeCompressor-b21`.
+> **Merged after 0.1.2 (on `main`, not yet released): Settings search and drag-out from the Restore list** (`gui/widgets/settings_tab.py`,
+> `gui/widgets/extract_tab.py`). Drag-out unpacks the picked files to a staging folder under `%TEMP%\excmp-drag` and hands Explorer file
+> URLs, copy only. Rules, each with a test (`tests/test_drag_out.py`): capped by bytes (128 MB) AND by the estimated time for the archive's
+> own stage chain (8 s); folders, split archives, foreign archives that are not a real zip (checked by magic, not suffix) and truncated
+> listings are refused; two picks with one file name are refused; files come from the archive the rows were read from; staging
+> folders are kept up to 2 minutes / 3 (Explorer may still be copying), all removed on exit, stale ones swept at start-up never through
+> a junction; the unpack runs under a guard thread that cancels it if the bytes really written (the unpack's own private scratch folder
+> plus staging) pass the limit or it takes over 30 s, because an archive can lie about its sizes. An independent Fable review found 8
+> defects and two automated security reviews found two more; all fixed. Not done on purpose: a byte budget inside the stage runner (the
+> guard polls every 0.2 s, so a fast writer can overshoot a little). **A real mouse drag was verified** (see
+> `memory/excmp-real-mouse-drag-testing.md`: drive the mouse from a separate process, never inject input from the process in the drag loop).
+> The review also found a bug that was already there: **"Restore selected" from a zip with `A.txt` and `a.txt` (or the same name twice)
+> returned the wrong file** (7-Zip matches members case-insensitively); the engine now refuses an ambiguous pick. The shared
+> `rmtree_force` no longer walks through a junction. The Restore list's tick boxes are styled for the dark theme.
+>
+> **Still to do:** a 0.1.3 release when enough has built up (search, drag-out and the fixes above are unreleased; `packaging/RELEASING.md`,
+> then `clean-machine.yml`, then a winget update PR); the audit's layout items (a visible reason for the suggestion, a quieter
+> "what runs" column, grouping Advanced); two Precomp processes at once (+1.3-1.6x on Office/PDF jobs); compare a folder with an archive;
+> same-handle read-back in the restore gate; code signing (SignPath: apply, the repo is public). The owner wants the application to be
+> **fast, accurate and the best**: measure on real data on the i5-7200U, never at the cost of the lossless guarantee. Housekeeping not
+> yet done: regenerable `dist\` and `build\` (inventory first), the old flat `tools/bin/zpaqfranz.exe` (the pinned copy is
+> `tools/bin/zpaqfranz/64.8/`), worktree `ExtremeCompressor-b21`. Full suite on `main` before the last guard commits: 2,813 passed,
+> 1 skipped, 1 xfailed, corpus guard clean; CI green on the merge.
 
 # 🚦 START HERE — handoff (rewritten 2026-11-26: release 0.1.0, small-files speed, Fast level 12, UI clarity, guide; older text below)
 

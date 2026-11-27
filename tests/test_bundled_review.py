@@ -109,14 +109,26 @@ def _disc(monkeypatch, tmp_path, *, banner, pinned, on_path=None, default=False)
     return str(exe)
 
 
-def test_a_current_7zip_on_the_path_still_wins(monkeypatch, tmp_path):
-    exe = _disc(monkeypatch, tmp_path, banner="7-Zip 26.02 (x64)", pinned=True, on_path=True)
+def test_a_7zip_found_only_through_path_never_beats_the_verified_bundled_copy(monkeypatch, tmp_path):
+    """`shutil.which` searches the current directory first on Windows, and Explorer starts the app in the folder
+    of the file that was clicked: a planted 7z.exe there (or anywhere on PATH) must not replace a hash-verified
+    tool. Only the fixed Program Files locations may be preferred."""
+    for banner in ("7-Zip 26.02 (x64)", "7-Zip 24.09 (x64)", "", "anything at all"):
+        _disc(monkeypatch, tmp_path, banner=banner, pinned=True, on_path=True)
+        assert tools.find_tools()["7z"].path == "BUNDLED-7za", banner
+
+
+def test_the_path_copy_is_never_even_run_to_read_its_version_when_a_bundled_copy_exists(monkeypatch, tmp_path):
+    _disc(monkeypatch, tmp_path, banner="7-Zip 26.02 (x64)", pinned=True, on_path=True)
+    probed = []
+    monkeypatch.setattr(tools, "_probe_version", lambda n, p: probed.append(p) or "7-Zip 26.02")
+    tools.find_tools()
+    assert probed == []
+
+
+def test_path_is_still_the_last_resort_when_nothing_else_exists(monkeypatch, tmp_path):
+    exe = _disc(monkeypatch, tmp_path, banner="7-Zip 26.02 (x64)", pinned=False, on_path=True)
     assert tools.find_tools()["7z"].path == exe
-
-
-def test_an_old_7zip_on_the_path_loses_to_the_bundled_one(monkeypatch, tmp_path):
-    _disc(monkeypatch, tmp_path, banner="7-Zip 24.09 (x64)", pinned=True, on_path=True)
-    assert tools.find_tools()["7z"].path == "BUNDLED-7za"
 
 
 def test_a_7zip_whose_version_cannot_be_read_loses_to_a_verified_bundled_copy(monkeypatch, tmp_path):

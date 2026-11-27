@@ -218,11 +218,11 @@ def _usable_system_copy(name: str, paths) -> str | None:
     tell" is not "old", as in :func:`below_floor`); one that reads older than the floor does not, so
     the bundled copy takes over instead of the user being told to upgrade before anything works.
     """
-    candidates = list(paths)
-    on_path = shutil.which(name)             # a copy installed elsewhere (scoop, a custom folder) counts too
-    if on_path:
-        candidates.append(on_path)
-    for p in candidates:
+    # Only the fixed, well-known install locations. NOT `shutil.which`: on Windows it searches the current
+    # directory first, Explorer starts this app in the folder of the file that was clicked, and a copy found
+    # that way would be RUN (to read its version, then for jobs) ahead of a hash-verified bundled one.
+    # PATH stays what it always was: the last resort in `find_tools` when nothing verified or well-known exists.
+    for p in paths:
         if not Path(p).is_file() or is_bundled(p):
             continue
         floor = SECURITY_FLOOR.get(name)

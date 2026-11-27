@@ -43,7 +43,24 @@
 > returned the wrong file** (7-Zip matches members case-insensitively); the engine now refuses an ambiguous pick. The shared
 > `rmtree_force` no longer walks through a junction. The Restore list's tick boxes are styled for the dark theme.
 >
-> **Still to do:** a 0.1.3 release when enough has built up (search, drag-out and the fixes above are unreleased; `packaging/RELEASING.md`,
+> **Also merged after 0.1.2 (2026-11-27, unreleased): temp space.** Measured with a sampler on the temp folder (`C:\excmp-bench\b29\peak_temp.py`,
+> 39 MB of Office/PDF at Extreme): the chain's tar and Precomp's expanded output stayed on disk until the job ended and the D9 self-test
+> then made its own expanded copy beside them, a peak of **1,143 MB**, against the 346 MB the preflight booked. Each stage's input is now
+> freed as soon as the next stage has produced its output (`excmp/engine.py`, the chain loop; a stage that steps aside leaves its input for
+> the next; a file held open by antivirus is left for the end-of-job cleanup and never fails the job): peak **610 MB**, same archive, same
+> verification. The preflight's Precomp inflation table (`excmp/planner.py`) gained `.docx` 20x, `.pdf` 7x, `.pptx` 8x, from file-by-file
+> measurement of the 51 Office/PDF files in `temp-copies` (ONE corpus; byte-weighted figures rounded up, not worst cases: small files
+> expand more, and the same slice still needs ~610 MB against 462 MB now booked). Inflation only feeds the low-space WARNING (`peak`);
+> the refusal uses `floor`, which has no inflation term. **`.xlsx` is unmeasured.** The same figure feeds Insane's RAM range in the GUI.
+>
+> **Parallel Precomp is SHELVED, with numbers (do not redo it):** two Precomp processes on two size-balanced halves of 147 MB of Office/PDF
+> data vs one on the whole, six interleaved runs on the i5-7200U: serial 73.3/79.0/93.4 s, parallel 50.3/63.1/81.0 s, **median 1.25x, worst
+> case 0.91x**, output bytes identical (+14 B). Precomp runs on ONE tar today, so it would mean splitting the tar and a new manifest
+> schema (4) that 0.1.0-0.1.2 refuse; a design study (read-only, Fable) put the end-to-end gain at ~4-8% for Extreme (~13% if `-r` gains the same)
+> and 1-2% for Insane (zpaqfranz dominates), plus ~0.5x pcf of extra temp. Reopen only after a quiet two-corpus measurement through
+> `engine.compress` phase events that includes `precomp -r`, and only if the end-to-end gain is at least ~10%.
+>
+> **Still to do:** a 0.1.3 release when enough has built up (search, drag-out, the temp-space fixes and the fixes above are unreleased; `packaging/RELEASING.md`,
 > then `clean-machine.yml`, then a winget update PR); the audit's layout items (a visible reason for the suggestion, a quieter
 > "what runs" column, grouping Advanced); two Precomp processes at once (+1.3-1.6x on Office/PDF jobs); compare a folder with an archive;
 > same-handle read-back in the restore gate; code signing (SignPath: apply, the repo is public). The owner wants the application to be

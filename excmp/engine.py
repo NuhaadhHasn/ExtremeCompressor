@@ -268,9 +268,11 @@ def compress_space_needs(out_path: Path, temp_dir: Path, infos: list[FileInfo],
     # job, which is the outcome this function exists to prevent.
     # Temp: the staging copy of the piped files lives until the chain finishes,
     # the tar that feeds the chain lives beside it, and Precomp's output lands
-    # on top of both. Then the pre-publish self-test (D9) restores the ENTIRE
-    # archive into temp - stored files included - so every job needs the full
-    # input size there again, even a store-only one.
+    # on top of both (each stage's input is freed once the next stage has made
+    # its output, so the tar is gone before the final stage runs, and only the
+    # payload is left when the self-test starts). Then the pre-publish self-test
+    # (D9) restores the ENTIRE archive into temp - stored files included - so
+    # every job needs the full input size there again, even a store-only one.
     needs: dict[int, tuple[Path, int, int]] = {}
     for probe, floor, peak in (
         (out_path.parent, size.high, size.high),
@@ -532,6 +534,15 @@ def _apply_mtimes(out_dir: Path, ledger: dict[str, dict]) -> int:
         except (OSError, OverflowError, ValueError, UnsafePathError):
             continue
     return stamped
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """True when both paths are one file, whatever their spelling (case, ``.``, a short name). A path that cannot be
+    compared is not the same file."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _wait_if_paused(ctx: StageContext) -> None:
@@ -1332,10 +1343,24 @@ def compress(inputs: list[Path], out_path: Path, profile: Profile,
                     # prints nothing) came next, the bar sat still all of it.
                     ctx.progress_cb(sid, 100.0)
                     continue  # pass data through; stage stays out of manifest
-                if sid == "dedup" and before.is_file() and before.parent == job_dir:
-                    # Its input (Precomp's output, the largest file of the
-                    # job) is now held twice over. Nothing reads it again.
-                    before.unlink(missing_ok=True)
+                if before.is_file() and before.parent == job_dir and not _same_file(before, current):
+                    # The stage that has just succeeded consumed `before` and
+                    # nothing reads it again (a stage that SKIPS never reaches
+                    # here, so the next stage still finds its input). Freed now,
+                    # not in the `finally`: measured 2026-11-27 on 39 MB of
+                    # Office/PDF at Extreme, the tar and Precomp's output (533 MB)
+                    # used to stay until the job ended, and the D9 self-test then
+                    # made its own expanded copy beside them - a peak of 1,143 MB
+                    # against the 346 MB the preflight had booked. (Dedup's input,
+                    # Precomp's output, was the one case freed before.)
+                    # Only a saving, so it can never fail the job: something
+                    # holding the file open (antivirus, a sync or backup agent)
+                    # makes the delete fail on Windows, and the `finally` below
+                    # removes it at the end as it always did.
+                    try:
+                        before.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 if sid == "dedup":
                     deduped_bytes = max(0, consumed - _tree_size(current))
                 stage_records.append(_stage_record(sid, stage, tools,

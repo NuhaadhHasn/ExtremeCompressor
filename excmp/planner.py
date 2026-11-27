@@ -317,8 +317,16 @@ _PROBE_DECIDES = _OGG_AUDIO | {".mp3", ".mp4", ".mov", ".mkv", ".webm", ".m4a"}
 #: B21: a PNG is one by content, like its routing. GIF came to 2.02x
 #: byte-weighted over 88 real files (2.12x over the 63 Precomp wrote a .pcf
 #: for), inside the default; one 1600x1124 single frame reached 27.5x alone.
+#:
+#: 2026-11-27: the Office/PDF files, measured file by file at -cn -intense on the 51 in `temp-copies` (ONE corpus, so these are
+#: byte-weighted figures rounded up, NOT worst cases): .docx 19.3x (median 6.1x, max 84x per file), .pdf 6.3x (median 1.2x, max
+#: 39x), .pptx 1.3x byte-weighted but 6-8x for every small deck (a few big decks hold media that does not expand). Small files
+#: expand more than their type's average: a real Extreme job on a slice of the smallest ones needed 610 MB of temp, 11.7x, where
+#: these figures (and the earlier generic 5x, 346 MB booked) come in below it. The inflation only feeds the preflight's low-space
+#: WARNING (`peak`); the refusal uses `floor`, which has no inflation term. `.xlsx` was not in that corpus and stays at the default
+#: until it is measured.
 _INFLATION_PNG = 50
-_INFLATION_BY_EXT = {".epub": 20, ".odt": 12, ".ods": 12, ".odp": 12}
+_INFLATION_BY_EXT = {".epub": 20, ".odt": 12, ".ods": 12, ".odp": 12, ".docx": 20, ".pdf": 7, ".pptx": 8}
 _INFLATION_DEFAULT = 5
 
 

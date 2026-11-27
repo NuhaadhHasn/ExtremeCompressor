@@ -450,3 +450,47 @@ def test_a_foreign_archive_that_is_not_a_zip_is_not_dragged_even_if_named_zip(wi
     tab = _open(window, qtbot, z)
     assert tab.contents.mimeData(_items(tab, "t.txt")) is None
     assert "Restore selected" in tab.drag_note.text()
+
+
+# ---------------------------------------------------------------------------
+# The cap must not rest on what an archive says about itself
+# ---------------------------------------------------------------------------
+
+def test_an_unpack_that_runs_too_long_is_cancelled_and_leaves_nothing(window, qtbot, ours, monkeypatch):
+    import time
+    tab = _open(window, qtbot, ours)
+    monkeypatch.setattr(et, "DRAG_DEADLINE_S", 0.4)
+
+    def slow(archive, names, stage, ctx, password=None):
+        ctx.cancel.wait(10)                                      # what a stuck tool does: it only ends when killed
+        raise RuntimeError("cancelled")
+    monkeypatch.setattr(et.engine, "extract_selected", slow)
+    before = set(et._DRAG_TEMP_ROOT.iterdir()) if et._DRAG_TEMP_ROOT.exists() else set()
+    t0 = time.time()
+    assert tab.contents.mimeData(_items(tab, "noise.bin")) is None
+    assert time.time() - t0 < 5                                  # stopped by the guard, not waited out
+    assert "stopped" in tab.drag_note.text() and "Restore selected" in tab.drag_note.text()
+    assert (set(et._DRAG_TEMP_ROOT.iterdir()) if et._DRAG_TEMP_ROOT.exists() else set()) == before
+    assert tab._drag_stages == []
+
+
+def test_an_unpack_that_writes_more_than_the_archive_said_is_cancelled(window, qtbot, ours, monkeypatch):
+    """The listing said a few KB; what really lands on disk is what counts."""
+    tab = _open(window, qtbot, ours)
+    monkeypatch.setattr(tab, "_drag_cost", lambda chosen, archive: (1, 0.0))     # the (forged) listing passes the pre-check
+    monkeypatch.setattr(et, "DRAG_LIMIT", 4000)
+
+    def liar(archive, names, stage, ctx, password=None):
+        (stage / "huge.bin").write_bytes(b"x" * 20_000)           # far more than the 4,000 allowed
+        ctx.cancel.wait(10)
+        raise RuntimeError("cancelled")
+    monkeypatch.setattr(et.engine, "extract_selected", liar)
+    assert tab.contents.mimeData(_items(tab, "noise.bin")) is None
+    assert "stopped" in tab.drag_note.text()
+    assert tab._drag_stages == []
+
+
+def test_a_normal_unpack_is_not_touched_by_the_guard(window, qtbot, ours):
+    tab = _open(window, qtbot, ours)
+    (p,) = tab.stage_for_drag([_name(tab, "noise.bin")])
+    assert p.read_bytes() == NOISE

@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -40,6 +41,10 @@ from .dropzone import paths_from_mime
 #: with progress) is the way.
 DRAG_LIMIT = 128 * 1024 * 1024
 DRAG_SECONDS = 8.0
+#: The cap above trusts the sizes the archive lists, and an archive can lie. So the unpack is also watched: if what actually
+#: lands on disk passes the limit (plus a quarter, for the solid replay's working files), or it runs past this many seconds,
+#: the unpack is cancelled (the running tool is killed) and the drag is refused.
+DRAG_DEADLINE_S = 30.0
 #: Staging folders are kept briefly after a drop (Explorer may still be copying out of them): the next drag removes only
 #: the old ones, never more than this many are kept, and closing the app removes all.
 _STAGE_MAX_AGE_S = 120.0
@@ -76,6 +81,67 @@ def sweep_stale_drag_folders(root: Path, max_age_s: float = 86400.0) -> None:
                 rmtree_force(child)
         except OSError:
             continue
+
+
+def _tree_bytes(path: Path) -> int:
+    """Bytes in the files under ``path`` (links are not followed; anything unreadable counts as nothing)."""
+    total, stack = 0, [str(path)]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total
+
+
+class _DragGuard:
+    """Watches an unpack from another thread (the unpacking itself blocks the window's) and cancels it, through the
+    stage context's ``cancel`` event, when the real bytes written or the time pass their limits. ``reason`` says which."""
+
+    def __init__(self, cancel, stage: Path, scratch: Path, limit: int, deadline_s: float) -> None:
+        self.cancel, self.stage, self.scratch = cancel, stage, scratch
+        self.limit, self.deadline_s = limit, deadline_s
+        self.reason = ""
+        self._done = threading.Event()
+        self._started = time.time()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._done.set()
+        self._thread.join(2.0)
+
+    def _written(self) -> int:
+        """Bytes written by this unpack: the staging folder plus the solid replay's working folders made since it began."""
+        total = _tree_bytes(self.stage)
+        try:
+            for work in self.scratch.glob("excmp-sel-*"):
+                if work.stat().st_mtime >= self._started - 2:
+                    total += _tree_bytes(work)
+        except OSError:
+            pass
+        return total
+
+    def _run(self) -> None:
+        while not self._done.wait(0.2):
+            if time.time() - self._started > self.deadline_s:
+                self.reason = "time"
+            elif self._written() > self.limit + self.limit // 4:
+                self.reason = "size"
+            if self.reason:
+                self.cancel.set()
+                return
 
 
 class _DragOutTree(QTreeWidget):
@@ -725,13 +791,21 @@ class ExtractTab(QWidget):
         stage = Path(tempfile.mkdtemp(prefix=_DRAG_PREFIX, dir=_DRAG_TEMP_ROOT))
         self._drag_stages.append((stage, time.time()))
         self._temp_dir.mkdir(parents=True, exist_ok=True)
+        ctx = StageContext(temp_dir=self._temp_dir)
+        guard = _DragGuard(ctx.cancel, stage, self._temp_dir, DRAG_LIMIT, DRAG_DEADLINE_S)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            engine.extract_selected(archive, [e.name for e in chosen], stage,
-                                    StageContext(temp_dir=self._temp_dir), self._password)
-        except BaseException:
+            with guard:
+                engine.extract_selected(archive, [e.name for e in chosen], stage, ctx, self._password)
+            if guard.reason:                     # it finished just as the guard tripped: do not trust it
+                raise DragRefused("")
+        except BaseException as exc:
             self._drag_stages = [(p, t) for p, t in self._drag_stages if p != stage]
             rmtree_force(stage)                  # no half-unpacked folder is left behind
+            if guard.reason:                     # stopped by the guard: say so, whatever error the cancel caused
+                raise DragRefused(self.tr(
+                    "Unpacking these files was stopped: it was taking too long or writing far more than the archive "
+                    "says. Tick them and press “Restore selected” instead.")) from exc
             raise
         finally:
             QApplication.restoreOverrideCursor()

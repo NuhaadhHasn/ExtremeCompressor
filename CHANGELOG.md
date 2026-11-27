@@ -23,8 +23,9 @@ it.
   archives, archives that are neither ours nor a zip, and ambiguous names, the line under the list says why and points to
   Restore selected. Files come from the archive the rows were read from, not whatever the Archive field says now. Staging folders
   are kept for a while (Explorer may still be copying), removed when the app closes, and stale ones swept at start-up, never
-  through a junction. An independent review found 8 defects, all fixed; verified with a real mouse drag onto a second window:
-  the dropped copy was byte-identical.
+  through a junction. The unpack is also watched while it runs, because an archive can lie about its sizes: if the bytes really
+  written pass the limit, or it takes over 30 s, it is cancelled and the drag refused. An independent review found 8 defects, all
+  fixed; verified with a real mouse drag onto a second window: the dropped copy was byte-identical.
 - **A search box on the Settings page.** Shows only the rows that mention what you type.
 - **A clean-machine check of a released installer** (`.github/workflows/clean-machine.yml`, run by hand): on a throwaway Windows
   runner it removes the Visual C++ runtime from System32, shows a bare Precomp then fails to start, and shows the installed app

@@ -717,6 +717,18 @@ def cmd_shell(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tools(args) -> int:
+    from .tools import IN_PROCESS, is_bundled
+    for name, info in sorted(find_tools(with_versions=True).items()):
+        if info is None:
+            print(f"{name}: " + ("built in" if name in IN_PROCESS else "not found"))
+            continue
+        note = "  [included with the app]" if is_bundled(info.path) else ""
+        banner = next((ln.strip() for ln in (info.version or "").splitlines() if ln.strip()), "version unknown")
+        print(f"{name}: {banner} - {info.path}{note}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="excmp",
                                 description="ExtremeCompressor engine CLI")
@@ -873,6 +885,10 @@ def build_parser() -> argparse.ArgumentParser:
     ph.add_argument("paths", nargs="+")
     ph.add_argument("--json", action="store_true")
     ph.set_defaults(func=cmd_hash)
+
+    pt = sub.add_parser("tools", help="list the external programs found (7-Zip, Precomp, zpaqfranz...) "
+                                       "and which of them came with this app")
+    pt.set_defaults(func=cmd_tools)
 
     psh = sub.add_parser("shell", help="add, remove or check the Explorer right-click "
                                        "menu (Windows, per user, no administrator)")

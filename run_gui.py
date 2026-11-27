@@ -11,7 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from excmp.frozen import prepare_environment  # noqa: E402
 from gui.app import main  # noqa: E402
 
 if __name__ == "__main__":
+    prepare_environment()      # a frozen build: let the tools it starts find the bundled C++ runtime
     sys.exit(main())

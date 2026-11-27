@@ -13,6 +13,7 @@ QtNetwork (I5's single-instance pipe). tests/test_e3_packaging_files.py reads th
 fails if this list ever names a module the code needs. Never UPX (it increases detections).
 """
 
+import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent  # noqa: F821 - SPECPATH is provided by PyInstaller
@@ -40,8 +41,12 @@ def _bundled_tools():
     """The external tools, staged and pin-checked by packaging/stage_tools.py (build.cmd runs it first).
     They land in <bundle>/tools/bin/<name>/<version>/..., where excmp.toolfetch looks for them."""
     staged = ROOT / "build" / "bundled-tools"
-    if not staged.is_dir():
-        raise SystemExit("build/bundled-tools missing: run python packaging/stage_tools.py first")
+    sys.path.insert(0, str(ROOT / "packaging"))
+    import stage_tools
+    try:
+        stage_tools.verify_staged(staged)        # every tool, against its pin: never package a stale folder
+    except stage_tools.StageError as exc:
+        raise SystemExit(f"bundled tools: {exc}")
     return [(str(staged), "tools/bin")]
 
 

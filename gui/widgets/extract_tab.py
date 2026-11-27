@@ -336,9 +336,10 @@ class ExtractTab(QWidget):
                 "archive was made. If even one byte differs, the restore fails "
                 "and says so.")
         return self.tr(
-            "This tab also opens archives made by other tools — zip, 7z, rar, "
-            "tar, iso and the rest. They carry no saved fingerprints, so the "
-            "files can be restored but not checked.")
+            "This tab also opens archives made by other tools — zip, 7z, tar "
+            "and the rest (rar and iso need the full 7-Zip installed). They "
+            "carry no saved fingerprints, so the files can be restored but "
+            "not checked.")
 
     def _set_contents_open(self, open_: bool) -> None:
         self.contents_toggle.setText(self.tr("▾  What’s inside") if open_

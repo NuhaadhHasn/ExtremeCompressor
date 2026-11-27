@@ -97,6 +97,23 @@ def stage(names, *, source_root: Path = DEFAULT_SOURCE, dest: Path = DEFAULT_DES
     return staged
 
 
+def verify_staged(dest: Path, names=None) -> None:
+    """Check an already-staged folder against the pins; raise :class:`StageError` if any tool is missing or differs.
+
+    The PyInstaller spec calls this, so a stale or partial ``build/bundled-tools`` (a failed staging run, or one made
+    from another commit's pins) can never be packaged into an installer by running PyInstaller directly.
+    """
+    dest = Path(dest)
+    for name in (names if names is not None else toolfetch.BUNDLED):
+        spec = toolfetch.TOOL_MANIFEST[name]
+        if not (_exe_dir(spec, dest) / Path(spec.exe_relpath).name).is_file():
+            raise StageError(f"{name} {spec.version}: not found in {dest} - run packaging/stage_tools.py")
+        with _tools_root(dest):
+            if not toolfetch.verify_installed(spec):
+                raise StageError(f"{name} {spec.version}: the staged copy in {dest} does not match its pin - "
+                                 f"run packaging/stage_tools.py again")
+
+
 def _system_7z() -> str:
     for c in (r"C:\Program Files\7-Zip\7z.exe", r"C:\Program Files (x86)\7-Zip\7z.exe"):
         if Path(c).is_file():

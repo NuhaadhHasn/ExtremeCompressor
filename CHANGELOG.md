@@ -21,7 +21,10 @@ it.
   licence text under `licenses\tools`. An installed app has what a source checkout has and never downloads a tool: before
   this the installed app had no zpaqfranz, so Insane could not run, and no Precomp, so Extreme could not either. A full
   7-Zip on the machine is still preferred when it is new enough, because it also opens RAR and ISO. Settings marks the
-  copies that came with the app. `packaging/stage_tools.py` builds the folder; `THIRD-PARTY-NOTICES.md` was rewritten from
+  copies that came with the app (so does the new `excmp tools` command). A RAR or ISO opened with only the bundled
+  7-Zip now gets a plain "needs the full 7-Zip" message instead of "the file appears damaged". The frozen app hands its
+  Visual C++ runtime folders to the tools it starts, because Precomp needs them and a machine without the redistributable
+  would otherwise not start it from `excmp.exe`. `packaging/stage_tools.py` builds the folder; `THIRD-PARTY-NOTICES.md` was rewritten from
   the files (Precomp is Apache-2.0, not "non-commercial"; zpaqfranz is MIT).
 
 ### Fixed

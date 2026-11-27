@@ -10,8 +10,11 @@ precisely than the files on disk do.
 
 Where a licence could **not** be established from a file here, it says so
 rather than guessing. Since 0.1.2 every tool the installer carries has its licence text
-in `licenses/tools/<tool>/` (copied from the pinned package or from the upstream repository
-file named below), and none of them is in that category.
+in `licenses/tools/<tool>/` (copied from the pinned package, or from the upstream repository
+file named below), and its main licence is established from that file. Two statements below
+rest on upstream's GitHub licence metadata rather than a file here, and say so: the licence of
+packJPG and packMP3 (inside Precomp), and the Twofish grant in zpaqfranz is described only in
+upstream's own words.
 
 ## How these tools are used, and why it matters
 
@@ -38,10 +41,12 @@ never linked, and their source is named in each section.
 
 **Bundled:** `7za.exe` from the official "7-Zip Extra" package `7z2606-extra.7z` (GitHub release 26.06 of
 `ip7z/7zip`, 1,758,340 bytes, sha256 `396c180f…e5f104` = GitHub's own digest, confirmed on the downloaded bytes
-2026-11-26; `x64/7za.exe` inside it is 1,328,640 bytes, sha256 `dd3757f3…84ffa`). It runs standalone and reads and
-writes 7z, zip, tar, gzip, bzip2, xz, zstd and cab; its `7za.exe i` format list has **no RAR**. Licence read from the
+2026-11-26; `x64/7za.exe` inside it is 1,328,640 bytes, sha256 `dd3757f3…84ffa`). It runs standalone, writes 7z, zip, tar,
+gzip, bzip2 and xz, and reads zstd and cab too; its `7za.exe i` format list has **no RAR** (so a RAR or ISO needs a full
+7-Zip, and the app says so instead of calling such a file damaged). Licence read from the
 `License.txt` inside that package (`licenses/tools/7zip/License.txt`, 5,188 bytes): the **GNU LGPL** for most of the
-code, **BSD-3-Clause** (LZFSE, ZSTD decode) and **BSD-2-Clause** (XXH64). **That file has no "unRAR licence
+code and **BSD-3-Clause** (ZSTD decoding; the full installer's file also names LZFSE and XXH64 under BSD licences,
+this package's does not). The LGPL text is `licenses/tools/7zip/COPYING.LGPL` (version 2.1, the same text FLAC ships). **That file has no "unRAR licence
 restriction" section, because this build holds no unRAR code** (the full installer's `License.txt` is 6,031 bytes and
 does have it): that is why the Extra build is the one that ships. Source: https://github.com/ip7z/7zip/releases/tag/26.06.
 
@@ -61,8 +66,10 @@ The upstream repository also reports Apache-2.0.
 
 The same section names the code embedded in the binary: **packJPG v2.5k and packMP3 v1.0g (Matthias Stirner;
 upstream repositories `packjpg/packJPG` and `packjpg/packMP3`, both reported as LGPL-3.0)**, **bZip2 1.0.6** (Julian
-Seward, BSD-style), **zLib 1.2.8** (Gailly and Adler, zlib licence) and **GifLib 4.1.4** (Eric S. Raymond, X11-style).
-All are open-source licences. The LGPL parts are statically part of `precomp.exe`; the LGPL text is
+Seward, BSD-style), **zLib 1.2.8** (Gailly and Adler, zlib licence) and **GifLib 4.1.4** (Eric S. Raymond; the readme
+reproduces only its copyright line, not the permission notice, so its terms are recorded here as "permissive" and not
+quoted). The packJPG and packMP3 licence is **upstream's GitHub metadata**, not a file here: Precomp's readme states no
+licence for them. The LGPL parts are compiled into `precomp.exe`; the LGPL text is
 `licenses/LGPL-3.0.txt`, and the sources are https://github.com/schnaader/precomp-cpp/tree/v0.4.7 (Precomp, with the
 others vendored or linked as its readme lists) and the two packJPG/packMP3 repositories above. You may replace the
 installed `precomp.exe` with your own build; the app will then not run it from that folder, because every file there is pinned by SHA-256.
@@ -99,15 +106,15 @@ Release 64.8 (2026-06-29) of `fcorbelli/zpaqfranz`, asset `zpaqfranz.exe`: 4,288
 licence beside it. It is now read from upstream.)
 
 Licence: **MIT**, "Copyright (c) 2021-2026 Franco Corbelli" (upstream `LICENSE`, also the header of `zpaqfranz.cpp`;
-`licenses/tools/zpaqfranz/LICENSE.txt`). Upstream's `COPYING` (`licenses/tools/zpaqfranz/COPYING.txt`, 12,045 bytes)
-is its own list of the other authors' code inside it, and it ships too: ZPAQ 7.15 and its parts (public domain,
-Matt Mahoney), libtomcrypt AES and Salsa20 (public domain), libdivsufsort (MIT), Stephan Brumme's CRC32, MD5 and SHA-3
-(zlib licence), xxHash and LZ4 (BSD-2-Clause), zstd (BSD-3-Clause), BLAKE3 (CC0 or Apache-2.0), HighwayHash and
-Mbed TLS (Apache-2.0), wyhash (Unlicense), LZAV (MIT), a Twofish implementation described there as
-"almost-unrestricted", and, for optional mounting features, libfuse (LGPL) and WinFsp (GPLv3 with the FLOSS
-exception). Every entry upstream lists is an open-source or public-domain grant; **which of them are compiled into
-this particular Windows binary has not been checked here**, and this program never uses mounting. Source:
-https://github.com/fcorbelli/zpaqfranz/releases/tag/64.8.
+`licenses/tools/zpaqfranz/LICENSE.txt`). Upstream's `COPYING` **as of tag 64.8** (`licenses/tools/zpaqfranz/COPYING.txt`,
+10,615 bytes, entries 0 to 24) is its own list of the other authors' code inside it, and it ships too: ZPAQ 7.15 and its
+parts, libtomcrypt AES, Salsa20, Whirlpool, the CPU SHA code and zpaqd (all public domain), libdivsufsort, Embedded
+Artistry, Nilsimsa, zsfx and ascii-art (MIT), Stephan Brumme's CRC32, MD5 and SHA-3 and Mark Adler's crc32c (zlib
+licence), xxHash and LZ4 (BSD-2-Clause), BLAKE3 (CC0 or Apache-2.0), HighwayHash (Apache-2.0), wyhash (Unlicense), curl
+("MIT-like") and a Twofish implementation that upstream itself describes as **"almost-unrestricted"** (a permissive grant
+by its own account, but not a licence with a name: the one entry here that is not). Later upstream releases list
+further components; none of those is in the 64.8 list, which is the one that ships. **Which entries are compiled into this particular Windows binary has not been checked here.**
+Source: https://github.com/fcorbelli/zpaqfranz/releases/tag/64.8.
 
 ### FLAC — **bundled** (1.5.0), invoked as `flac.exe`
 

@@ -68,6 +68,24 @@ def frozen_cli(work: Path) -> None:
     same = all((src / n).read_bytes() == (work / "out" / "in" / n).read_bytes()
                for n in ("text.txt", "blob.bin"))
     check("restored byte-identical", same)
+    # The bundled tools, as the installed app has them: every one under _internal\tools\bin and verified, and Insane
+    # (Precomp, then zpaqfranz) round-trips with PATH cut down to Windows' own folders, as on a clean machine.
+    listing = run("tools").stdout
+    for tool in ("precomp", "zpaqfranz", "flac", "balrogg"):
+        line = next((ln for ln in listing.splitlines() if ln.startswith(tool + ":")), "")
+        check(f"{tool} is found and comes with the app", "included with the app" in line and "tools\\bin" in line, line)
+    seven = next((ln for ln in listing.splitlines() if ln.startswith("7z:")), "")
+    check("7-Zip is found", " - " in seven, seven)
+    win = os.environ.get("SystemRoot", r"C:\Windows")
+    clean = dict(os.environ, PATH=os.pathsep.join([win + r"\System32", win]))
+    ins = subprocess.run([exe, "compress", str(src), "-o", str(work / "i.excmp"), "--profile", "insane"],
+                         capture_output=True, text=True, timeout=600, env=clean)
+    check("insane compresses with only the bundled tools", ins.returncode == 0, ins.stderr[-300:])
+    back = subprocess.run([exe, "extract", str(work / "i.excmp"), "-o", str(work / "iout")],
+                          capture_output=True, text=True, timeout=600, env=clean)
+    check("insane restores", back.returncode == 0, back.stderr[-300:])
+    check("insane restored byte-identical",
+          all((src / n).read_bytes() == (work / "iout" / "in" / n).read_bytes() for n in ("text.txt", "blob.bin")))
 
 
 def frozen_gui(work: Path) -> None:

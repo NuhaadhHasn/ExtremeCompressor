@@ -184,6 +184,24 @@ def _pinned_tool(name: str) -> str | None:
     return str(found) if found is not None else None
 
 
+#: What the bundled 7-Zip Extra (``7za.exe``) cannot open. A full 7-Zip can. Anything not listed is left to
+#: 7-Zip to try (``.docx`` and friends are zip), so a rare format fails with 7-Zip's own words, not ours.
+_FULL_7ZIP_ONLY = frozenset({
+    "rar", "iso", "msi", "wim", "swm", "esd", "lzh", "lha", "arj", "z", "cpio", "rpm", "deb", "dmg",
+    "vhd", "vhdx", "udf", "chm", "cramfs", "squashfs"})
+
+
+def needs_full_7zip(archive: Path, info: ToolInfo | None) -> bool:
+    """True when ``archive`` is a format only a full 7-Zip opens and the 7-Zip found is the bundled ``7za.exe``.
+
+    Without this a healthy RAR was reported as "the file appears damaged": 7za answers "Cannot open the file as
+    archive", which the failure classifier reads as corruption.
+    """
+    if info is None or Path(info.path).name.lower() != "7za.exe":
+        return False
+    return Path(archive).suffix.lstrip(".").lower() in _FULL_7ZIP_ONLY
+
+
 def is_bundled(path: str) -> bool:
     """Does ``path`` lie inside the tools folder the installer filled (``toolfetch``'s install root)?"""
     from . import toolfetch
@@ -200,14 +218,20 @@ def _usable_system_copy(name: str, paths) -> str | None:
     tell" is not "old", as in :func:`below_floor`); one that reads older than the floor does not, so
     the bundled copy takes over instead of the user being told to upgrade before anything works.
     """
-    for p in paths:
-        if not Path(p).is_file():
+    candidates = list(paths)
+    on_path = shutil.which(name)             # a copy installed elsewhere (scoop, a custom folder) counts too
+    if on_path:
+        candidates.append(on_path)
+    for p in candidates:
+        if not Path(p).is_file() or is_bundled(p):
             continue
         floor = SECURITY_FLOOR.get(name)
         if floor is not None:
             found = _system_version(name, p)
             if found is not None and found < floor:
                 continue
+            if found is None and _pinned_tool(name) is not None:
+                continue           # cannot tell how old it is, and a verified copy is right here
         return p
     return None
 

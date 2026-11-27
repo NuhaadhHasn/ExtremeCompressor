@@ -87,7 +87,8 @@ that came with the app are marked **[included with the app]**.
 
 If you also have the full 7-Zip installed, the app uses yours (when it is version 26.02 or newer), because it opens RAR and
 ISO files too. The 7-Zip that comes with the app handles 7z, zip, tar, gzip, bzip2, xz, zstd and cab, which covers every
-archive the app makes.
+archive the app makes. If you try to open a RAR, ISO or similar file without the full 7-Zip, the Restore tab says so and
+tells you what to install; the file is not damaged. You can see which tools the app found with `excmp tools`.
 
 | Profile | Needs |
 |---|---|

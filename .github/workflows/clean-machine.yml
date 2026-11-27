@@ -1,0 +1,106 @@
+# A clean-machine check of a RELEASED installer: does the installed app run Insane (Precomp, then zpaqfranz) on a PC that has
+# no Visual C++ runtime? The dev machine cannot show it (System32 there has msvcp140), and Windows Sandbox needs an
+# administrator and a restart. A hosted runner is a throwaway VM with an administrator account, so this one takes the runtime DLLs
+# out of System32 for the length of the job, proves that a bare Precomp then fails to start (the negative control: the
+# test can fail), and proves that the installed app still compresses and restores byte-identical.
+#
+# Manual only: it downloads the released installer and is not part of the push path.
+
+name: Clean machine
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release to test, e.g. 0.1.2"
+        required: true
+        default: "0.1.2"
+
+permissions:
+  contents: read
+
+jobs:
+  no-vc-runtime:
+    name: installed app without the Visual C++ runtime
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download the release and check it against the published SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release download "v$env:VERSION" -R "${{ github.repository }}" -D rel -p "ExtremeCompressor-$env:VERSION-setup.exe" -p SHA256SUMS
+          $want = ((Get-Content rel\SHA256SUMS | Where-Object { $_ -match "setup\.exe" }) -split "\s+")[0]
+          $got = (Get-FileHash "rel\ExtremeCompressor-$env:VERSION-setup.exe" -Algorithm SHA256).Hash.ToLower()
+          "published: $want"; "downloaded: $got"
+          if ($want -ne $got) { throw "the downloaded installer does not match SHA256SUMS" }
+
+      - name: Install it silently, as the in-app update does
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $p = Start-Process "rel\ExtremeCompressor-$env:VERSION-setup.exe" -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/NORESTART","/CURRENTUSER","/DIR=$env:RUNNER_TEMP\app" -PassThru -Wait
+          "Setup exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "Setup failed" }
+          Get-ChildItem "$env:RUNNER_TEMP\app" -File | Select-Object Name
+
+      - name: Take the Visual C++ runtime out of System32, run the checks, put it back
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $app = "$env:RUNNER_TEMP\app"
+          $win = $env:SystemRoot
+          $names = "msvcp140.dll","msvcp140_1.dll","msvcp140_2.dll","msvcp140_atomic_wait.dll","msvcp140_codecvt_ids.dll",
+                   "vcruntime140.dll","vcruntime140_1.dll","vcruntime140_threads.dll","concrt140.dll","vcomp140.dll"
+          $moved = @()
+          try {
+            foreach ($dir in "$win\System32", "$win\SysWOW64") {
+              foreach ($n in $names) {
+                $f = Join-Path $dir $n
+                if (Test-Path $f) {
+                  takeown /f $f | Out-Null; icacls $f /grant "Administrators:F" | Out-Null
+                  Rename-Item $f "$n.off" -ErrorAction Stop; $moved += $f
+                }
+              }
+            }
+            "moved away: $($moved.Count) file(s)"; $moved
+            if ($moved.Count -eq 0) { throw "found no runtime DLL to take away: the check would prove nothing" }
+
+            # PATH cut to Windows' own folders, as on a clean PC (the runner's PATH has Python, Git, Visual Studio...).
+            $env:PATH = "$win\System32;$win"
+            $precomp = Get-ChildItem "$app\_internal\tools\bin\precomp" -Recurse -Filter precomp.exe | Select-Object -First 1
+
+            "--- negative control: Precomp on its own must NOT start now"
+            Push-Location $env:RUNNER_TEMP
+            & $precomp.FullName 2>&1 | Out-Null
+            $bare = $LASTEXITCODE
+            Pop-Location
+            "bare precomp exit code: $bare   (0xC0000135 = -1073741515 means a DLL was not found)"
+            if ($bare -ne -1073741515) { throw "negative control failed: Precomp started without the runtime, so this check proves nothing" }
+
+            "--- the installed app, same PATH"
+            $src = "$env:RUNNER_TEMP\work\in"; New-Item -ItemType Directory -Force $src, "$src\zipsrc" | Out-Null
+            $rnd = [Random]::new(7)
+            1..4 | ForEach-Object {
+              $sb = [Text.StringBuilder]::new()
+              1..40000 | ForEach-Object { [void]$sb.Append("line $($rnd.Next(1000)) of the sample text, repeated enough to compress`r`n") }
+              [IO.File]::WriteAllText("$src\zipsrc\t$_.txt", $sb.ToString())
+            }
+            Compress-Archive "$src\zipsrc\*" "$src\data.zip"; Remove-Item -Recurse "$src\zipsrc"
+            $blob = New-Object byte[] 2000000; $rnd.NextBytes($blob); [IO.File]::WriteAllBytes("$src\blob.bin", $blob)
+
+            & "$app\excmp.exe" tools
+            & "$app\excmp.exe" compress $src -o "$env:RUNNER_TEMP\work\i.excmp" --profile insane
+            if ($LASTEXITCODE -ne 0) { throw "insane compress failed ($LASTEXITCODE)" }
+            & "$app\excmp.exe" extract "$env:RUNNER_TEMP\work\i.excmp" -o "$env:RUNNER_TEMP\work\out"
+            if ($LASTEXITCODE -ne 0) { throw "extract failed ($LASTEXITCODE)" }
+            foreach ($n in "data.zip","blob.bin") {
+              $a = (Get-FileHash "$src\$n").Hash; $b = (Get-FileHash "$env:RUNNER_TEMP\work\out\in\$n").Hash
+              "$n  $a  $b"; if ($a -ne $b) { throw "$n restored DIFFERENT" }
+            }
+            "BYTE-IDENTICAL: insane works with the Visual C++ runtime gone"
+          }
+          finally {
+            foreach ($f in $moved) { Rename-Item "$f.off" (Split-Path $f -Leaf) -ErrorAction SilentlyContinue }
+          }

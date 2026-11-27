@@ -144,6 +144,15 @@ byte-identical to `licenses/GPL-3.0.txt`; also at `licenses/tools/balrogg/COPYIN
 never linked. Source: https://github.com/iczelia/balrogg/releases/tag/1.4. (Its own banner prints "balrogg 1.3"; the
 hash is what identifies the file.)
 
+### Source code for the GPL programs (written offer)
+
+FLAC's `flac.exe` (GPL-2.0), balrogg (GPL-3.0) and par2cmdline-turbo (GPL) are carried unmodified, as the exact
+releases named in their sections, and each is a separate program that ExtremeCompressor starts, not part of it.
+Their source code is at the links in those sections. If a link stops working, ask in the issue tracker at
+https://github.com/NuhaadhHasn/ExtremeCompressor/issues and we will provide a copy of the corresponding source for
+the version in the installer, for no more than the cost of supplying it. This offer is valid for three years from the
+release that carries the program, or for as long as we distribute it, whichever is longer.
+
 ### qpdf 12.4.1 — **downloadable** (hash-pinned), never invoked, **not bundled** (87 MB)
 
 Read from

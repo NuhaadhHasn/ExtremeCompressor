@@ -1,3 +1,37 @@
+# 🚦 START HERE — handoff (rewritten 2026-11-27: 0.1.2 released, tools bundled; older blocks below are history)
+
+> **2026-11-27: v0.1.2 is PUBLISHED** (https://github.com/NuhaadhHasn/ExtremeCompressor/releases/tag/v0.1.2; signed `SHA256SUMS`, the
+> signature verifies against the key built into the app) **and installed on the owner's PC**. 0.1.1 was released 2026-11-26. What 0.1.2 is:
+> **the installer carries the external tools** (7-Zip Extra 26.06 `7za.exe`, Precomp 0.4.7, zpaqfranz 64.8, FLAC 1.5.0, balrogg 1.4),
+> staged by `packaging/stage_tools.py` (offline when `tools/bin` is complete) and verified against the pins by the PyInstaller spec, so an
+> installed app has Insane and Extreme without downloading anything (before this it had neither). Discovery: a full 7-Zip from a fixed
+> Program Files path is preferred when it is 26.02 or newer (it opens RAR and ISO), otherwise the bundled one; a copy found through `PATH`
+> is **never** preferred (CWE-427: Explorer starts the app in the clicked file's folder and `shutil.which` searches the current directory
+> first); RAR/ISO with only `7za` gets a plain message, not "damaged". `excmp tools` lists what is found and marks `[included with the app]`.
+> `THIRD-PARTY-NOTICES.md` was rewritten from the licence files in `licenses/tools/` (Precomp is Apache-2.0, zpaqfranz MIT, FLAC GPL-2.0/BSD,
+> balrogg GPL-3.0) and carries the **written source offer** for the GPL programs; no source is bundled (owner's decision).
+>
+> **Two installer defects were found only by really uninstalling and are fixed and pinned (`tests/test_e3_running_marker.py`):** the first
+> 0.1.2 build's uninstaller crashed on start (Inno forbids `WizardSilent` in the uninstaller and `UninstallSilent` in Setup; both were in one
+> expression), and a silent run could wait for ever on the script's own message box (`/SUPPRESSMSGBOXES` does not silence it). A silent run now
+> refuses without a box. The real 0.1.1 to 0.1.2 update (old window open, the app's own silent flags) exits 0, keeps the menu and association,
+> and the smoke test passes (`packaging/smoke_test.py`, including Insane with only the bundled tools and PATH cut to Windows' folders).
+>
+> **winget:** a pull request is open at https://github.com/microsoft/winget-pkgs/pull/491011 (fork `NuhaadhHasn/winget-pkgs`, branch
+> `NuhaadhHasn.ExtremeCompressor-0.1.2`; no clone: the repo is huge, files were added through the API). The Contributor License Agreement
+> still has to be signed by the owner when Microsoft's bot asks; `winget install --manifest` was not run (needs an admin setting). Watch the PR.
+>
+> **Not proven:** that Precomp starts on a PC without the Visual C++ runtime (this PC has `msvcp140` in System32, so the PATH fix in
+> `excmp/frozen.py` is reasoned, not shown; Windows Sandbox or a clean VM would show it). Not done: `winget install` from the manifest.
+>
+> **Still to do:** Settings search and drag-out from the Restore tab's file list (the owner asked for both), then update the guide; the
+> audit's layout items (a visible reason for the suggestion, a quieter "what runs" column, grouping Advanced); two Precomp processes at
+> once; compare a folder with an archive; same-handle read-back in the restore gate; code signing (SignPath: apply, the repo is public).
+> The owner wants the application to be **fast, accurate and the best**: measure on real data on the i5-7200U, never at the cost of the
+> lossless guarantee. Housekeeping not yet done: regenerable `dist\` and `build\` (inventory first), the old flat `tools/bin/zpaqfranz.exe`
+> (the pinned copy is `tools/bin/zpaqfranz/64.8/`; with `_pinned_tool` patched out, tests now count Precomp's warning only), worktree
+> `ExtremeCompressor-b21`.
+
 # 🚦 START HERE — handoff (rewritten 2026-11-26: release 0.1.0, small-files speed, Fast level 12, UI clarity, guide; older text below)
 
 > **2026-11-25/26, all on `main` (CI green, full suites clean):** **v0.1.0 is PUBLISHED and installed** (see the 2026-11-25 block below);

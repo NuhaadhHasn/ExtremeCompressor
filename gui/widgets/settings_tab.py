@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+from PySide6.QtWidgets import (QAbstractButton, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QScrollArea,
                                QSpinBox, QVBoxLayout, QWidget)
 
@@ -38,6 +38,8 @@ class SettingsRow(QFrame):
     def __init__(self, title: str, description: str, control: QWidget,
                  parent: QWidget | None = None, status: QLabel | None = None) -> None:
         super().__init__(parent)
+        self.title, self.description = title, description       # what the page's search looks at
+        self._control = control
         self.setObjectName("Card")
         row = QHBoxLayout(self)
         row.setContentsMargins(*CARD_MARGINS)
@@ -60,6 +62,18 @@ class SettingsRow(QFrame):
         # The description is the accessible description, so a screen reader
         # gets the "what does this do" line without hunting for it.
         control.setAccessibleDescription(description)
+
+
+def _control_words(control: QWidget) -> list[str]:
+    """The words on a row's control: a button's or check box's label, a combo box's choices (a person who types "theme"
+    is looking for the "Switch theme" button, and the card's own title says "Appearance")."""
+    words: list[str] = []
+    for w in [control, *control.findChildren(QWidget)]:
+        if isinstance(w, QAbstractButton):
+            words.append(w.text().replace("&", ""))
+        elif isinstance(w, QComboBox):
+            words.extend(w.itemText(i) for i in range(w.count()))
+    return words
 
 
 class SettingsTab(QScrollArea):
@@ -85,6 +99,20 @@ class SettingsTab(QScrollArea):
         column = QVBoxLayout(page)
         column.setContentsMargins(GUTTER, VGAP, GUTTER, VGAP)
         column.setSpacing(GAP_INTRA)
+
+        # Search: narrows the cards below by what they say. Typing is the only way in (no dialog, nothing to confirm).
+        self.search = QLineEdit(page)
+        self.search.setPlaceholderText(self.tr("Search settings"))
+        self.search.setAccessibleName(self.tr("Search settings"))
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._apply_search)
+        column.addWidget(self.search)
+        self.search_empty = QLabel("", page)
+        self.search_empty.setObjectName("Subtitle")
+        self.search_empty.setWordWrap(True)
+        self.search_empty.setTextFormat(Qt.TextFormat.PlainText)      # what is typed is never markup
+        self.search_empty.setVisible(False)
+        column.addWidget(self.search_empty)
 
         from excmp.ram import physical_cores
         cores = os.cpu_count() or 2
@@ -250,6 +278,8 @@ class SettingsTab(QScrollArea):
         tools_box.addWidget(heading)
         tools_box.addWidget(self._tools_label)
         column.addWidget(tools_card)
+        self.tools_card = tools_card
+        self._tools_heading = heading.text()
         self.set_tools(tools)
 
         column.addStretch(1)
@@ -368,9 +398,34 @@ class SettingsTab(QScrollArea):
                     "why": floor_reason(name) or self.tr("a known issue")}
             lines.append(line)
         self._tools_label.setText("\n".join(lines))
+        self._apply_search()                       # the card's text changed: so may whether it matches
 
     def tools_text(self) -> str:
         return self._tools_label.text()
+
+    # -- search ----------------------------------------------------------------
+    def _apply_search(self, *_ignored) -> None:
+        """Show the cards whose text holds every word typed (case ignored); an empty field shows them all.
+
+        A card that is absent on purpose (the Explorer row where there is no Explorer) is never brought back by a
+        search: ``available`` is asked every time, not remembered from the last visibility.
+        """
+        if not hasattr(self, "tools_card"):          # set_tools runs once while the page is still being built
+            return
+        words = self.search.text().casefold().split()
+        shown = 0
+        cards = [(row, " ".join([row.title, row.description, *_control_words(row._control)]),
+                  row is not self.explorer_row or self._shell_supported)
+                 for row in self.findChildren(SettingsRow)]
+        cards.append((self.tools_card, f"{self._tools_heading} {self._tools_label.text()}", True))
+        for card, text, available in cards:
+            hay = text.casefold()
+            show = available and all(w in hay for w in words)
+            card.setHidden(not show)
+            shown += show
+        if words and not shown:
+            self.search_empty.setText(self.tr("No setting matches “%s”.") % self.search.text().strip())
+        self.search_empty.setHidden(not (words and not shown))
 
     # -- persistence (I1) ----------------------------------------------------
     _KEYS = {

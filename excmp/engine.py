@@ -1928,6 +1928,30 @@ def _extract_selected(archive: Path, names: list[str], out_dir: Path,
                          verified=verified, elapsed_s=time.monotonic() - t0)
 
 
+def _refuse_ambiguous_picks(archive: Path, wanted: list[str], ctx: StageContext,
+                            password: str | None) -> None:
+    """7-Zip picks members by case-insensitive pattern, so ``A.txt`` also matches ``a.txt``, and a name that occurs
+    twice matches both; the file that ends up under that name is then whichever came last, not the one asked for.
+    A silently wrong file is worse than a refusal, so a pick that is not unique in the archive's own list is refused
+    (and so is a list too long to check)."""
+    listing = _list_foreign(archive, ctx, password)
+    if listing.truncated:
+        raise ContainerError(
+            f"{archive.name} holds too many entries to check that each file you picked has a name of its own; "
+            f"restore the whole archive instead")
+    seen: dict[str, int] = {}
+    for entry in listing.entries:
+        if not entry.is_dir:
+            key = entry.name.replace("\\", "/").casefold()
+            seen[key] = seen.get(key, 0) + 1
+    clashes = sorted(n for n in wanted if seen.get(n.replace("\\", "/").casefold(), 0) > 1)
+    if clashes:
+        raise ContainerError(
+            f"{', '.join(clashes)}: {archive.name} holds more than one entry with that name (the same name twice, or "
+            f"names that differ only by capital letters), and 7-Zip cannot tell them apart. Restore the whole archive "
+            f"instead")
+
+
 def _extract_foreign_selected(archive: Path, wanted: list[str], out_dir: Path,
                               ctx: StageContext, password: str | None,
                               t0: float) -> ExtractResult:
@@ -1939,6 +1963,7 @@ def _extract_foreign_selected(archive: Path, wanted: list[str], out_dir: Path,
     files out re-uses the ``resolve_within`` check on the way, and keeps the
     standing promise that outputs are placed, never streamed into position.
     """
+    _refuse_ambiguous_picks(archive, wanted, ctx, password)
     work = Path(tempfile.mkdtemp(prefix="excmp-sel-", dir=ctx.temp_dir))
     try:
         _extract_foreign(archive, work, ctx, password, include=wanted)

@@ -15,18 +15,87 @@ hollow out the single guarantee this project sells.
 
 from __future__ import annotations
 
+import os
+import re
 import tempfile
+import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QMimeData, Qt, QUrl, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
-from PySide6.QtWidgets import (QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-                               QHeaderView, QLabel, QLineEdit, QProgressBar,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFileDialog, QFrame, QGridLayout,
+                               QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar,
                                QPushButton, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
+from excmp import engine
+from excmp.stages.base import StageContext
+
 from ..format import fmt_eta, fmt_size
 from .dropzone import paths_from_mime
+
+#: Dragging files out unpacks them while the mouse button is held, on the window's own thread, so it is capped twice: by
+#: bytes, and by the TIME the estimate gives for the archive's own stage chain (a byte count alone let a 128 MB Insane
+#: archive freeze the window for twenty minutes). Past either, the drag is refused and "Restore selected" (a queued job
+#: with progress) is the way.
+DRAG_LIMIT = 128 * 1024 * 1024
+DRAG_SECONDS = 8.0
+#: Staging folders are kept briefly after a drop (Explorer may still be copying out of them): the next drag removes only
+#: the old ones, never more than this many are kept, and closing the app removes all.
+_STAGE_MAX_AGE_S = 120.0
+_KEEP_STAGES = 3
+_VOLUME_NAME = re.compile(r"\.\d{3}$")
+_ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06")
+
+#: Where the files being dragged are unpacked. Explorer copies from here after the drop, perhaps for a while, so a
+#: folder is never deleted right after a drop: the next drag removes it, so does closing the app, and a stale one is
+#: swept at start-up.
+_DRAG_TEMP_ROOT = Path(tempfile.gettempdir()) / "excmp-drag"
+_DRAG_PREFIX = "excmp-drag-"
+
+
+class DragRefused(Exception):
+    """The files cannot be dragged out; the message says why, in words for the person."""
+
+
+def sweep_stale_drag_folders(root: Path, max_age_s: float = 86400.0) -> None:
+    """Remove staging folders an earlier run left behind (it was killed, or the PC lost power). Only
+    ``excmp-drag-*`` folders directly under ``root`` and older than ``max_age_s`` are touched."""
+    from excmp.tempclean import is_reparse_point, rmtree_force
+    if is_reparse_point(root):               # not a plain folder: whatever it leads to is not ours to clean
+        return
+    try:
+        children = list(Path(root).iterdir())
+    except OSError:
+        return
+    now = time.time()
+    for child in children:
+        try:
+            if child.name.startswith(_DRAG_PREFIX) and not is_reparse_point(child) and child.is_dir() \
+                    and now - child.stat().st_mtime > max_age_s:
+                rmtree_force(child)
+        except OSError:
+            continue
+
+
+class _DragOutTree(QTreeWidget):
+    """The archive's file list. Rows can be dragged out, copy only; nothing can be dropped on it."""
+
+    def __init__(self, parent: QWidget, make_mime) -> None:
+        super().__init__(parent)
+        self._make_mime = make_mime
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+
+    def drag_actions(self):
+        return Qt.DropAction.CopyAction             # never Move: nothing is ever taken out of the archive or the staging copy
+
+    def startDrag(self, supported_actions) -> None:      # noqa: N802 (Qt name)
+        super().startDrag(self.drag_actions())
+
+    def mimeData(self, items):                           # noqa: N802 (Qt name)
+        return self._make_mime(list(items))
 
 
 class ExtractTab(QWidget):
@@ -43,6 +112,7 @@ class ExtractTab(QWidget):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._listing = None
+        self._listing_for: Path | None = None    # the archive the rows in the list were read from
         self._reading = False
         self._password: str | None = None
         self._locked = False            # our own password-protected .excmp (not a zip until decrypted)
@@ -158,7 +228,7 @@ class ExtractTab(QWidget):
         self.contents_caption.setVisible(False)
         grid.addWidget(self.contents_caption, 8, 0, 1, 3)
 
-        self.contents = QTreeWidget(card)
+        self.contents = _DragOutTree(card, self._drag_mime)
         self.contents.setColumnCount(4)
         self.contents.setHeaderLabels([self.tr("File"), self.tr("Size"),
                                        self.tr("How"),
@@ -185,6 +255,19 @@ class ExtractTab(QWidget):
         self.extract_selected_button.clicked.connect(self._emit_selected)
         grid.addWidget(self.extract_selected_button, 10, 0, 1, 3)
         self.extract_selected_button.setVisible(False)
+
+        # Under the list: how to use it, and (in place of that) why a drag was refused. Never a dialog.
+        self.drag_note = QLabel("", card)
+        self.drag_note.setObjectName("Subtitle")
+        self.drag_note.setWordWrap(True)
+        self.drag_note.setTextFormat(Qt.TextFormat.PlainText)
+        self.drag_note.setVisible(False)
+        grid.addWidget(self.drag_note, 11, 0, 1, 3)
+        self._drag_stages: list[tuple[Path, float]] = []     # (staging folder, when), oldest first
+        sweep_stale_drag_folders(_DRAG_TEMP_ROOT)
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.cleanup_drag)
 
         self._set_contents_open(False)
 
@@ -355,6 +438,7 @@ class ExtractTab(QWidget):
             showing and self._listing is not None
             and not self._listing.ledger_backed)
         self.extract_selected_button.setVisible(showing)
+        self._show_drag_hint(showing)
 
     def _fill_contents(self) -> None:
         """Ours synchronously, anyone else's on a worker (G2).
@@ -370,6 +454,7 @@ class ExtractTab(QWidget):
         archive = Path(self.archive_edit.text().strip('" '))
         if not archive.is_file():
             return
+        self._listing_for = archive
         if is_excmp(archive):
             try:
                 self._apply_listing(list_archive(archive))
@@ -384,6 +469,7 @@ class ExtractTab(QWidget):
         from ..queue_manager import ListingWorker
 
         self._reading = True
+        self._listing_for = archive
         self.status.setText(self.tr("Reading the archive’s contents…"))
         self._listing_pool.start(ListingWorker(
             archive, self._password, self._temp_dir, self._listing_signals))
@@ -504,6 +590,7 @@ class ExtractTab(QWidget):
                    and self.contents.topLevelItemCount() > 0)
         self.contents.setVisible(showing)
         self.extract_selected_button.setVisible(showing)
+        self._show_drag_hint(showing)
         # The foreign path sets a "Reading..." status before launching 7-Zip.
         # Leaving it up beside a loaded table says the job is still running.
         if self._reading:
@@ -540,18 +627,168 @@ class ExtractTab(QWidget):
             self.tr("Restore %d selected") % count if count
             else self.tr("Restore selected"))
 
+    def _selected_archive(self) -> Path:
+        """The archive the list on screen was read from. Not the Archive field: that can be retyped while the rows still
+        show the old archive, and files must come from the archive whose rows were picked."""
+        return self._listing_for or Path(self.archive_edit.text().strip('" '))
+
     def _emit_selected(self) -> None:
         names = self.selected_names()
-        archive = Path(self.archive_edit.text().strip('" '))
+        archive = self._selected_archive()
         if names and archive.is_file():
             self.extractSelectedRequested.emit(archive, names)
 
     def current_listing(self):
         return self._listing
 
+    # -- dragging files out ----------------------------------------------------
+    def _show_drag_hint(self, showing: bool) -> None:
+        self.drag_note.setText(self.tr("Drag files out of this list into a folder to restore just those, or tick them "
+                                       "and press “Restore selected”."))
+        self.drag_note.setVisible(showing)
+
+    def _say_drag(self, text: str) -> None:
+        self.drag_note.setText(text)
+        self.drag_note.setHidden(False)
+
+    def _drag_cost(self, chosen, archive: Path) -> tuple[int, float]:
+        """(bytes to unpack, estimated seconds) to reach ``chosen``.
+
+        A file kept as is (ours) or a member of a zip is read on its own, so only its own size counts; anything else is
+        in a solid block, and reaching it replays the whole chain. The seconds use the estimate's rate for the
+        archive's own stage chain, so a slow chain (Insane) is priced as slow."""
+        from excmp.estimate import DEFAULT_RATES
+
+        def size(entry) -> int:
+            return int(entry.size or 0)
+        everything = sum(size(e) for e in self._listing.entries if not e.is_dir)
+        if self._listing.ledger_backed:
+            independent = all(e.route == "store" for e in chosen)
+            stages = [] if independent else list(self._listing.stages)
+        else:
+            independent, stages = True, ["sevenzip"]               # a zip member (the only foreign kind accepted)
+        work = sum(size(e) for e in chosen) if independent else everything
+        return work, work / max(DEFAULT_RATES.verify_rate_for(stages), 1.0)
+
+    def _check_foreign_dragable(self, archive: Path) -> None:
+        """Only a plain zip, whose members are unpacked one by one and whose list is complete. Anything else is one solid
+        block with no honest size to price (a forged size trailer cost a real unpack before it failed), and a cut-off
+        list cannot show that a name is unique."""
+        if self._listing.truncated:
+            raise DragRefused(self.tr("This archive has too many files to list in full, so they cannot be dragged out. "
+                                      "Tick them and press “Restore selected”."))
+        try:
+            with open(archive, "rb") as fh:
+                head = fh.read(4)
+        except OSError:
+            head = b""
+        if head not in _ZIP_MAGICS:
+            raise DragRefused(self.tr("Files can be dragged out of a zip, or of an archive made here, but not out of "
+                                      "this kind of archive. Tick them and press “Restore selected”."))
+
+    def stage_for_drag(self, names: list[str]) -> list[Path]:
+        """Unpack ``names`` into a fresh staging folder and return the unpacked files, in order.
+
+        Our own archives are checked against their SHA-256 ledger by the engine, exactly as "Restore selected" is.
+        Raises :class:`DragRefused` (with a message for the person) when there is nothing to drag or it is too much.
+        """
+        from excmp.tempclean import is_reparse_point, rmtree_force
+
+        archive = self._selected_archive()
+        if self._listing is None or not archive.is_file():
+            raise DragRefused(self.tr("Open the archive’s contents first."))
+        if _VOLUME_NAME.search(archive.name):
+            raise DragRefused(self.tr("An archive in several parts has to be joined first, which is too much to do "
+                                      "while you hold the mouse button. Tick the files and press “Restore selected”."))
+        by_name = {e.name: e for e in self._listing.entries}
+        chosen = [by_name[n] for n in dict.fromkeys(names) if n in by_name and not by_name[n].is_dir]
+        if not chosen:
+            raise DragRefused(self.tr("Only files can be dragged out, not folders."))
+        base_names = [Path(e.name).name.casefold() for e in chosen]
+        twice = sorted({Path(e.name).name for e, b in zip(chosen, base_names) if base_names.count(b) > 1})
+        if twice:
+            raise DragRefused(self.tr("Two of these files are both called %s, so they cannot be dropped together. "
+                                      "Drag them one at a time.") % ", ".join(twice))
+        if not self._listing.ledger_backed:
+            self._check_foreign_dragable(archive)
+        work, seconds = self._drag_cost(chosen, archive)
+        if work > DRAG_LIMIT or seconds > DRAG_SECONDS:
+            raise DragRefused(self.tr(
+                "Dragging these out would unpack %(size)s first (about %(time)s), too much to do while you hold the "
+                "mouse button. Tick them and press “Restore selected” instead.")
+                % {"size": fmt_size(work), "time": fmt_eta(max(seconds, 1.0))})
+        if is_reparse_point(_DRAG_TEMP_ROOT):
+            raise DragRefused(self.tr("The folder used for dragging files out is not an ordinary folder, so nothing "
+                                      "was unpacked into it."))
+        self._prune_drag_stages()
+        _DRAG_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        stage = Path(tempfile.mkdtemp(prefix=_DRAG_PREFIX, dir=_DRAG_TEMP_ROOT))
+        self._drag_stages.append((stage, time.time()))
+        self._temp_dir.mkdir(parents=True, exist_ok=True)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            engine.extract_selected(archive, [e.name for e in chosen], stage,
+                                    StageContext(temp_dir=self._temp_dir), self._password)
+        except BaseException:
+            self._drag_stages = [(p, t) for p, t in self._drag_stages if p != stage]
+            rmtree_force(stage)                  # no half-unpacked folder is left behind
+            raise
+        finally:
+            QApplication.restoreOverrideCursor()
+        from excmp.safepath import resolve_within
+        paths = [resolve_within(stage, e.name) for e in chosen]
+        if not all(p.is_file() for p in paths):
+            raise DragRefused(self.tr("Some of the files could not be unpacked."))
+        return paths
+
+    def _drag_mime(self, items) -> QMimeData | None:
+        """What Qt hands Explorer when rows are dragged: the unpacked files, as file URLs. None (nothing is dragged)
+        when it cannot be done; the reason is said under the list."""
+        names = [it.data(self.COL_NAME, Qt.ItemDataRole.UserRole) for it in items
+                 if it.flags() & Qt.ItemFlag.ItemIsUserCheckable]            # folder rows are not checkable
+        try:
+            if not names:
+                raise DragRefused(self.tr("Only files can be dragged out, not folders."))
+            paths = self.stage_for_drag(names)
+        except DragRefused as exc:
+            self._say_drag(str(exc))
+            return None
+        except Exception as exc:                                              # noqa: BLE001 (say it, never crash a drag)
+            first = next((ln.strip() for ln in str(exc).splitlines() if ln.strip()), type(exc).__name__)
+            self._say_drag(self.tr("Could not unpack these files for dragging: %s Try “Restore selected”.")
+                           % first[:240].rstrip(".") + ".")
+            return None
+        self._show_drag_hint(True)                     # an earlier refusal no longer applies
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
+        return mime
+
+    def _prune_drag_stages(self) -> None:
+        """Before a new drag: remove staging folders that are old, and keep few. A recent one stays, because Explorer may
+        still be copying out of it (deleting it under the copy lost a file in review)."""
+        from excmp.tempclean import rmtree_force
+        now = time.time()
+        keep = []
+        for stage, made in self._drag_stages:
+            if now - made > _STAGE_MAX_AGE_S:
+                rmtree_force(stage)
+            else:
+                keep.append((stage, made))
+        while len(keep) > _KEEP_STAGES - 1:            # room for the one about to be made
+            rmtree_force(keep.pop(0)[0])
+        self._drag_stages = keep
+
+    def cleanup_drag(self) -> None:
+        """Remove every staging folder this tab made (the app is closing, or the tab is going). Safe to call twice."""
+        from excmp.tempclean import rmtree_force
+        stages, self._drag_stages = self._drag_stages, []
+        for stage, _made in stages:
+            rmtree_force(stage)
+
     def set_archive(self, path: Path) -> None:
         self.contents.clear()
         self._listing = None
+        self._listing_for = None
         self._reading = False
         # A password was given for one archive. Carrying it to the next
         # silently tries a user's secret against a file they never offered
@@ -666,11 +903,19 @@ class ExtractTab(QWidget):
             self.progress.setValue(0)
             self.extractRequested.emit(archive, dest)
 
+    def _is_own_drag(self, event) -> bool:
+        """Our own drag-out released over our own window: the files are staged copies, not an archive to open."""
+        return event.source() is self.contents
+
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._is_own_drag(event):
+            return
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
 
     def dropEvent(self, event: QDropEvent) -> None:
+        if self._is_own_drag(event):
+            return
         paths = [p for p in paths_from_mime(event.mimeData()) if p.is_file()]
         if paths:
             self.set_archive(paths[0])

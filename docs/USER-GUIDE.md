@@ -413,11 +413,24 @@ a SHA-256. A big archive may be cut at its first entries, and the caption says s
 
 ![A foreign archive, one file ticked](images/guide/08-extract-foreign.png)
 
-**Restore selected.** Tick the boxes in front of the files you want. The button changes to "Extract 1
+**Restore selected.** Tick the boxes in front of the files you want. The button changes to "Restore 1
 selected". Press it. If the archive is **solid** (all files compressed as one block), reaching a single
 file means decompressing much of the block. The app tells you first, with a notice: "N file(s) selected,
 but this archive is solid: reaching them replays X of compressed data." Choose **Extract anyway** or
 **Cancel**. A destination must be set first, or the notice says "Choose where the files should go first."
+
+**Drag files out.** You can also drag files from the list straight into an Explorer folder (or the desktop). Click a
+row to select it, Ctrl or Shift to select several. The app unpacks just those files first, checks them against the
+archive's saved fingerprints as any restore does (a zip made by somebody else only has its own error check), and
+Explorer copies them. Nothing is ever moved or removed.
+
+Unpacking happens while you hold the mouse button, so it is kept short: at most about 128 MB and about 8 seconds, by
+the estimate for how that archive was made (a slow profile such as Insane allows very little). When it is too much,
+the line under the list says so and **Restore selected**, which shows progress, is the way. Also refused, with a
+line saying why: folders (only files can be dragged), an archive in several parts, any archive that is not one made
+here or a zip, two files with the same name in one drag, and a zip that holds the same name twice or names that
+differ only by capitals (7-Zip cannot tell those apart, so **Restore selected** refuses them too; restore the whole
+archive instead). The temporary copies are deleted when you close the app, and older ones at your next drag.
 
 **Password for other people's archives.** If their file names are encrypted, a notice asks for the
 password:
@@ -564,12 +577,15 @@ Failed jobs are kept too (hover over the row for the reason). Encrypted jobs say
 Each row has a title, a line that explains it, and its control on the right. **Settings are saved when you
 close the window.**
 
+**Search.** Type in the box at the top to show only the rows that mention what you typed (every word has to match;
+capitals do not matter). Clear the box, or press its ✕, to see them all again.
+
 ![The Settings tab](images/guide/10-settings.png)
 
 | Setting | What it does | Default |
 |---|---|---|
 | **Worker threads** | Threads for 7-Zip and zpaqfranz. "auto (2 cores)" is one per physical core. Lower it to keep the machine usable. Used when Advanced > Threads is on auto. | auto |
-| **Temporary folder** + **Browse…** | Where work files go while a job runs. They can be several times the size of your files, so choose a drive with free space. Every job uses it unless you type another folder in **Advanced > Temp folder** (that is for one job only). | your user folder, `.excmp	mp` |
+| **Temporary folder** + **Browse…** | Where work files go while a job runs. They can be several times the size of your files, so choose a drive with free space. Every job uses it unless you type another folder in **Advanced > Temp folder** (that is for one job only). | your user folder, `.excmp\tmp` |
 | **Write a .sha256 file beside the archive** | Writes `name.excmp.sha256` next to each new archive. Anyone can check the archive with `sha256sum` or QuickSFV, without this app. | off |
 | **Open the folder after extracting** | Opens Explorer on the restored files as soon as a restore ends. | off |
 | **Notify when a job finishes** | A Windows notification when a compression ends. | on |
@@ -579,7 +595,7 @@ close the window.**
 | **Appearance** > **Switch theme** | Dark or light. | dark |
 | **Explorer right-click menu** > **Add / Remove / Repair** | See [9](#9-the-explorer-right-click-menu). | not added |
 | **Updates** > **Check for updates** and **Look once a day** | See [10.9](#109-update-the-app). | on |
-| **Tools on this machine** | The full list of tools found, with versions and paths. Notes: "legacy" (never used to make archives) and "update it" (an old version with a known problem). A tool that is built in says so. | - |
+| **Tools on this machine** | The full list of tools found, with versions and paths. Notes: "legacy" (never used to make archives) and "update it" (an old version with a known problem). A tool that is built in says so, and one that came with the installer says "included with the app". | - |
 
 ---
 
@@ -672,7 +688,7 @@ itself. You never get two windows.
    byte-identical to the originals".
 6. If you want Explorer to open the folder by itself, tick **Settings > Open the folder after extracting**.
 
-To restore only some files: press **What’s inside**, tick the files, press **Extract N selected**.
+To restore only some files: press **What’s inside**, tick the files, press **Restore N selected**.
 
 For a split archive, choose the `.001` part. Keep all parts in one folder.
 

@@ -43,6 +43,37 @@ def test_the_installer_watches_the_same_mutex():
     assert "InitializeSetup" in iss and "InitializeUninstall" in iss and "Sleep(250)" in iss
 
 
+def _pascal_function(iss: str, name: str) -> str:
+    m = re.search(rf"^function {name}\(.*?^end;", iss, re.M | re.S)
+    assert m, name
+    return m.group(0)
+
+
+def test_setup_and_uninstall_each_ask_only_their_own_silent_question():
+    """Inno Setup raises a run-time error if Setup code calls `UninstallSilent` (or the uninstaller calls
+    `WizardSilent`). The first 0.1.2 build asked both in one expression: the uninstaller crashed at start
+    ("Cannot call WizardSilent function during Uninstall", exit 1), and an interactive Setup would have crashed
+    on `UninstallSilent` the same way. Only a real uninstall found it, so it is pinned here."""
+    iss = (ROOT / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    shared = _pascal_function(iss, "WindowGone")
+    assert "WizardSilent" not in shared and "UninstallSilent" not in shared      # it is told, not left to ask
+    setup = _pascal_function(iss, "InitializeSetup")
+    uninstall = _pascal_function(iss, "InitializeUninstall")
+    assert "WizardSilent" in setup and "UninstallSilent" not in setup
+    assert "UninstallSilent" in uninstall and "WizardSilent" not in uninstall
+
+
+def test_a_silent_run_never_waits_for_a_click():
+    """`/SUPPRESSMSGBOXES` does not silence a box the script raises itself (seen on the first 0.1.2 build: a silent
+    uninstall with the window open waited 20 s and then sat on "ExtremeCompressor is running" for ever, and the
+    in-app update's Setup would have done the same). A silent run must answer "no" without showing anything."""
+    iss = (ROOT / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    shared = _pascal_function(iss, "WindowGone")
+    assert "MsgBox(" in shared, "the interactive refusal message is gone"
+    assert re.search(r"if\s+\(?not Result\)?\s+and\s+\(?not Silent\)?\s+then\s+MsgBox\(", shared), \
+        "MsgBox must only be shown when the run is not silent"
+
+
 def test_the_window_marks_itself_running_at_start_up():
     import inspect
     import gui.app as app

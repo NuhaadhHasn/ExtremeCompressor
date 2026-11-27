@@ -1,8 +1,8 @@
 ; Inno Setup script for ExtremeCompressor (E3). UNBUILT: see packaging\README.md.
-; Build:  iscc /DAppVersion=0.1.1 packaging\installer.iss   (after PyInstaller made dist\ExtremeCompressor)
+; Build:  iscc /DAppVersion=0.1.2 packaging\installer.iss   (after PyInstaller made dist\ExtremeCompressor)
 
 #ifndef AppVersion
-  #define AppVersion "0.1.1"
+  #define AppVersion "0.1.2"
 #endif
 
 [Setup]
@@ -61,29 +61,30 @@ const
   RunningMutex = 'ExtremeCompressor-running';   // gui/singleinstance.py RUNNING_MUTEX
 
 // A silent run (the in-app update) gives the window up to 20 s to finish closing; an interactive run
-// refuses at once, as AppMutex did, and says why.
-function WindowGone(const Action: String): Boolean;
+// refuses at once, as AppMutex did, and says why. The caller says whether the run is silent: Setup may only ask
+// WizardSilent() and the uninstaller only UninstallSilent(); each is a run-time error in the other.
+function WindowGone(const Silent: Boolean; const Action: String): Boolean;
 var
   Waited: Integer;
 begin
   Waited := 0;
-  if WizardSilent() or UninstallSilent() then
+  if Silent then
     while CheckForMutexes(RunningMutex) and (Waited < 20000) do
     begin
       Sleep(250);
       Waited := Waited + 250;
     end;
   Result := not CheckForMutexes(RunningMutex);
-  if not Result then
+  if (not Result) and (not Silent) then
     MsgBox('ExtremeCompressor is running. Close it, then ' + Action + ' again.', mbError, MB_OK);
 end;
 
 function InitializeSetup(): Boolean;
 begin
-  Result := WindowGone('run Setup');
+  Result := WindowGone(WizardSilent(), 'run Setup');
 end;
 
 function InitializeUninstall(): Boolean;
 begin
-  Result := WindowGone('uninstall');
+  Result := WindowGone(UninstallSilent(), 'uninstall');
 end;

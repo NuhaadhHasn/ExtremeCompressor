@@ -33,6 +33,16 @@ it.
 
 ### Fixed
 
+- **Extreme and Insane used up to twice the temp space they needed, and the preflight under-booked the rest (2026-11-27).** The
+  chain's intermediate files (the tar, and Precomp's expanded output) stayed on disk until the job ended, and the pre-publish
+  self-test then made its own expanded copy beside them. Measured on 39 MB of Office and PDF files at Extreme: a peak of
+  1,143 MB, now 610 MB, with the same archive and the same verification. Each stage's input is now freed as soon as the next
+  stage has produced its output (a stage that steps aside leaves its input for the next; a file that something holds open and
+  cannot be freed is left for the end-of-job cleanup and never fails the job). Separately, the low-space WARNING assumed Precomp
+  expands every file about 5x; measured file by file on 51 real Office/PDF files, Word documents expand 19x, PDFs 6.3x and small
+  slide decks up to 8x, so those types now reserve 20x, 7x and 8x (one corpus: byte-weighted figures rounded up, not worst
+  cases; small files expand more than their type's average, so for a folder of tiny files the warning can still come in a
+  little low; the refusal threshold has no inflation term and is unchanged; `.xlsx` is still unmeasured).
 - The tick boxes in the Restore list were nearly invisible on the dark theme; they are styled like every other check box.
 - **"Restore selected" from a zip could hand back the wrong file** when the zip held names that differ only by capital letters
   (`A.txt` and `a.txt`) or the same name twice: 7-Zip picks members case-insensitively, and the last one won. Such a pick is now

@@ -30,7 +30,10 @@ def fake_precomp(tmp_path, monkeypatch):
 
 
 def _warnings(caplog):
-    return [r for r in caplog.records if r.name == "excmp.tools" and r.levelno == logging.WARNING]
+    """The pin-fallback warnings about Precomp. These tests patch every tool's pin away, and zpaqfranz is pinned too
+    since 0.1.2, so a checkout that still has its old flat copy rightly warns about that as well: not what is tested."""
+    return [r for r in caplog.records
+            if r.name == "excmp.tools" and r.levelno == logging.WARNING and r.getMessage().startswith("precomp:")]
 
 
 def test_the_fallback_is_announced_with_the_path_that_is_used(monkeypatch, caplog, fake_precomp):

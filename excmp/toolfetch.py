@@ -131,6 +131,11 @@ class ToolSpec:
     #: it is placed, placed only at ``exe_relpath``, and from then on guarded
     #: by ``exe_dir_sha256`` exactly like an unpacked tool.
     raw: bool = False
+    #: Never downloaded at run time: the release is a ``.7z`` (7-Zip Extra), which this module cannot
+    #: unpack, so the installer carries it (``packaging/stage_tools.py`` unpacks it at build time with
+    #: the build machine's 7-Zip, checks it against ``sha256`` and ``exe_dir_sha256``). The URL is
+    #: provenance for the human who bumps the pin.
+    bundled_only: bool = False
 
     def version_tuple(self) -> tuple[int, ...]:
         return _version_tuple(self.version)
@@ -229,9 +234,9 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
     # standard this item asks for when a release offers no digest of its own.
     #
     # Licence note: libFLAC is BSD-3-Clause but the `flac` CLI is GPL-2.0. We
-    # drive it as a subprocess and never link it, and this repo is private
-    # with no distribution - but if it is ever made public, CLAUDE.md's OSI
-    # rule comes back and this needs revisiting first.
+    # drive it as a subprocess and never link it. Both are OSI licences, so it
+    # ships in the installer (since 0.1.2) with COPYING.GPL beside it and a
+    # source pointer in THIRD-PARTY-NOTICES.md.
     "flac": ToolSpec(
         name="flac",
         version="1.5.0",
@@ -259,10 +264,10 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
     # files (170 MB): 13.358% smaller, 18/18 restored byte-identically, against
     # 1.112% for the best route the app had. docs/benchmarks/2026-10-06-b13.
     #
-    # The release is one bare executable, hence `raw=True`. GPL-3.0, driven as
-    # a subprocess and never linked; the repo is private with no distribution
-    # (CLAUDE.md, licensing), and if that ever changes this needs revisiting
-    # first, like flac above.
+    # The release is one bare executable, hence `raw=True`. GPL-3.0 (an OSI
+    # licence), driven as a subprocess and never linked; it ships in the
+    # installer (since 0.1.2) with its COPYING and a source pointer in
+    # THIRD-PARTY-NOTICES.md.
     #
     # The digest is GitHub's own per-asset digest for release 1.4, confirmed
     # against the bytes downloaded on this machine on 2026-10-01 and again on
@@ -298,10 +303,12 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
     # `precomp.exe` matches the asset's `windows/precomp.exe` byte for byte
     # (aabca1ee...515d). Fetched and hashed on this machine 2026-11-18.
     #
-    # Precomp's licence is its own ("free for non-commercial use", Christian
-    # Schneider); it is driven as a subprocess and never linked, and this repo
-    # is private with no distribution. If that changes, this needs revisiting
-    # first, like flac above.
+    # Precomp is Apache-2.0 ("Copyright 2006-2016 Christian Schneider": the
+    # "Legal stuff" section of the readme in this very zip, and the upstream
+    # LICENSE file). An earlier note here said "free for non-commercial use";
+    # that was wrong, and is the reason this section was re-read on 2026-11-26.
+    # It embeds packJPG and packMP3 (LGPL-3.0), bZip2, zLib and GifLib, whose
+    # notices travel in licenses/tools/precomp (THIRD-PARTY-NOTICES.md).
     "precomp": ToolSpec(
         name="precomp",
         version="0.4.7",
@@ -310,7 +317,7 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
         sha256="fcd308310135cdc1ae25b45288bcc5201f9cabf5a9e707cfb33b0f99c548de0b",
         size=2300841,
         exe_relpath="windows/precomp.exe",
-        license="Free for non-commercial use (Christian Schneider)",
+        license="Apache-2.0 (Precomp; embeds LGPL-3.0 packJPG/packMP3 and permissive bZip2, zLib, GifLib)",
         min_version="0.4.7",
         source=("github.com/schnaader/precomp-cpp v0.4.7 asset (no digest "
                 "published); exe matches the 2019 Program Files install"),
@@ -321,7 +328,58 @@ TOOL_MANIFEST: dict[str, ToolSpec] = {
             ("precomp32.exe", "427f9982197d72e95c26daeb403ddf1d70c62d13ce930ce26c443989ecd1f775"),
         ),
     ),
+    # Insane's final codec (B1). It had lived as a bare file at tools/bin/zpaqfranz.exe since 2026-09-02 and
+    # was in neither the manifest nor the installer, so the installed app could not run Insane at all.
+    #
+    # Upstream release 64.8 (2026-06-29) carries the very file every measurement here used: 4,288,000 bytes,
+    # banner "zpaqfranz v64.8j", sha256 8c832075... - GitHub's per-asset digest for the release and the
+    # local copy agree, two parties. Newer releases exist (65.23 on 2026-11-24); the Insane speed model was
+    # measured on this build, so a bump is a measurement job (docs/benchmarks/2026-09-02-b1-zpaqfranz.md),
+    # not a pin edit. MIT (licenses/tools/zpaqfranz).
+    "zpaqfranz": ToolSpec(
+        name="zpaqfranz",
+        version="64.8",
+        url="https://github.com/fcorbelli/zpaqfranz/releases/download/64.8/zpaqfranz.exe",
+        sha256="8c8320756bdd489d3f08e070f42d2680892598ee5befafd4880640b9276fa533",
+        size=4288000,
+        exe_relpath="zpaqfranz.exe",
+        license="MIT",
+        min_version="64.8",
+        source="github.com/fcorbelli/zpaqfranz release 64.8 asset digest; equals the local copy since 2026-09-02",
+        exe_dir_sha256=(
+            ("zpaqfranz.exe", "8c8320756bdd489d3f08e070f42d2680892598ee5befafd4880640b9276fa533"),
+        ),
+        raw=True,
+    ),
+    # The 7-Zip the installed app falls back on when the machine has none that is new enough. The "Extra"
+    # package's `7za.exe`: standalone, 7z/zip/tar/gzip/bzip2/xz/zstd/cab, and NO RAR code, so the unRAR
+    # restriction of the full 7-Zip does not apply to it (licenses/tools/7zip/License.txt has no such
+    # clause; the full one does). A machine with a current full 7-Zip keeps using that one, which also
+    # opens RAR and ISO (tools.PREFER_SYSTEM). 26.06 >= the 26.02 security floor (CVE-2026-14266).
+    # sha256 is GitHub's own digest for the release asset 7z2606-extra.7z, confirmed on the bytes
+    # downloaded 2026-11-26; the exe's hash is of x64/7za.exe inside it.
+    "7z": ToolSpec(
+        name="7z",
+        version="26.06",
+        url="https://github.com/ip7z/7zip/releases/download/26.06/7z2606-extra.7z",
+        sha256="396c180f12d2247c24b0b1fcd482c6fc2a2700f61211ffede1061dd971f5e104",
+        size=1758340,
+        exe_relpath="7za.exe",
+        license="LGPL-2.1-or-later (7-Zip Extra 7za.exe; BSD-3-Clause/BSD-2-Clause parts)",
+        min_version="26.02",
+        source="github.com/ip7z/7zip release 26.06 asset digest; x64/7za.exe from 7z2606-extra.7z",
+        exe_dir_sha256=(
+            ("7za.exe", "dd3757f31c97e33776f2590317d4fb12f2da075db3dbb1e3f94d0f2a01d84ffa"),
+        ),
+        bundled_only=True,
+    ),
 }
+
+#: What the installer carries (``packaging/stage_tools.py``), so the installed app needs no download and
+#: has what a source checkout has. Every one is hash-pinned above and openly licensed (CLAUDE.md: the OSI
+#: rule). Not here, on purpose: SREP (not open source, legacy-only), qpdf (87 MB and never invoked),
+#: FFmpeg (not used yet), Oodle/xtool (proprietary).
+BUNDLED: tuple[str, ...] = ("7z", "precomp", "zpaqfranz", "flac", "balrogg")
 
 
 def _install_root() -> Path:
@@ -659,6 +717,14 @@ def fetch_tool(spec: ToolSpec, *, allow_insecure: bool = False,
         raise FetchError(
             f"{spec.name} {spec.version} is older than the {spec.min_version} "
             f"minimum this project requires - refusing to install it")
+
+    if spec.bundled_only:
+        existing = installed_path(spec)
+        if existing is not None:
+            return existing
+        raise FetchError(
+            f"{spec.name} {spec.version} is a .7z package that only the installer carries: reinstall "
+            f"ExtremeCompressor, or install {spec.name} yourself")
 
     if not force and spec.exe_dir_sha256:
         # Only skip the download when there is something in source to verify

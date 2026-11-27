@@ -43,7 +43,7 @@ Source: "..\dist\ExtremeCompressor\*"; DestDir: "{app}"; Flags: recursesubdirs i
 ; The licence texts a binary release owes (PySide6 is LGPL-3.0): ours, the notices, and the LGPL/GPL texts.
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{group}\ExtremeCompressor"; Filename: "{app}\ExtremeCompressor.exe"

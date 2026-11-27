@@ -50,9 +50,12 @@ uses PAR2 recovery records, and that **an uninstall with the window open is refu
 
 * **Code signing (E4)** needs an account with a signing service, and **auto-update (E5)** a release channel
   to poll. Until then an installer is unsigned and **Windows SmartScreen will warn**.
-* **The external tools are not bundled.** 7-Zip, Precomp, zpaqfranz and the rest are found on the machine or
-  fetched by the app (E1); the frozen app finds them the same way the source one does. Fast works with
-  nothing else installed.
+* **The external tools ARE bundled (since 0.1.2).** `stage_tools.py` (run by `build.cmd`) checks 7-Zip's `7za.exe`,
+  Precomp, zpaqfranz, FLAC and balrogg against their SHA-256 pins and copies them to `build\bundled-tools`; the spec
+  puts that at `_internal\tools\bin`, where `excmp.toolfetch` looks, and the installer ships their licence texts
+  (`licenses\tools`). It uses `tools\bin` first and downloads only what is missing. Not bundled, on purpose: SREP (not
+  open source), qpdf (87 MB, never invoked) and the full 7-Zip (its RAR code carries the unRAR restriction; a machine's
+  own 7-Zip is used when present).
 * An application icon: `assets\` holds SVG icons only, no `.ico`.
 * The Windows 11 top-level menu (a signed sparse package, after E4).
 

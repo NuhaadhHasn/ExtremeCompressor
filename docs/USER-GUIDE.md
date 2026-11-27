@@ -80,8 +80,15 @@ byte-for-byte. Press **Got it** (or the x) to close it. It does not come back.*
 
 ### 2.3 The tools the app uses
 
-The app does not compress by itself. It drives other programs. The status strip at the bottom starts with
-"Tools found: ..." and **Settings > Tools on this machine** lists them all with their paths.
+The app does not compress by itself. It drives other programs, and **the installer includes them** (7-Zip, Precomp,
+zpaqfranz, FLAC and balrogg), so there is nothing to install or download, even without internet. The status strip at the
+bottom starts with "Tools found: ..." and **Settings > Tools on this machine** lists them all with their paths. Copies
+that came with the app are marked **[included with the app]**.
+
+If you also have the full 7-Zip installed, the app uses yours (when it is version 26.02 or newer), because it opens RAR and
+ISO files too. The 7-Zip that comes with the app handles 7z, zip, tar, gzip, bzip2, xz, zstd and cab, which covers every
+archive the app makes. If you try to open a RAR, ISO or similar file without the full 7-Zip, the Restore tab says so and
+tells you what to install; the file is not damaged. You can see which tools the app found with `excmp tools`.
 
 | Profile | Needs |
 |---|---|

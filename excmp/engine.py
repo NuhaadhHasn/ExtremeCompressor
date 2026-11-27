@@ -49,7 +49,7 @@ from .stages.dedup import DedupStage
 from .stages.sevenzip import SevenZipStage
 from .stages.tarstage import SourceReadError, TarStage
 from .stages.zstdstage import FAST_ZSTD_LEVEL, ZstdStage
-from .tools import ToolInfo, find_tools
+from .tools import ToolInfo, find_tools, needs_full_7zip
 from .verify import (SourceCheck, hash_file, tree_hash, verify_restore,
                      verify_source)
 
@@ -1685,6 +1685,20 @@ def list_any(archive: Path, ctx: StageContext,
         return _list_foreign(opened, ctx, password)
 
 
+def _refuse_without_full_7zip(archive: Path) -> None:
+    """A RAR, ISO and the like need a full 7-Zip; the one bundled with the app does not open them.
+
+    Said in plain words up front: 7za's own answer ("Cannot open the file as archive") is classified as
+    corruption, and a healthy archive must never be reported as damaged.
+    """
+    if needs_full_7zip(archive, find_tools().get("7z")):
+        kind = archive.suffix.lstrip(".").upper()
+        raise ContainerError(
+            f"{archive.name} is a {kind} archive, which the 7-Zip that comes with ExtremeCompressor cannot open. "
+            f"Install the full 7-Zip (version 26.02 or newer, from 7-zip.org) and open it again - "
+            f"nothing is wrong with the file")
+
+
 def _list_foreign(archive: Path, ctx: StageContext,
                   password: str | None = None) -> ArchiveListing:
     """The 7-Zip half of :func:`list_any`, split out so the shared
@@ -1692,6 +1706,7 @@ def _list_foreign(archive: Path, ctx: StageContext,
     hand a plain path."""
     if not archive.is_file():
         raise ContainerError(f"{archive} does not exist")
+    _refuse_without_full_7zip(archive)
 
     doc, output = SevenZipStage().list_entries(archive, ctx, password)
     verdict = classify_failure(output)
@@ -1764,6 +1779,7 @@ def _extract_foreign(archive: Path, out_dir: Path, ctx: StageContext,
     """
     t0 = time.monotonic()
     out_dir = Path(out_dir)
+    _refuse_without_full_7zip(archive)
     out_dir.mkdir(parents=True, exist_ok=True)
     ctx.log_cb("sevenzip", f"opening {archive.name} with 7-Zip - this archive "
                            f"has no SHA-256 ledger, so its contents cannot be "

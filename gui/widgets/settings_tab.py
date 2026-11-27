@@ -332,7 +332,7 @@ class SettingsTab(QScrollArea):
         old" without a reason is not something a user can act on.
         """
         from excmp.tools import (IN_PROCESS, IN_PROCESS_WHEEL, LEGACY_ONLY,
-                                 below_floor, floor_reason)
+                                 below_floor, floor_reason, is_bundled)
 
         self._tools = dict(tools)
         stale = {name: (found, needed) for name, found, needed in below_floor(tools)}
@@ -355,6 +355,8 @@ class SettingsTab(QScrollArea):
                 continue
             version = getattr(info, "version", "") or self.tr("version unknown")
             line = f"{name} {version} — {getattr(info, 'path', '')}"
+            if is_bundled(getattr(info, "path", "")):
+                line += self.tr("  [included with the app]")
             if name in LEGACY_ONLY:
                 line += self.tr("  [legacy: only used to open archives made "
                                 "before it was dropped; never used to compress]")
